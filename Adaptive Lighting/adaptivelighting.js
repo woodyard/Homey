@@ -390,6 +390,22 @@ const PROFILES = {
     { name: "Daytime",  startTime: "10:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
     { name: "Evening",  startTime: "18:00", endTime: "23:00", brightness: 0.30, temperature: 0.7 },
     { name: "Night",    startTime: "23:00", endTime: "08:00", brightness: 0.15, temperature: 0.9 }
+  ],
+  
+  // Bathroom weekend - gentler morning light, later start
+  bathroomWeekend: [
+    { name: "Morning",  startTime: "08:30", endTime: "10:00", brightness: 0.6,  temperature: 0.5 },
+    { name: "Daytime",  startTime: "10:00", endTime: "21:00", brightness: 0.9,  temperature: 0.4 },
+    { name: "Evening",  startTime: "21:00", endTime: "23:00", brightness: 0.25, temperature: 0.8 },
+    { name: "Night",    startTime: "23:00", endTime: "07:00", brightness: 0.08, temperature: 1.0 }
+  ],
+  
+  // Entrance weekend - softer morning light, later start
+  entranceWeekend: [
+    { name: "Morning",  startTime: "08:30", endTime: "10:00", brightness: 0.25, temperature: 0.8 },
+    { name: "Daytime",  startTime: "10:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
+    { name: "Evening",  startTime: "18:00", endTime: "23:00", brightness: 0.4,  temperature: 0.7 },
+    { name: "Night",    startTime: "23:00", endTime: "07:00", brightness: 0.10, temperature: 1.0 }
   ]
 };
 
@@ -454,7 +470,8 @@ const ROOM_CONFIG = {
   // =====================================================================
   "1847a2b3-9261-4cb4-882c-14c219e4a4a3": {
     name: "Badeværelse 9",
-    profiles: PROFILES.bathroom  // Gruppe
+    profiles: PROFILES.bathroom,              // Weekdays
+    weekendProfiles: PROFILES.bathroomWeekend // Weekends - gentler morning light
   },
 
   // =====================================================================
@@ -470,11 +487,13 @@ const ROOM_CONFIG = {
   // =====================================================================
   "6a4040bb-c059-419c-975f-f9b31cd6ee34": {
     name: "Entre 9 Loft",
-    profiles: PROFILES.entrance
+    profiles: PROFILES.entrance,              // Weekdays
+    weekendProfiles: PROFILES.entranceWeekend // Weekends - softer morning light
   },
   "69331b1f-13ef-4a27-abed-eb34b4c355d1": {
     name: "Entre 9 Garderobe",
-    profiles: PROFILES.entrance
+    profiles: PROFILES.entrance,              // Weekdays
+    weekendProfiles: PROFILES.entranceWeekend // Weekends - softer morning light
   },
 
   // =====================================================================
