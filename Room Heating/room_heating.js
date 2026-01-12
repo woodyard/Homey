@@ -1,19 +1,21 @@
 /**
  * Generic Room Heating Control (Zone-Based, Multi-Room)
- * 
+ *
  * Universal heating control for multiple rooms - select room via argument!
- * 
+ *
  * Usage in HomeyScript:
  *   await run('Clara')            // Run for Clara's room
  *   await run('Oliver')           // Run for Oliver's room
- *   await run('clara', 'boost')   // Boost heating (case-insensitive)
- *   await run('Clara', 'cancel')  // Cancel active boost
- * 
+ *   await run('clara', 'boost')   // Boost heating - max heat for 1 hour (case-insensitive)
+ *   await run('clara', 'pause')   // Pause heating - force OFF for 1 hour (case-insensitive)
+ *   await run('Clara', 'cancel')  // Cancel active boost or pause
+ *
  * Or in Advanced Flow:
  *   Use "Run a script" action with argument:
  *   - "Clara"          → Normal heating
- *   - "clara, boost"   → Boost mode (comma-separated)
- *   - "Clara, cancel"  → Cancel boost
+ *   - "clara, boost"   → Boost mode - max heat for 1 hour (comma-separated)
+ *   - "clara, pause"   → Pause mode - force OFF for 1 hour (comma-separated)
+ *   - "Clara, cancel"  → Cancel boost or pause
  * 
  * Features:
  * - Single script for ALL rooms
@@ -24,10 +26,21 @@
  * - Target-based temperature control with automatic hysteresis
  * 
  * Author: Henrik Skovgaard
- * Version: 10.4.4
+ * Version: 10.5.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
+ * 10.5.0 (2026-01-12) - ⏸️ Add pause heating mode (opposite of boost)
+ *   - New "pause" argument: run('Clara', 'pause') forces heating OFF for 60 minutes
+ *   - Smart plugs: Turn off all radiators, ignore all conditions
+ *   - TADO valves: Turn completely OFF (onoff = false)
+ *   - Ignores temperature, schedule, window, inactivity, away mode during pause
+ *   - Latest call wins: pause cancels boost, boost cancels pause (mutually exclusive)
+ *   - Cancel command now cancels both boost and pause modes
+ *   - Automatic revert to schedule after 60 minutes
+ *   - New global vars: PauseMode, PauseStartTime, PauseDuration
+ *   - Notifications when pause starts, ends, and is active
+ *   - New functions: activatePauseMode(), cancelPauseMode(), checkPauseMode(), controlHeatingPause()
  * 10.4.4 (2026-01-09) - 🐛 Fix next schedule showing wrong day type
  *   - getNextScheduleChange() now correctly determines tomorrow's schedule type
  *   - Friday evening no longer shows "School" when Saturday uses weekend schedule
@@ -210,16 +223,21 @@ if (!roomArg) {
 const ROOM = ROOMS[roomArg];
 log(`🏠 Running heating control for: ${roomArg} (${ROOM.zoneName})`);
 
-// Check for boost/cancel request
+// Check for boost/pause/cancel request
 const requestBoost = boostArg === 'boost';
+const requestPause = boostArg === 'pause';
 const requestCancel = boostArg === 'cancel';
 
 if (requestBoost) {
     log(`🚀 Boost heating requested via argument`);
 }
 
+if (requestPause) {
+    log(`⏸️ Pause heating requested via argument`);
+}
+
 if (requestCancel) {
-    log(`🛑 Cancel boost requested via argument`);
+    log(`🛑 Cancel override requested via argument`);
 }
 
 // ============================================================================
@@ -331,11 +349,12 @@ async function getNextScheduleChange(schedule, currentSlot) {
 }
 
 // ============================================================================
-// Boost Heating Functions
+// Boost & Pause Heating Functions
 // ============================================================================
 
 const BOOST_DURATION_MINUTES = 60;
 const BOOST_TEMPERATURE_TADO = 25;
+const PAUSE_DURATION_MINUTES = 60;
 
 function activateBoostMode() {
     global.set(`${ROOM.zoneName}.Heating.BoostMode`, true);
@@ -369,6 +388,19 @@ function cancelBoostMode() {
     } else {
         log(`\nℹ️ No active boost to cancel`);
         log(`Room: ${roomArg} (${ROOM.zoneName})`);
+        return false;
+    }
+}
+
+function cancelAllOverrideModes() {
+    const boostCancelled = cancelBoostMode();
+    const pauseCancelled = cancelPauseMode();
+    
+    if (boostCancelled || pauseCancelled) {
+        log(`\n✅ Override mode(s) cancelled - resuming normal schedule`);
+        return true;
+    } else {
+        log(`\nℹ️ No active override modes to cancel`);
         return false;
     }
 }
@@ -463,6 +495,132 @@ async function controlHeatingBoost() {
     }
     
     return 'boost_unknown_type';
+}
+
+// ============================================================================
+// Pause Heating Functions
+// ============================================================================
+
+function activatePauseMode() {
+    global.set(`${ROOM.zoneName}.Heating.PauseMode`, true);
+    global.set(`${ROOM.zoneName}.Heating.PauseStartTime`, Date.now());
+    global.set(`${ROOM.zoneName}.Heating.PauseDuration`, PAUSE_DURATION_MINUTES);
+    
+    log(`\n⏸️ PAUSE MODE ACTIVATED`);
+    log(`Duration: ${PAUSE_DURATION_MINUTES} minutes`);
+    log(`Room: ${roomArg} (${ROOM.zoneName})`);
+    
+    addChange(`⏸️ Pause activated`);
+    addChange(`${PAUSE_DURATION_MINUTES} min`);
+}
+
+function cancelPauseMode() {
+    const wasActive = global.get(`${ROOM.zoneName}.Heating.PauseMode`);
+    
+    // Clear pause mode variables
+    global.set(`${ROOM.zoneName}.Heating.PauseMode`, false);
+    global.set(`${ROOM.zoneName}.Heating.PauseStartTime`, null);
+    global.set(`${ROOM.zoneName}.Heating.PauseDuration`, null);
+    
+    if (wasActive) {
+        log(`\n🔄 PAUSE MODE CANCELLED`);
+        log(`Room: ${roomArg} (${ROOM.zoneName})`);
+        log(`Resuming normal schedule operation`);
+        
+        addChange(`🔄 Pause cancelled`);
+        addChange(`Resumed schedule`);
+        return true;
+    } else {
+        log(`\nℹ️ No active pause to cancel`);
+        log(`Room: ${roomArg} (${ROOM.zoneName})`);
+        return false;
+    }
+}
+
+function checkPauseMode() {
+    const pauseActive = global.get(`${ROOM.zoneName}.Heating.PauseMode`);
+    
+    if (!pauseActive) {
+        return { active: false, expired: false, remainingMinutes: 0 };
+    }
+    
+    const pauseStartTime = global.get(`${ROOM.zoneName}.Heating.PauseStartTime`);
+    const pauseDuration = global.get(`${ROOM.zoneName}.Heating.PauseDuration`) || PAUSE_DURATION_MINUTES;
+    
+    if (!pauseStartTime) {
+        // Pause flag set but no start time - clear it
+        global.set(`${ROOM.zoneName}.Heating.PauseMode`, false);
+        return { active: false, expired: false, remainingMinutes: 0 };
+    }
+    
+    const minutesElapsed = (Date.now() - pauseStartTime) / 1000 / 60;
+    const remainingMinutes = Math.max(0, pauseDuration - minutesElapsed);
+    
+    if (minutesElapsed >= pauseDuration) {
+        // Pause expired - clear it
+        log(`\n⏱️ PAUSE MODE EXPIRED`);
+        log(`Duration: ${pauseDuration} minutes elapsed`);
+        
+        global.set(`${ROOM.zoneName}.Heating.PauseMode`, false);
+        global.set(`${ROOM.zoneName}.Heating.PauseStartTime`, null);
+        global.set(`${ROOM.zoneName}.Heating.PauseDuration`, null);
+        
+        addChange(`⏱️ Pause ended`);
+        addChange(`Resumed schedule`);
+        
+        return { active: false, expired: true, remainingMinutes: 0 };
+    }
+    
+    return { active: true, expired: false, remainingMinutes: Math.ceil(remainingMinutes) };
+}
+
+async function controlHeatingPause() {
+    log(`\n--- PAUSE HEATING CONTROL ---`);
+    log(`Pause mode: ACTIVE - turning off all heating`);
+    
+    if (ROOM.heating.type === 'smart_plug') {
+        log(`Smart plug mode: Turning OFF all radiators`);
+        
+        for (const deviceId of ROOM.heating.devices) {
+            try {
+                const device = await Homey.devices.getDevice({ id: deviceId });
+                const currentState = device.capabilitiesObj.onoff.value;
+                
+                if (currentState) {
+                    await device.setCapabilityValue('onoff', false);
+                    log(`🔌 ${device.name}: OFF`);
+                } else {
+                    log(`✓ ${device.name}: already OFF`);
+                }
+            } catch (error) {
+                log(`❌ Error controlling ${deviceId}: ${error.message}`);
+            }
+        }
+        
+        return 'pause_heating';
+        
+    } else if (ROOM.heating.type === 'tado_valve') {
+        log(`TADO mode: Turning OFF completely`);
+        
+        try {
+            const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
+            const currentOnOff = device.capabilitiesObj.onoff.value;
+            
+            if (currentOnOff !== false) {
+                await device.setCapabilityValue('onoff', false);
+                log(`🔥 TADO turned OFF`);
+            } else {
+                log(`✓ TADO already OFF`);
+            }
+            
+            return 'pause_tado';
+        } catch (error) {
+            log(`❌ Error controlling TADO: ${error.message}`);
+            return 'pause_error';
+        }
+    }
+    
+    return 'pause_unknown_type';
 }
 
 // ============================================================================
@@ -1203,25 +1361,83 @@ try {
 }
 
 // ============================================================================
-// Boost Mode Check
+// Override Mode Check (Boost & Pause)
 // ============================================================================
 
-// Handle cancel request first
+// Handle cancel request first - cancels both boost and pause
 if (requestCancel) {
-    const wasCancelled = cancelBoostMode();
+    const wasCancelled = cancelAllOverrideModes();
     
     if (wasCancelled) {
-        // Boost was active and cancelled - continue with normal schedule
+        // Override was active and cancelled - continue with normal schedule
         log(`Continuing to run normal schedule after cancellation...`);
     } else {
-        // No active boost - just run normally
-        log(`No active boost - running normal schedule`);
+        // No active overrides - just run normally
+        log(`No active overrides - running normal schedule`);
     }
 }
 
-// Activate boost if requested
+// Activate pause if requested (latest call wins - cancel any active boost)
+if (requestPause) {
+    const boostWasActive = global.get(`${ROOM.zoneName}.Heating.BoostMode`);
+    if (boostWasActive) {
+        log(`\n🔄 Cancelling active boost to activate pause...`);
+        cancelBoostMode();
+    }
+    activatePauseMode();
+}
+
+// Activate boost if requested (latest call wins - cancel any active pause)
 if (requestBoost) {
+    const pauseWasActive = global.get(`${ROOM.zoneName}.Heating.PauseMode`);
+    if (pauseWasActive) {
+        log(`\n🔄 Cancelling active pause to activate boost...`);
+        cancelPauseMode();
+    }
     activateBoostMode();
+}
+
+// Check if pause mode is active (pause takes precedence in checking order)
+const pauseStatus = checkPauseMode();
+
+if (pauseStatus.active) {
+    log(`\n⏸️ PAUSE MODE ACTIVE`);
+    log(`Remaining: ${pauseStatus.remainingMinutes} minutes`);
+    
+    // Read room temperature for status
+    const roomTemp = await getRoomTemperature();
+    if (roomTemp === null) {
+        log('❌ Could not read room temperature!');
+        return;
+    }
+    
+    // Run pause heating control (turns off all heating)
+    const action = await controlHeatingPause();
+    
+    // Log diagnostics with pause action
+    const now = getDanishLocalTime();
+    const dummySlot = { target: 0 }; // Target is effectively 0 during pause
+    await logDiagnostics(now, roomTemp, dummySlot, action);
+    
+    // Send notification - don't show condition icons during pause (use 'CLOSED' and 'NO' so icons don't appear)
+    await sendUnifiedNotification({
+        room: roomTemp,
+        target: 'OFF',
+        window: 'CLOSED',  // Don't show window icon during pause override
+        windowSettle: false,
+        inactivity: 'NO',  // Don't show inactivity icon during pause override
+        heating: 'OFF',
+        tado: 'HOME',  // Don't show away icon during pause override
+        nextChange: `Pause ends in ${pauseStatus.remainingMinutes} min`
+    });
+    
+    log(`\n=== PAUSE MODE - COMPLETED ===`);
+    return;
+}
+
+// If pause just expired, continue with normal schedule
+if (pauseStatus.expired) {
+    log(`\n⏱️ Pause mode expired - resuming normal schedule`);
 }
 
 // Check if boost mode is active
@@ -1246,18 +1462,18 @@ if (boostStatus.active) {
     const dummySlot = { target: ROOM.heating.type === 'tado_valve' ? BOOST_TEMPERATURE_TADO : 25 };
     await logDiagnostics(now, roomTemp, dummySlot, action);
     
-    // Send notification
+    // Send notification - don't show condition icons during boost (use 'CLOSED' and 'NO' so icons don't appear)
     const heatingOn = await getHeatingStatus();
     const boostTarget = ROOM.heating.type === 'tado_valve' ? BOOST_TEMPERATURE_TADO : 'MAX';
     
     await sendUnifiedNotification({
         room: roomTemp,
         target: `${boostTarget}`,
-        window: 'IGNORED',
+        window: 'CLOSED',  // Don't show window icon during boost override
         windowSettle: false,
-        inactivity: 'IGNORED',
+        inactivity: 'NO',  // Don't show inactivity icon during boost override
         heating: heatingOn ? 'ON' : 'OFF',
-        tado: 'IGNORED',
+        tado: 'HOME',  // Don't show away icon during boost override
         nextChange: `Boost ends in ${boostStatus.remainingMinutes} min`
     });
     

@@ -5,11 +5,16 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  * 
  * Author: Henrik Skovgaard
- * Version: 4.4.2
+ * Version: 4.5.0
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
  * Version History:
+ * 4.5.0 (2026-01-12) - ⏸️ Show pause mode status (matches heating v10.5.0)
+ *   - Displays pause mode status when active
+ *   - Shows remaining pause time
+ *   - Indicates pause override in current status section
+ *   - Shows how to cancel active pause
  * 4.4.2 (2026-01-09) - 📅 Show next schedule change (matches heating v10.4.4)
  *   - Added "Next Schedule Change" section showing upcoming period transition
  *   - Correctly determines tomorrow's schedule type (weekend/school/holiday)
@@ -362,6 +367,28 @@ async function showRoomStatus(roomName, roomConfig) {
         const targetHigh = target + (hysteresis / 2);
         log(`Hysteresis:    ±${(hysteresis/2).toFixed(2)}°C`);
         log(`Range:         ${targetLow.toFixed(2)}-${targetHigh.toFixed(2)}°C`);
+    }
+    
+    // Pause Mode Status
+    const pauseActive = global.get(`${ZONE_NAME}.Heating.PauseMode`);
+    if (pauseActive) {
+        const pauseStartTime = global.get(`${ZONE_NAME}.Heating.PauseStartTime`);
+        const pauseDuration = global.get(`${ZONE_NAME}.Heating.PauseDuration`) || 60;
+        
+        if (pauseStartTime) {
+            const minutesElapsed = (Date.now() - pauseStartTime) / 1000 / 60;
+            const remainingMinutes = Math.max(0, Math.ceil(pauseDuration - minutesElapsed));
+            
+            log(`\n⏸️ PAUSE MODE ACTIVE ⏸️`);
+            log(`Remaining:      ${remainingMinutes} minutes`);
+            log(`Override:       Heating forced OFF (all conditions ignored)`);
+            if (roomConfig.heating.type === 'tado_valve') {
+                log(`Mode:           TADO turned OFF`);
+            } else {
+                log(`Mode:           All radiators OFF`);
+            }
+            log(`To cancel:      await run('${roomName}', 'cancel')`);
+        }
     }
     
     // Boost Mode Status
