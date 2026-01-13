@@ -564,7 +564,7 @@ const SETTINGS = {
   longitude: 12.5683,            // København longitude (for sunrise/sunset fallback)
   enableLogging: true,           // Log to HomeyScript console
   enableDetailedLogging: false,  // Extra debug info in console
-  enableNotifications: true,     // Send notifications to Homey timeline
+  enableNotifications: false,    // Send notifications to Homey timeline
   tolerance: 0.10,               // 10% tolerance when comparing values
   transitionDuration: 60,        // Fade time in SECONDS (60 = 1 min, 0 = instant)
                                  // Note: Only works on devices that support duration (Hue, IKEA, etc.)
