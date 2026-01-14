@@ -2,12 +2,22 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.14.1
-// Date:        2026-01-10
+// Version:     2.14.3
+// Date:        2026-01-14
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.14.3 2026-01-14  Prevent "flash of bright light" when turning on
+//                    - Set brightness/temperature WHILE light is off
+//                    - Add 100ms delay for command processing
+//                    - Then turn on light at correct level
+//                    - Mimics Homey UI behavior (works the same way)
+// 2.14.2 2026-01-14  Parallel group member control
+//                    - Changed from sequential to parallel execution
+//                    - All bulbs in group now change simultaneously
+//                    - Uses Promise.all() with individual error handling
+//                    - Eliminates visible cascade effect (5x speed improvement)
 // 2.14.1 2026-01-10  Fix variable scope issue in clear mode
 //                    - Moved activeProfile definition earlier in code flow
 //                    - Clear mode now has access to activeProfile before using it
@@ -568,6 +578,7 @@ const SETTINGS = {
   tolerance: 0.10,               // 10% tolerance when comparing values
   transitionDuration: 60,        // Fade time in SECONDS (60 = 1 min, 0 = instant)
                                  // Note: Only works on devices that support duration (Hue, IKEA, etc.)
+  turnOnTransitionDuration: 1,   // Quick fade when turning on (1s masks hardware flash)
   enableVerification: true,      // Verify settings after clear/reset operations
   verificationRetries: 3,        // Max retry attempts for verification
   verificationDelay: 1500,       // Wait time before verification (ms)
@@ -1315,9 +1326,10 @@ async function applyToDevice(deviceOrId, brightness, temperature, duration) {
  * @param {number} brightness - Target brightness (0-1)
  * @param {number} temperature - Target color temperature (0-1)
  * @param {boolean} useDuration - Whether to use fade duration (false for instant)
+ * @param {number} customDuration - Optional custom duration in seconds (overrides useDuration)
  */
-async function applyLighting(device, brightness, temperature, useDuration = false) {
-  const duration = useDuration ? SETTINGS.transitionDuration : 0; // seconds
+async function applyLighting(device, brightness, temperature, useDuration = false, customDuration = null) {
+  const duration = customDuration !== null ? customDuration : (useDuration ? SETTINGS.transitionDuration : 0); // seconds
   
   if (SETTINGS.enableDetailedLogging) {
     log(`[AdaptiveLighting] Applying: dim=${brightness}, temp=${temperature}, duration=${duration}s`);
@@ -1346,15 +1358,18 @@ async function applyLighting(device, brightness, temperature, useDuration = fals
       log(`[AdaptiveLighting] Group detected with ${members.length} members`);
     }
     
-    for (const member of members) {
-      try {
-        await applyToDevice(member, brightness, temperature, duration);
-      } catch (e) {
-        if (SETTINGS.enableDetailedLogging) {
-          log(`[AdaptiveLighting] Member ${member.name} error: ${e.message}`);
-        }
-      }
-    }
+    // Apply to all members simultaneously
+    const memberPromises = members.map(member =>
+      applyToDevice(member, brightness, temperature, duration)
+        .catch(e => {
+          if (SETTINGS.enableDetailedLogging) {
+            log(`[AdaptiveLighting] Member ${member.name} error: ${e.message}`);
+          }
+          return { error: true, member: member.name };
+        })
+    );
+    
+    await Promise.all(memberPromises);
     return { brightness: true, temperature: true };
     
   } else {
@@ -2004,10 +2019,41 @@ try {
     if (!CHECK_MANUAL) {
       const isOn = device.capabilitiesObj?.onoff?.value ?? false;
       if (!isOn) {
+        // Set brightness/temperature WHILE light is OFF (like Homey UI does)
+        await applyLighting(device, activeProfile.brightness, activeProfile.temperature, false);
+        
+        // Small delay to ensure the bulb has processed the brightness/temperature commands
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // NOW turn on the light - it should turn on at the correct level
         await device.setCapabilityValue('onoff', true);
+        
         if (SETTINGS.enableDetailedLogging) {
-          log(`[${roomName}] Turned on light`);
+          log(`[${roomName}] Set level to ${Math.round(activeProfile.brightness * 100)}% while off, then turned on`);
         }
+        
+        // Mark profile as applied
+        setLastProfile(DEVICE_ID, activeProfile.name);
+        
+        // Return early to avoid duplicate applyLighting call
+        const brightnessPercent = Math.round(activeProfile.brightness * 100);
+        const tempDesc = activeProfile.temperature >= 0.7 ? 'warm' :
+                         activeProfile.temperature <= 0.4 ? 'cool' : 'neutral';
+        const weekendIndicator = roomConfig.usingWeekendProfile ? ' [Weekend]' : '';
+        
+        return {
+          room: roomName,
+          profile: activeProfile.name,
+          brightness: activeProfile.brightness,
+          temperature: activeProfile.temperature,
+          time: currentTimeStr,
+          day: getDayName(),
+          isWeekend: roomConfig.isWeekend,
+          usingWeekendProfile: roomConfig.usingWeekendProfile,
+          skipped: false,
+          flashPrevented: true,
+          message: `${roomName}: ${activeProfile.name} → ${brightnessPercent}% / ${tempDesc}${weekendIndicator}`
+        };
       }
     }
     

@@ -7,6 +7,10 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 5.1  2026-01-14  Parallel fade for group members
+//                  - All bulbs start fading simultaneously
+//                  - Uses Promise.all() for parallel execution
+//                  - Smoother, more synchronized fade effect
 // 5.0  2026-01-07  Complete rewrite using hardware fade
 //                  - Uses Homey flow card with duration (bulb handles fade)
 //                  - Script exits immediately (non-blocking)
@@ -88,19 +92,20 @@ const isGroup = members.length > 0;
 if (isGroup) {
   log(`Group detected with ${members.length} members - applying hardware fade to each`);
   
-  // Apply fade to each member
-  for (const member of members) {
-    try {
-      await Homey.flow.runFlowCardAction({
-        uri: `homey:flowcardaction:homey:device:${member.id}:dim`,
-        id: `homey:device:${member.id}:dim`,
-        args: { dim: 0 },
-        duration: fadeDuration
-      });
-    } catch (e) {
+  // Start fade on all members simultaneously
+  const fadePromises = members.map(member =>
+    Homey.flow.runFlowCardAction({
+      uri: `homey:flowcardaction:homey:device:${member.id}:dim`,
+      id: `homey:device:${member.id}:dim`,
+      args: { dim: 0 },
+      duration: fadeDuration
+    }).catch(e => {
       log(`Warning: Could not start fade on ${member.name}: ${e.message}`);
-    }
-  }
+      return { error: true };
+    })
+  );
+  
+  await Promise.all(fadePromises);
   
 } else {
   // Single device - apply fade directly

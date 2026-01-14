@@ -7,6 +7,10 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 3.3  2026-01-14  Parallel restore for group members
+//                  - All bulbs restore simultaneously
+//                  - Uses Promise.all() for parallel execution
+//                  - Instant, synchronized restore
 // 3.2  2026-01-09  Fix restore skip logic
 //                  - Only restore if fade is ACTUALLY active (timestamp not expired)
 //                  - Prevents restoring old values from expired fades
@@ -113,14 +117,20 @@ try {
   if (isGroup) {
     log(`Restoring ${members.length} group members`);
     
-    for (const member of members) {
-      try {
-        await restoreDevice(member, savedDim, savedTemp);
-        log(`  âœ“ Restored: ${member.name}`);
-      } catch (e) {
-        log(`  âœ— Failed: ${member.name} - ${e.message}`);
-      }
-    }
+    // Restore all members simultaneously
+    const restorePromises = members.map(member =>
+      restoreDevice(member, savedDim, savedTemp)
+        .then(() => {
+          log(`  âœ" Restored: ${member.name}`);
+          return { success: true, name: member.name };
+        })
+        .catch(e => {
+          log(`  âœ— Failed: ${member.name} - ${e.message}`);
+          return { error: true, name: member.name };
+        })
+    );
+    
+    await Promise.all(restorePromises);
     
     // Also set the group itself (for UI consistency)
     try {
