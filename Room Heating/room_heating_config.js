@@ -1,20 +1,25 @@
 /**
  * Room Heating Configuration
- * 
+ *
  * Central configuration for all room heating systems.
  * Run this script to save configuration to global variables.
  * Both heating control and status scripts read from these global variables.
- * 
+ *
  * Usage:
  *   1. Edit ROOMS configuration below
  *   2. Run this script to save to global variables
  *   3. Heating and status scripts automatically use the saved config
- * 
+ *
  * Author: Henrik Skovgaard
- * Version: 1.0.2
+ * Version: 1.0.3
  * Created: 2025-12-31
- * 
+ *
  * Version History:
+ * 1.0.3 (2026-01-13) - 🤚 Add manualOverrideDuration setting for manual intervention handling
+ *   - New setting: manualOverrideDuration (minutes, default 90)
+ *   - Allows system to detect and respect manual temperature/switch changes
+ *   - After timeout, system automatically reverts to schedule
+ *   - Configurable per room (Clara: 90min, Oliver: 90min)
  * 1.0.2 (2026-01-08) - ⏳ Add windowClosedDelay setting for air settle time
  *   - New setting: windowClosedDelay (seconds, default 600 = 10 minutes)
  *   - After window closes, heating waits for air to settle before resuming
@@ -68,7 +73,8 @@ const ROOMS = {
             tadoAwayMinTemp: 18.0,
             inactivityTimeout: 20,
             windowOpenTimeout: 60,
-            windowClosedDelay: 600  // 10 minutes for air to settle after window closes
+            windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
+            manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
         }
     },
     
@@ -98,7 +104,39 @@ const ROOMS = {
             tadoAwayMinTemp: 18.0,
             inactivityTimeout: 20,
             windowOpenTimeout: 60,
-            windowClosedDelay: 600  // 10 minutes for air to settle after window closes
+            windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
+            manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
+        }
+    },
+    
+    'Soveværelse': {
+        zoneName: 'Soveværelse',
+        heating: {
+            type: 'tado_valve',
+            devices: ['439be454-0e4e-4835-b51c-a83a1d78e9f1']   // Skovgaard / Soveværelse
+        },
+        schedules: {
+            weekday: [
+                { start: '00:00', end: '07:00', target: 18, inactivityOffset: 0, name: 'Night' },
+                { start: '07:00', end: '20:00', target: 21, inactivityOffset: 1, name: 'Day' }
+            ],
+            weekend: [
+                { start: '00:00', end: '09:00', target: 18, inactivityOffset: 0, name: 'Night' },
+                { start: '09:00', end: '21:00', target: 21, inactivityOffset: 1, name: 'Day' }
+            ],
+            holiday: [
+                { start: '00:00', end: '09:00', target: 18, inactivityOffset: 0, name: 'Night' },
+                { start: '09:00', end: '21:00', target: 21, inactivityOffset: 1, name: 'Day' }
+            ],
+            earlyEvening: { start: '20:00', end: '23:59', target: 19, inactivityOffset: 0, name: 'Evening' },
+            lateEvening: { start: '21:00', end: '23:59', target: 19, inactivityOffset: 0, name: 'Evening' }
+        },
+        settings: {
+            tadoAwayMinTemp: 17.0,
+            inactivityTimeout: 20,
+            windowOpenTimeout: 60,
+            windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
+            manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
         }
     }
     
@@ -138,7 +176,7 @@ log(`✅ Saved GLOBAL configuration`);
 
 // Save metadata
 global.set('Config.LastUpdate', new Date().toISOString());
-global.set('Config.Version', '1.0.2');
+global.set('Config.Version', '1.0.3');
 
 log('\n══ CONFIGURED ROOMS ══');
 for (const [roomName, roomConfig] of Object.entries(ROOMS)) {
@@ -152,6 +190,7 @@ for (const [roomName, roomConfig] of Object.entries(ROOMS)) {
     log(`   Inactivity: ${roomConfig.settings.inactivityTimeout} min`);
     log(`   Window open timeout: ${roomConfig.settings.windowOpenTimeout} sec`);
     log(`   Window closed delay: ${roomConfig.settings.windowClosedDelay} sec (${Math.floor(roomConfig.settings.windowClosedDelay / 60)} min)`);
+    log(`   Manual override: ${roomConfig.settings.manualOverrideDuration} min`);
     log('');
 }
 

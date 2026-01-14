@@ -1,15 +1,21 @@
 /**
  * Generic Room Heating Status (Zone-Based, Multi-Room)
- * 
+ *
  * Shows current status for ALL configured rooms.
  * Just run the script - it loops through all rooms in ROOMS config.
- * 
+ *
  * Author: Henrik Skovgaard
- * Version: 4.5.0
+ * Version: 4.6.0
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
  * Version History:
+ * 4.6.0 (2026-01-13) - 🤚 Show manual override mode status (matches heating v10.6.0)
+ *   - Displays manual override mode status when active
+ *   - Shows remaining override time
+ *   - Shows type of manual intervention (temperature or switch)
+ *   - Indicates manual override in current status section
+ *   - Shows how to cancel active manual override
  * 4.5.0 (2026-01-12) - ⏸️ Show pause mode status (matches heating v10.5.0)
  *   - Displays pause mode status when active
  *   - Shows remaining pause time
@@ -367,6 +373,31 @@ async function showRoomStatus(roomName, roomConfig) {
         const targetHigh = target + (hysteresis / 2);
         log(`Hysteresis:    ±${(hysteresis/2).toFixed(2)}°C`);
         log(`Range:         ${targetLow.toFixed(2)}-${targetHigh.toFixed(2)}°C`);
+    }
+    
+    // Manual Override Mode Status
+    const manualOverrideActive = global.get(`${ZONE_NAME}.Heating.ManualOverrideMode`);
+    if (manualOverrideActive) {
+        const overrideStartTime = global.get(`${ZONE_NAME}.Heating.ManualOverrideStartTime`);
+        const overrideDuration = global.get(`${ZONE_NAME}.Heating.ManualOverrideDuration`) || 90;
+        const overrideType = global.get(`${ZONE_NAME}.Heating.ManualOverrideType`);
+        const originalValue = global.get(`${ZONE_NAME}.Heating.ManualOverrideOriginalValue`);
+        
+        if (overrideStartTime) {
+            const minutesElapsed = (Date.now() - overrideStartTime) / 1000 / 60;
+            const remainingMinutes = Math.max(0, Math.ceil(overrideDuration - minutesElapsed));
+            
+            log(`\n🤚 MANUAL OVERRIDE MODE ACTIVE 🤚`);
+            log(`Remaining:      ${remainingMinutes} minutes`);
+            log(`Type:           Manual ${overrideType} change detected`);
+            if (overrideType === 'temperature') {
+                log(`Original:       ${originalValue}°C (before manual change)`);
+            } else {
+                log(`Original:       ${originalValue ? 'ON' : 'OFF'} (before manual change)`);
+            }
+            log(`Override:       Automation paused (respecting user's manual change)`);
+            log(`To cancel:      await run('${roomName}', 'cancel')`);
+        }
     }
     
     // Pause Mode Status
@@ -729,5 +760,5 @@ for (const [roomName, roomConfig] of Object.entries(ROOMS)) {
 }
 
 log('\n╔═══════════════════════════════════════════════════════════════╗');
-log('║          END OF STATUS REPORT                                ║');
+log('║          END OF STATUS REPORT                                 ║');
 log('╚═══════════════════════════════════════════════════════════════╝\n');
