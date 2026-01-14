@@ -27,10 +27,29 @@
  * - Manual intervention detection - respects manual changes for 90 minutes
  *
  * Author: Henrik Skovgaard
- * Version: 10.6.5
+ * Version: 10.6.7
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
+ * 10.6.7 (2026-01-14) - 🐛 CRITICAL FIX: Away mode transition check MUST happen BEFORE manual detection
+ *   - Fixed execution order bug causing false positive manual override when arriving home
+ *   - Problem: detectManualIntervention() called BEFORE grace period reset in controlHeating()
+ *   - When arriving home: TADO auto-adjusts temp → manual detection checks (stale grace) → false positive
+ *   - Then too late: controlHeating() resets grace period (after damage already done)
+ *   - Solution: Moved away→home transition check to MAIN EXECUTION before manual intervention detection
+ *   - Now: Check away status early → reset grace if transitioning → THEN check for manual intervention
+ *   - Result: Grace period properly set before detection runs, preventing false positives
+ *   - Execution order: 1) Away check + grace reset, 2) Manual detection, 3) Control heating
+ *   - This ensures TADO's automatic away→home adjustments are protected by grace period
+ * 10.6.6 (2026-01-14) - 🐛 CRITICAL FIX: False positive manual override when returning from away mode
+ *   - Fixed bug where TADO rooms triggered manual override when arriving home
+ *   - Problem: TADO thermostats automatically adjust temperature when switching from away→home
+ *   - System compared new TADO target against stale away-mode ExpectedTargetTemp → false positive
+ *   - Example: Away at 18°C → TADO auto-adjusts to 20°C on arrival → detected as "manual" change
+ *   - Solution: Reset grace period timer (LastAutomationChangeTime) when returning from away mode
+ *   - 7-minute grace period prevents false detection during TADO's automatic adjustment
+ *   - Affects: TADO valve rooms (Oliver, Soveværelse) - smart plug rooms unaffected
+ *   - Prevents: "Home" notification → "Manual override" false positive sequence
  * 10.6.5 (2026-01-14) - 🐛 CRITICAL FIX: Grace period constantly reset causing false manual override detection
  *   - Fixed bug where LastAutomationChangeTime was updated on EVERY script run, even when no changes made
  *   - Problem: Script runs frequently (events: motion, window, schedule), constantly resetting grace period
@@ -1341,7 +1360,7 @@ async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
     log(`Inactivity: ${inactivity.inactive ? `YES (${inactivity.minutesSinceMotion} min since activity)` : `NO (${inactivity.minutesSinceMotion} min since activity)`} | Offset: ${inactivityOffset}°C`);
     log(`Heating: ${heatingOn ? 'ON' : 'OFF'}`);
     
-    // TADO Away Mode
+    // TADO Away Mode - note: wasInTadoAway check moved to main execution before manual intervention detection
     if (tadoAway) {
         log(`🏠 TADO is in away mode - nobody home`);
         
@@ -1664,6 +1683,21 @@ try {
 } catch (error) {
     // Logic variable not found or error - continue with heating (fail-safe)
     log(`ℹ️  HeatingEnabled check: ${error.message} - continuing with heating`);
+}
+
+// ============================================================================
+// Away Mode Transition Check (BEFORE Manual Intervention Detection)
+// ============================================================================
+
+// Check if we're returning from away mode and reset grace period BEFORE detecting manual intervention
+// This prevents false positive detection during TADO's automatic away→home temperature adjustment
+const currentTadoAway = await isTadoAway();
+const wasInTadoAway = global.get(`${ROOM.zoneName}.Heating.TadoAwayActive`);
+
+if (wasInTadoAway && !currentTadoAway) {
+    // Returning from away mode - reset grace period NOW (before manual intervention check)
+    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+    log(`\n✅ TADO returning from away mode - grace period reset to prevent false positive manual detection`);
 }
 
 // ============================================================================
