@@ -8,15 +8,15 @@
  *   await run('Oliver')           // Run for Oliver's room
  *   await run('clara', 'boost')   // Boost heating - max heat for 1 hour (case-insensitive)
  *   await run('clara', 'pause')   // Pause heating - force OFF for 1 hour (case-insensitive)
- *   await run('Clara', 'cancel')  // Cancel active boost or pause
+ *   await run('Clara', 'cancel')  // Cancel active boost, pause, or manual override
  *
  * Or in Advanced Flow:
  *   Use "Run a script" action with argument:
  *   - "Clara"          → Normal heating
  *   - "clara, boost"   → Boost mode - max heat for 1 hour (comma-separated)
  *   - "clara, pause"   → Pause mode - force OFF for 1 hour (comma-separated)
- *   - "Clara, cancel"  → Cancel boost or pause
- * 
+ *   - "Clara, cancel"  → Cancel boost, pause, or manual override
+ *
  * Features:
  * - Single script for ALL rooms
  * - Configure all rooms in ROOMS object
@@ -24,12 +24,62 @@
  * - Auto-detects sensors via zones
  * - Supports both smart_plug and tado_valve
  * - Target-based temperature control with automatic hysteresis
- * 
+ * - Manual intervention detection - respects manual changes for 90 minutes
+ *
  * Author: Henrik Skovgaard
- * Version: 10.5.0
+ * Version: 10.6.5
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
+ * 10.6.5 (2026-01-14) - 🐛 CRITICAL FIX: Grace period constantly reset causing false manual override detection
+ *   - Fixed bug where LastAutomationChangeTime was updated on EVERY script run, even when no changes made
+ *   - Problem: Script runs frequently (events: motion, window, schedule), constantly resetting grace period
+ *   - Grace period never actually expired, then suddenly did when timing aligned → false positive
+ *   - Between grace expiry, inactivity mode could toggle, changing target (21°C → 20°C with -1°C offset)
+ *   - System detected its own inactivity changes as manual intervention after grace expired
+ *   - Solution: Only update LastAutomationChangeTime when ACTUALLY making physical changes
+ *   - Also increased grace period from 2 to 7 minutes for additional safety margin
+ *   - Example prevented: "Air settled • Heat resumed" at 15:45 → "Manual override" at 15:50
+ *   - Grace period now properly protects against detecting automation's own temperature adjustments
+ * 10.6.4 (2026-01-14) - 🐛 CRITICAL FIX: Clear expected target when TADO turned off
+ *   - Fixed bug where stale ExpectedTargetTemp values caused false positive manual override detection
+ *   - Problem: When TADO turned off, ExpectedTargetTemp was left with old value
+ *   - Later schedule changes would compare against stale expected value → false positive
+ *   - Example: System sets 20°C, turns off, schedule changes to 18°C → false "manual override"
+ *   - Solution: Clear ExpectedTargetTemp (set to null) when turning TADO off
+ *   - detectManualIntervention() already handles null values correctly (returns detected=false)
+ *   - Prevents: False manual override notifications when schedule changes while TADO is off
+ * 10.6.3 (2026-01-13) - 🐛 CRITICAL FIX: False positive manual intervention detection
+ *   - Fixed bug where system detected its own temperature changes as manual interventions
+ *   - Problem: When turning TADO off (window open), stored currentTarget as expected value
+ *   - This caused false positive when system later calculated different target (e.g., due to schedule)
+ *   - Solution: Only store ExpectedTargetTemp when actively controlling (turnOn=true)
+ *   - Increased grace period from 30 seconds to 2 minutes (scripts run every 5 min)
+ *   - Now ALWAYS updates LastAutomationChangeTime when storing expected target
+ *   - Added detailed logging to track when expected values are stored
+ *   - Prevents: "Override ended → Manual override" notification loop when window closes
+ * 10.6.2 (2026-01-13) - 🐛 CRITICAL FIX: Manual intervention detection not working when TADO already on
+ *   - Fixed bug where ExpectedTargetTemp was only stored when turning TADO on
+ *   - Now stores expected target on every heating control cycle (both on and off)
+ *   - Manual temperature changes now properly detected even when automation hasn't recently changed target
+ *   - Without this fix, manual intervention detection would fail if system was maintaining steady temperature
+ *   - Example: User changes Soveværelse from 21°C to 22°C now triggers manual override notification
+ * 10.6.1 (2026-01-13) - 🐛 Fix diagnostics logging during manual override mode
+ *   - Manual override now logs actual TADO target temperature instead of 0°C
+ *   - Diagnostics now show correct target (e.g., 22°C) instead of "Target: 0°C"
+ *   - Fixes misleading log entries during manual override
+ * 10.6.0 (2026-01-13) - 🤚 Add manual intervention detection and handling
+ *   - Detects manual temperature changes (TADO) and switch changes (smart plugs)
+ *   - Pauses automation for 90 minutes (configurable per room) when manual intervention detected
+ *   - Manual override has highest priority - cancels active boost/pause modes
+ *   - Auto-revert to schedule after timeout
+ *   - Cancel command now cancels boost, pause, AND manual override
+ *   - Boost/pause commands cancel manual override when activated
+ *   - Grace period (30 seconds) prevents detecting automation's own changes
+ *   - New global vars: ManualOverrideMode, ManualOverrideStartTime, ManualOverrideDuration, etc.
+ *   - New functions: activateManualOverrideMode(), cancelManualOverrideMode(), checkManualOverrideMode(), detectManualIntervention()
+ *   - Tracks expected values to detect changes: ExpectedTargetTemp (TADO), ExpectedOnOff (smart plugs)
+ *   - Notifications when manual override starts, ends, and is active
  * 10.5.0 (2026-01-12) - ⏸️ Add pause heating mode (opposite of boost)
  *   - New "pause" argument: run('Clara', 'pause') forces heating OFF for 60 minutes
  *   - Smart plugs: Turn off all radiators, ignore all conditions
@@ -355,6 +405,7 @@ async function getNextScheduleChange(schedule, currentSlot) {
 const BOOST_DURATION_MINUTES = 60;
 const BOOST_TEMPERATURE_TADO = 25;
 const PAUSE_DURATION_MINUTES = 60;
+const MANUAL_OVERRIDE_GRACE_PERIOD_MINUTES = 7; // 7 minutes - must exceed script interval (typically 5 min)
 
 function activateBoostMode() {
     global.set(`${ROOM.zoneName}.Heating.BoostMode`, true);
@@ -395,8 +446,9 @@ function cancelBoostMode() {
 function cancelAllOverrideModes() {
     const boostCancelled = cancelBoostMode();
     const pauseCancelled = cancelPauseMode();
+    const manualCancelled = cancelManualOverrideMode();
     
-    if (boostCancelled || pauseCancelled) {
+    if (boostCancelled || pauseCancelled || manualCancelled) {
         log(`\n✅ Override mode(s) cancelled - resuming normal schedule`);
         return true;
     } else {
@@ -624,6 +676,233 @@ async function controlHeatingPause() {
 }
 
 // ============================================================================
+// Manual Override Mode Functions
+// ============================================================================
+
+function activateManualOverrideMode(overrideType, originalValue, currentValue) {
+    const duration = ROOM.settings.manualOverrideDuration || 90;
+    
+    global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, true);
+    global.set(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`, Date.now());
+    global.set(`${ROOM.zoneName}.Heating.ManualOverrideDuration`, duration);
+    global.set(`${ROOM.zoneName}.Heating.ManualOverrideType`, overrideType);
+    global.set(`${ROOM.zoneName}.Heating.ManualOverrideOriginalValue`, originalValue);
+    
+    log(`\n🤚 MANUAL OVERRIDE MODE ACTIVATED`);
+    log(`Duration: ${duration} minutes`);
+    log(`Room: ${roomArg} (${ROOM.zoneName})`);
+    log(`Type: ${overrideType} change detected`);
+    if (overrideType === 'temperature') {
+        log(`Changed: ${originalValue}°C → ${currentValue}°C`);
+    } else {
+        log(`Switch state changed manually`);
+    }
+    
+    addChange(`🤚 Manual override`);
+    addChange(`${duration} min`);
+}
+
+function cancelManualOverrideMode() {
+    const wasActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
+    
+    // Clear manual override mode variables
+    global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, false);
+    global.set(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`, null);
+    global.set(`${ROOM.zoneName}.Heating.ManualOverrideDuration`, null);
+    global.set(`${ROOM.zoneName}.Heating.ManualOverrideType`, null);
+    global.set(`${ROOM.zoneName}.Heating.ManualOverrideOriginalValue`, null);
+    
+    if (wasActive) {
+        log(`\n🔄 MANUAL OVERRIDE MODE CANCELLED`);
+        log(`Room: ${roomArg} (${ROOM.zoneName})`);
+        log(`Resuming normal schedule operation`);
+        
+        addChange(`🔄 Override cancelled`);
+        addChange(`Resumed schedule`);
+        return true;
+    } else {
+        log(`\nℹ️ No active manual override to cancel`);
+        log(`Room: ${roomArg} (${ROOM.zoneName})`);
+        return false;
+    }
+}
+
+function checkManualOverrideMode() {
+    const overrideActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
+    
+    if (!overrideActive) {
+        return { active: false, expired: false, remainingMinutes: 0 };
+    }
+    
+    const overrideStartTime = global.get(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`);
+    const overrideDuration = global.get(`${ROOM.zoneName}.Heating.ManualOverrideDuration`) || 90;
+    
+    if (!overrideStartTime) {
+        // Override flag set but no start time - clear it
+        global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, false);
+        return { active: false, expired: false, remainingMinutes: 0 };
+    }
+    
+    const minutesElapsed = (Date.now() - overrideStartTime) / 1000 / 60;
+    const remainingMinutes = Math.max(0, overrideDuration - minutesElapsed);
+    
+    if (minutesElapsed >= overrideDuration) {
+        // Override expired - clear it
+        log(`\n⏱️ MANUAL OVERRIDE MODE EXPIRED`);
+        log(`Duration: ${overrideDuration} minutes elapsed`);
+        
+        global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, false);
+        global.set(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`, null);
+        global.set(`${ROOM.zoneName}.Heating.ManualOverrideDuration`, null);
+        global.set(`${ROOM.zoneName}.Heating.ManualOverrideType`, null);
+        global.set(`${ROOM.zoneName}.Heating.ManualOverrideOriginalValue`, null);
+        
+        addChange(`⏱️ Override ended`);
+        addChange(`Resumed schedule`);
+        
+        return { active: false, expired: true, remainingMinutes: 0 };
+    }
+    
+    return { active: true, expired: false, remainingMinutes: Math.ceil(remainingMinutes) };
+}
+
+async function detectManualIntervention() {
+    // Grace period check - don't detect changes within 7 minutes of last ACTUAL automation change
+    // LastAutomationChangeTime is only updated when system makes physical changes (not on every run)
+    // This prevents false positives from system's own temperature adjustments (schedule, inactivity, away mode)
+    const lastChangeTime = global.get(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`) || 0;
+    const minutesSinceLastChange = (Date.now() - lastChangeTime) / 1000 / 60;
+    
+    if (minutesSinceLastChange < MANUAL_OVERRIDE_GRACE_PERIOD_MINUTES) {
+        return { detected: false };
+    }
+    
+    if (ROOM.heating.type === 'tado_valve') {
+        // TADO: Detect temperature changes
+        const expectedTarget = global.get(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`);
+        
+        if (expectedTarget === null || expectedTarget === undefined) {
+            // First run - no expected value yet
+            return { detected: false };
+        }
+        
+        try {
+            const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
+            const currentTarget = device.capabilitiesObj.target_temperature.value;
+            const currentOnOff = device.capabilitiesObj.onoff.value;
+            
+            // Check if TADO is in away mode (don't treat away mode changes as manual)
+            const tadoAway = await isTadoAway();
+            if (tadoAway) {
+                // In away mode, TADO may change temperature automatically
+                return { detected: false };
+            }
+            
+            // Check for intervention (0.3°C tolerance for TADO rounding)
+            const tempDifference = Math.abs(currentTarget - expectedTarget);
+            
+            if (tempDifference > 0.3) {
+                log(`\n🤚 MANUAL INTERVENTION DETECTED (TADO)`);
+                log(`Expected: ${expectedTarget}°C, Found: ${currentTarget}°C`);
+                log(`Difference: ${tempDifference.toFixed(1)}°C`);
+                
+                return {
+                    detected: true,
+                    type: 'temperature',
+                    originalValue: expectedTarget,
+                    currentValue: currentTarget
+                };
+            }
+            
+            return { detected: false };
+            
+        } catch (error) {
+            log(`⚠️ Error detecting manual intervention: ${error.message}`);
+            return { detected: false };
+        }
+        
+    } else if (ROOM.heating.type === 'smart_plug') {
+        // Smart plugs: Detect switch changes
+        const expectedOnOff = global.get(`${ROOM.zoneName}.Heating.ExpectedOnOff`);
+        
+        if (expectedOnOff === null || expectedOnOff === undefined) {
+            // First run - no expected value yet
+            return { detected: false };
+        }
+        
+        try {
+            const currentStates = [];
+            let anyDifferent = false;
+            
+            for (const deviceId of ROOM.heating.devices) {
+                const device = await Homey.devices.getDevice({ id: deviceId });
+                const currentState = device.capabilitiesObj.onoff.value;
+                currentStates.push({ id: deviceId, name: device.name, state: currentState });
+                
+                if (currentState !== expectedOnOff) {
+                    anyDifferent = true;
+                    log(`\n🤚 MANUAL INTERVENTION DETECTED (SMART PLUG)`);
+                    log(`Device: ${device.name}`);
+                    log(`Expected: ${expectedOnOff ? 'ON' : 'OFF'}, Found: ${currentState ? 'ON' : 'OFF'}`);
+                }
+            }
+            
+            if (anyDifferent) {
+                return {
+                    detected: true,
+                    type: 'switch',
+                    originalValue: expectedOnOff,
+                    currentValue: currentStates
+                };
+            }
+            
+            return { detected: false };
+            
+        } catch (error) {
+            log(`⚠️ Error detecting manual intervention: ${error.message}`);
+            return { detected: false };
+        }
+    }
+    
+    return { detected: false };
+}
+
+async function handleManualOverride() {
+    log(`\n--- MANUAL OVERRIDE CONTROL ---`);
+    log(`Manual override: ACTIVE - respecting user's manual changes`);
+    log(`Automation paused - no commands will be sent`);
+    
+    // Just read current state for logging, but don't change anything
+    const heatingOn = await getHeatingStatus();
+    
+    if (ROOM.heating.type === 'smart_plug') {
+        log(`Smart plug mode: Current state preserved (automation paused)`);
+        for (const deviceId of ROOM.heating.devices) {
+            try {
+                const device = await Homey.devices.getDevice({ id: deviceId });
+                const currentState = device.capabilitiesObj.onoff.value;
+                log(`✓ ${device.name}: ${currentState ? 'ON' : 'OFF'} (manual)`);
+            } catch (error) {
+                log(`❌ Error reading ${deviceId}: ${error.message}`);
+            }
+        }
+    } else if (ROOM.heating.type === 'tado_valve') {
+        log(`TADO mode: Current settings preserved (automation paused)`);
+        try {
+            const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
+            const currentTarget = device.capabilitiesObj.target_temperature.value;
+            const heatingPower = device.capabilitiesObj.tado_heating_power?.value || 0;
+            log(`✓ TADO target: ${currentTarget}°C (manual)`);
+            log(`✓ Heating power: ${heatingPower}%`);
+        } catch (error) {
+            log(`❌ Error reading TADO: ${error.message}`);
+        }
+    }
+    
+    return 'manual_override_active';
+}
+
+// ============================================================================
 // Zone-Based Device Functions
 // ============================================================================
 
@@ -731,6 +1010,14 @@ async function setHeating(turnOn, effectiveTarget) {
                 results.push(false);
             }
         }
+        // Store expected state for manual intervention detection
+        // Always store expected state to maintain baseline
+        global.set(`${ROOM.zoneName}.Heating.ExpectedOnOff`, turnOn);
+        // Only update change time if we actually made a change
+        if (anyChanged) {
+            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+        }
+        
         return { success: results.every(r => r), changed: anyChanged };
         
     } else if (ROOM.heating.type === 'tado_valve') {
@@ -759,16 +1046,35 @@ async function setHeating(turnOn, effectiveTarget) {
                 if (!changed) {
                     log(`✓ TADO already ON with target ${effectiveTarget}°C - no change needed`);
                 }
+                
+                // Store expected target for manual intervention detection
+                global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, effectiveTarget);
+                // Only update LastAutomationChangeTime when we ACTUALLY made a change
+                // This prevents constantly resetting the grace period on every script run
+                if (changed) {
+                    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+                    log(`📝 Stored expected target: ${effectiveTarget}°C and reset grace period (changed)`);
+                } else {
+                    log(`📝 Updated expected target: ${effectiveTarget}°C (no physical change, grace period not reset)`);
+                }
             } else {
                 // Turn off completely - but only if needed!
                 if (currentOnOff !== false) {
                     await device.setCapabilityValue('onoff', false);
                     log(`🔥 TADO turned OFF`);
                     changed = true;
-                } else {
+                }
+                
+                if (!changed) {
                     log(`✓ TADO already OFF - no change needed`);
                 }
+                
+                // CLEAR ExpectedTargetTemp when turning off - prevents false positives from stale values
+                // Stale expected values could cause false positive manual override detection when schedule changes
+                global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, null);
+                log(`📝 Cleared expected target (TADO off - prevents false positive detection from stale values)`);
             }
+            
             return { success: true, changed: changed };
         } catch (error) {
             log(`❌ Error controlling TADO: ${error.message}`);
@@ -1361,10 +1667,43 @@ try {
 }
 
 // ============================================================================
+// Manual Intervention Detection (Highest Priority)
+// ============================================================================
+
+// Check for manual interventions BEFORE boost/pause (unless explicitly canceling)
+if (!requestCancel && !requestBoost && !requestPause) {
+    const manualOverrideActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
+    
+    if (!manualOverrideActive) {
+        const intervention = await detectManualIntervention();
+        if (intervention.detected) {
+            activateManualOverrideMode(
+                intervention.type,
+                intervention.originalValue,
+                intervention.currentValue
+            );
+            
+            // Manual override has highest priority - cancel any active boost/pause
+            const boostWasActive = global.get(`${ROOM.zoneName}.Heating.BoostMode`);
+            const pauseWasActive = global.get(`${ROOM.zoneName}.Heating.PauseMode`);
+            
+            if (boostWasActive) {
+                log(`\n🔄 Cancelling active boost due to manual intervention...`);
+                cancelBoostMode();
+            }
+            if (pauseWasActive) {
+                log(`\n🔄 Cancelling active pause due to manual intervention...`);
+                cancelPauseMode();
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Override Mode Check (Boost & Pause)
 // ============================================================================
 
-// Handle cancel request first - cancels both boost and pause
+// Handle cancel request first - cancels boost, pause, AND manual override
 if (requestCancel) {
     const wasCancelled = cancelAllOverrideModes();
     
@@ -1377,22 +1716,34 @@ if (requestCancel) {
     }
 }
 
-// Activate pause if requested (latest call wins - cancel any active boost)
+// Activate pause if requested (latest call wins - cancel any active boost/manual override)
 if (requestPause) {
     const boostWasActive = global.get(`${ROOM.zoneName}.Heating.BoostMode`);
+    const manualWasActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
+    
     if (boostWasActive) {
         log(`\n🔄 Cancelling active boost to activate pause...`);
         cancelBoostMode();
     }
+    if (manualWasActive) {
+        log(`\n🔄 Cancelling active manual override to activate pause...`);
+        cancelManualOverrideMode();
+    }
     activatePauseMode();
 }
 
-// Activate boost if requested (latest call wins - cancel any active pause)
+// Activate boost if requested (latest call wins - cancel any active pause/manual override)
 if (requestBoost) {
     const pauseWasActive = global.get(`${ROOM.zoneName}.Heating.PauseMode`);
+    const manualWasActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
+    
     if (pauseWasActive) {
         log(`\n🔄 Cancelling active pause to activate boost...`);
         cancelPauseMode();
+    }
+    if (manualWasActive) {
+        log(`\n🔄 Cancelling active manual override to activate boost...`);
+        cancelManualOverrideMode();
     }
     activateBoostMode();
 }
@@ -1484,6 +1835,77 @@ if (boostStatus.active) {
 // If boost just expired, continue with normal schedule
 if (boostStatus.expired) {
     log(`\n⏱️ Boost mode expired - resuming normal schedule`);
+}
+
+// ============================================================================
+// Manual Override Mode Check (After Boost/Pause)
+// ============================================================================
+
+// Check if manual override mode is active (pause takes precedence over normal, manual over all)
+const manualOverrideStatus = checkManualOverrideMode();
+
+if (manualOverrideStatus.active) {
+    log(`\n🤚 MANUAL OVERRIDE MODE ACTIVE`);
+    log(`Remaining: ${manualOverrideStatus.remainingMinutes} minutes`);
+    
+    // Read room temperature for status
+    const roomTemp = await getRoomTemperature();
+    if (roomTemp === null) {
+        log('❌ Could not read room temperature!');
+        return;
+    }
+    
+    // Handle manual override (read state but don't change anything)
+    const action = await handleManualOverride();
+    
+    // Log diagnostics with manual override action
+    const now = getDanishLocalTime();
+    
+    // Get actual current target for diagnostics
+    let actualTarget = 0;
+    if (ROOM.heating.type === 'tado_valve') {
+        try {
+            const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
+            actualTarget = device.capabilitiesObj.target_temperature.value;
+        } catch (error) {
+            // Use 0 if can't read
+        }
+    }
+    
+    const currentSlot = { target: actualTarget, inactivityOffset: 0 }; // Target is whatever user set manually
+    await logDiagnostics(now, roomTemp, currentSlot, action);
+    
+    // Send notification - show current state but indicate manual override
+    const heatingOn = await getHeatingStatus();
+    let currentTarget = 'MANUAL';
+    
+    if (ROOM.heating.type === 'tado_valve') {
+        try {
+            const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
+            currentTarget = device.capabilitiesObj.target_temperature.value;
+        } catch (error) {
+            // Ignore error
+        }
+    }
+    
+    await sendUnifiedNotification({
+        room: roomTemp,
+        target: currentTarget,
+        window: 'CLOSED',  // Don't show window icon during manual override
+        windowSettle: false,
+        inactivity: 'NO',  // Don't show inactivity icon during manual override
+        heating: heatingOn ? (ROOM.heating.type === 'tado_valve' ? 'HEATING' : 'ON') : 'OFF',
+        tado: 'HOME',  // Don't show away icon during manual override
+        nextChange: `Override ends in ${manualOverrideStatus.remainingMinutes} min`
+    });
+    
+    log(`\n=== MANUAL OVERRIDE MODE - COMPLETED ===`);
+    return;
+}
+
+// If manual override just expired, continue with normal schedule
+if (manualOverrideStatus.expired) {
+    log(`\n⏱️ Manual override expired - resuming normal schedule`);
 }
 
 // ============================================================================
