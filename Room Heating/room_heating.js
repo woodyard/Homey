@@ -27,10 +27,25 @@
  * - Manual intervention detection - respects manual changes for 90 minutes
  *
  * Author: Henrik Skovgaard
- * Version: 10.6.9
+ * Version: 10.6.11
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
+ * Version History:
+ * 10.6.11 (2026-01-15) - 🐛 CRITICAL FIX: Window settle delay triggered even for brief window openings
+ *   - Fixed bug where "Window closed • Waiting 10min" shown even if window only open for seconds
+ *   - Problem: Air settle delay started whenever window closed, regardless of how long it was open
+ *   - If window open < timeout, heating never turned off, so no need to wait for air to settle
+ *   - Solution: Only start settle delay if window was open long enough to trigger heating shutoff
+ *   - Example: Open window 5 sec → close → no delay (heating never affected)
+ *   - Example: Open window 6 min → close → 10 min delay (heating was off, air needs to settle)
+ * 10.6.10 (2026-01-15) - 🐛 CRITICAL FIX: Window closed delay notification sent immediately
+ *   - Fixed bug where "Air settled" notification appeared immediately after "Window closed"
+ *   - Problem: WindowClosedTime could trigger premature completion check
+ *   - Solution: Added minimum 60-second threshold to prevent immediate double notifications
+ *   - Ensures script MUST wait at least 60 seconds before "Air settled" notification
+ *   - Prevents both notifications from being sent with identical timestamps
+
  * 10.6.9 (2026-01-15) - 🔍 Search child zones for motion and window sensors
  *   - Added getZoneAndChildDevices() helper to search parent zone + all child zones
  *   - Window sensors now detected in child zones (fixes "No window sensors found")
@@ -146,7 +161,6 @@
  *   - Immediately clears boost mode and resumes schedule
  *   - Notification sent when boost is cancelled
  *   - Works even if boost not active (safe to call anytime)
- * Version History:
  * 10.4.0 (2026-01-08) - 🚀 Add boost heating mode
  *   - New "boost" argument: run('Clara', 'boost') activates boost for 60 minutes  
  *   - Smart plugs: Turn on all radiators, ignore schedule and hysteresis
@@ -1517,24 +1531,38 @@ async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
     } else {
         // Window is closed
         if (windowOpenTime) {
-            // Window just closed - start the settle delay
-            global.set(`${ROOM.zoneName}.Heating.WindowClosedTime`, Date.now());
-            global.set(`${ROOM.zoneName}.Heating.WindowOpenTime`, null);
-            global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, false);
+            // Window just closed - check if it was open long enough to affect heating
+            const secondsOpen = (Date.now() - windowOpenTime) / 1000;
             
-            const delayMinutes = Math.floor(windowClosedDelay / 60);
-            addChange("Window closed");
-            addChange(`Waiting ${delayMinutes}min`);
-            log(`✓ Window closed - waiting ${delayMinutes} min for air to settle`);
-            
-            return 'window_closed_waiting';
+            // Only start settle delay if window was open long enough to trigger timeout
+            // If window was only open briefly, no need to wait for air to settle
+            if (secondsOpen >= ROOM.settings.windowOpenTimeout) {
+                // Window was open long enough to turn off heating - start settle delay
+                global.set(`${ROOM.zoneName}.Heating.WindowClosedTime`, Date.now());
+                global.set(`${ROOM.zoneName}.Heating.WindowOpenTime`, null);
+                global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, false);
+                
+                const delayMinutes = Math.floor(windowClosedDelay / 60);
+                addChange("Window closed");
+                addChange(`Waiting ${delayMinutes}min`);
+                log(`✓ Window closed (was open ${Math.floor(secondsOpen)}s) - waiting ${delayMinutes} min for air to settle`);
+                
+                return 'window_closed_waiting';
+            } else {
+                // Window was only open briefly - no settle delay needed
+                global.set(`${ROOM.zoneName}.Heating.WindowOpenTime`, null);
+                global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, false);
+                log(`✓ Window closed (was only open ${Math.floor(secondsOpen)}s) - no settle delay needed`);
+                
+                // Continue with normal heating logic (no notification)
+            }
         }
         
         // Check if we're in the settle delay period
         if (windowClosedTime) {
             const secondsSinceClosed = (Date.now() - windowClosedTime) / 1000;
             
-            if (secondsSinceClosed < windowClosedDelay) {
+            if (secondsSinceClosed < windowClosedDelay || secondsSinceClosed < 60) {
                 // Still waiting for air to settle
                 const remainingSeconds = Math.floor(windowClosedDelay - secondsSinceClosed);
                 const remainingMinutes = Math.floor(remainingSeconds / 60);
