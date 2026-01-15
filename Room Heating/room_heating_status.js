@@ -5,11 +5,23 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 4.6.0
+ * Version: 4.6.2
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
  * Version History:
+ * 4.6.2 (2026-01-15) - 🔍 Search child zones for motion and window sensors (matches heating v10.6.9)
+ *   - Added getZoneAndChildDevices() helper to search parent zone + all child zones
+ *   - Motion sensors now shown in DEVICES section even if in child zones
+ *   - Window sensors now detected in child zones
+ *   - Supports complex zone hierarchies (e.g., "Stue / Spisestue" with children)
+ *   - Backward compatible with simple zone structures
+ * 4.6.1 (2026-01-15) - 📊 CRITICAL FIX: Get TADO devices directly by ID (matches heating v10.6.8)
+ *   - Fixed bug where TADO devices in different zones weren't shown in status
+ *   - TADO rooms now get thermostat directly by device ID instead of zone filtering
+ *   - Shows correct temperature sensor in DEVICES section (TADO device, not motion sensor)
+ *   - Heating devices now fetched directly by ID, works even if in different zone
+ *   - Ensures status displays match actual heating control behavior
  * 4.6.0 (2026-01-13) - 🤚 Show manual override mode status (matches heating v10.6.0)
  *   - Displays manual override mode status when active
  *   - Shows remaining override time
@@ -126,22 +138,69 @@ async function getZoneByName(zoneName) {
     return Object.values(zones).find(z => z.name === zoneName);
 }
 
-async function getZoneDevices(zoneName, heatingDeviceIds) {
+async function getZoneAndChildDevices(zone) {
+    // Get devices from this zone and all child zones
+    const devices = await Homey.devices.getDevices();
+    const zones = await Homey.zones.getZones();
+    
+    // Find all child zones (zones where parent === this zone's id)
+    const childZones = Object.values(zones).filter(z => z.parent === zone.id);
+    
+    // Get zone IDs to search (this zone + all children)
+    const zoneIds = [zone.id, ...childZones.map(z => z.id)];
+    
+    // Filter devices that belong to any of these zones
+    return Object.values(devices).filter(d => zoneIds.includes(d.zone));
+}
+
+async function getZoneDevices(zoneName, heatingDeviceIds, roomConfig) {
     try {
         const zone = await getZoneByName(zoneName);
         if (!zone) {
             return { error: `Zone "${zoneName}" not found` };
         }
         
-        const allDevices = await Homey.devices.getDevices();
-        const zoneDevices = Object.values(allDevices).filter(d => d.zone === zone.id);
+        // Get devices from zone and all child zones
+        const zoneDevices = await getZoneAndChildDevices(zone);
+        
+        // Find temperature sensor with priority logic
+        let tempSensor = null;
+        
+        // PRIORITY 1: For TADO rooms, get TADO device directly by ID (may be in different zone)
+        if (roomConfig.heating.type === 'tado_valve') {
+            try {
+                const tadoDevice = await Homey.devices.getDevice({ id: heatingDeviceIds[0] });
+                
+                if (tadoDevice.capabilitiesObj?.measure_temperature) {
+                    tempSensor = tadoDevice;
+                }
+            } catch (tadoError) {
+                // TADO device not found or has no temp sensor, fall back to zone sensor
+            }
+        }
+        
+        // PRIORITY 2: Fall back to any temperature sensor in zone
+        if (!tempSensor) {
+            tempSensor = zoneDevices.find(d => d.capabilitiesObj?.measure_temperature);
+        }
+        
+        // Get heating devices directly by ID (may not be in same zone)
+        const heatingDevices = [];
+        for (const deviceId of heatingDeviceIds) {
+            try {
+                const device = await Homey.devices.getDevice({ id: deviceId });
+                heatingDevices.push(device);
+            } catch (error) {
+                // Device not found, skip it
+            }
+        }
         
         return {
             zone: zone,
-            tempSensor: zoneDevices.find(d => d.capabilitiesObj?.measure_temperature),
+            tempSensor: tempSensor,
             motionSensor: zoneDevices.find(d => d.capabilitiesObj?.alarm_motion),
             windowSensors: zoneDevices.filter(d => d.capabilitiesObj?.alarm_contact),
-            heatingDevices: zoneDevices.filter(d => heatingDeviceIds.includes(d.id))
+            heatingDevices: heatingDevices
         };
     } catch (error) {
         return { error: error.message };
@@ -343,7 +402,7 @@ async function showRoomStatus(roomName, roomConfig) {
     log(`║          ${roomName.toUpperCase()}'S HEATING SYSTEM - STATUS${' '.repeat(Math.max(0, 26 - roomName.length))}║`);
     log('╚═══════════════════════════════════════════════════════════════╝\n');
     // Get all devices for this zone
-    const devices = await getZoneDevices(ZONE_NAME, roomConfig.heating.devices);
+    const devices = await getZoneDevices(ZONE_NAME, roomConfig.heating.devices, roomConfig);
     
     if (devices.error) {
         log(`❌ Error: ${devices.error}\n`);
@@ -525,9 +584,9 @@ async function showRoomStatus(roomName, roomConfig) {
                     log(`Window:         🔴 OPEN`);
                 }
             } else {
-                // Check if we're in the settle delay period
+                // Check if we're in the settle delay period (but not during boost/pause modes)
                 const windowClosedTime = global.get(`${ZONE_NAME}.Heating.WindowClosedTime`);
-                if (windowClosedTime) {
+                if (windowClosedTime && !boostActive && !pauseActive) {
                     const windowClosedDelay = roomConfig.settings.windowClosedDelay || 600;
                     const secondsSinceClosed = Math.floor((Date.now() - windowClosedTime) / 1000);
                     const remainingSeconds = Math.max(0, windowClosedDelay - secondsSinceClosed);

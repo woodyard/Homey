@@ -70,8 +70,8 @@ const ROOMS = {
             lateEvening: { start: '21:00', end: '23:59', target: 20, inactivityOffset: 0, name: 'Evening' }
         },
         settings: {
-            tadoAwayMinTemp: 18.0,
-            inactivityTimeout: 20,
+            tadoAwayMinTemp: 17.0,
+            inactivityTimeout: 30,
             windowOpenTimeout: 60,
             windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
@@ -101,8 +101,8 @@ const ROOMS = {
             lateEvening: { start: '21:00', end: '23:59', target: 20, inactivityOffset: 1, name: 'Evening' }
         },
         settings: {
-            tadoAwayMinTemp: 18.0,
-            inactivityTimeout: 20,
+            tadoAwayMinTemp: 17.0,
+            inactivityTimeout: 30,
             windowOpenTimeout: 60,
             windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
@@ -133,13 +133,47 @@ const ROOMS = {
         },
         settings: {
             tadoAwayMinTemp: 17.0,
-            inactivityTimeout: 20,
+            inactivityTimeout: 30,
+            windowOpenTimeout: 60,
+            windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
+            manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
+        }
+    },
+
+     'Stue': {
+        zoneName: 'Stue / Spisestue',
+        heating: {
+            type: 'tado_valve',
+            devices: ['2ca14bef-8a28-43cc-af70-0d0611f5281f']   // Skovgaard / Stue
+        },
+        schedules: {
+            weekday: [
+                { start: '00:00', end: '05:00', target: 21, inactivityOffset: 0, name: 'Night' },
+                { start: '05:00', end: '07:00', target: 22.5, inactivityOffset: 0, name: 'Morning' },
+                { start: '07:00', end: '22:00', target: 22, inactivityOffset: 1, name: 'Day' }
+            ],
+            weekend: [
+                { start: '00:00', end: '06:00', target: 21, inactivityOffset: 0, name: 'Night' },
+                { start: '06:00', end: '08:00', target: 22.5, inactivityOffset: 0, name: 'Morning' },
+                { start: '08:00', end: '22:00', target: 22, inactivityOffset: 1, name: 'Day' }
+            ],
+            holiday: [
+                { start: '00:00', end: '06:00', target: 21, inactivityOffset: 0, name: 'Night' },
+                { start: '06:00', end: '08:00', target: 22.5, inactivityOffset: 0, name: 'Morning' },
+                { start: '08:00', end: '22:00', target: 22, inactivityOffset: 1, name: 'Day' }
+            ],
+            earlyEvening: { start: '22:00', end: '23:59', target: 21, inactivityOffset: 0, name: 'Evening' },
+            lateEvening: { start: '22:00', end: '23:59', target: 21, inactivityOffset: 0, name: 'Evening' }
+        },
+        settings: {
+            tadoAwayMinTemp: 17.0,
+            inactivityTimeout: 90,
             windowOpenTimeout: 60,
             windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
         }
     }
-    
+   
     // Add more rooms here!
 };
 

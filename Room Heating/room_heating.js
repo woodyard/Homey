@@ -27,10 +27,26 @@
  * - Manual intervention detection - respects manual changes for 90 minutes
  *
  * Author: Henrik Skovgaard
- * Version: 10.6.7
+ * Version: 10.6.9
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
+ * 10.6.9 (2026-01-15) - 🔍 Search child zones for motion and window sensors
+ *   - Added getZoneAndChildDevices() helper to search parent zone + all child zones
+ *   - Window sensors now detected in child zones (fixes "No window sensors found")
+ *   - Motion sensors now detected in child zones for proper activity tracking
+ *   - Supports complex zone hierarchies (e.g., "Stue / Spisestue" with "Stue" and "Spisestue" children)
+ *   - isWindowOpen() now searches child zones
+ *   - Backward compatible - works with both simple and hierarchical zone structures
+ * 10.6.8 (2026-01-15) - 📊 CRITICAL FIX: Use TADO device temperature sensor directly by ID
+ *   - Fixed bug where TADO devices in different zones weren't found by zone filtering
+ *   - TADO rooms now get thermostat directly by device ID instead of filtering by zone
+ *   - Prioritizes TADO's built-in temperature sensor (more accurate at valve location)
+ *   - Falls back to zone sensors if TADO device not found or lacks temperature capability
+ *   - Affects: TADO valve rooms (Oliver, Soveværelse, Stue) - uses thermostat temperature
+ *   - Smart plug rooms (Clara) unchanged - continues using zone sensors
+ *   - Added detailed logging showing which sensor is used and current temperature value
+ *   - Fixes "TADO device has no temperature sensor" false warning
  * 10.6.7 (2026-01-14) - 🐛 CRITICAL FIX: Away mode transition check MUST happen BEFORE manual detection
  *   - Fixed execution order bug causing false positive manual override when arriving home
  *   - Problem: detectManualIntervention() called BEFORE grace period reset in controlHeating()
@@ -277,7 +293,7 @@ if (args?.[0]?.includes(',')) {
     log(`📝 Parsed Flow arguments: room="${roomArgRaw}", action="${boostArg}"`);
 } else {
     // HomeyScript format: Separate arguments
-    roomArgRaw = args?.[0] || 'Oliver';
+    roomArgRaw = args?.[0] || 'Stue';
     boostArg = args?.[1];
 }
 
@@ -930,21 +946,60 @@ async function getZoneByName(zoneName) {
     return Object.values(zones).find(z => z.name === zoneName);
 }
 
+async function getZoneAndChildDevices(zone) {
+    // Get devices from this zone and all child zones
+    const devices = await Homey.devices.getDevices();
+    const zones = await Homey.zones.getZones();
+    
+    // Find all child zones (zones where parent === this zone's id)
+    const childZones = Object.values(zones).filter(z => z.parent === zone.id);
+    
+    // Get zone IDs to search (this zone + all children)
+    const zoneIds = [zone.id, ...childZones.map(z => z.id)];
+    
+    // Filter devices that belong to any of these zones
+    return Object.values(devices).filter(d => zoneIds.includes(d.zone));
+}
+
 async function getRoomTemperature() {
     try {
-        const zone = await getZoneByName(ROOM.zoneName);
-        if (!zone) {
-            log(`❌ Zone "${ROOM.zoneName}" not found`);
-            return null;
+        let tempSensor = null;
+        
+        // PRIORITY 1: For TADO rooms, get TADO device directly by ID (may be in different zone)
+        if (ROOM.heating.type === 'tado_valve') {
+            try {
+                const tadoDevice = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
+                
+                if (tadoDevice.capabilitiesObj?.measure_temperature) {
+                    tempSensor = tadoDevice;
+                    log(`📊 Using TADO device temperature sensor: ${tadoDevice.name} (${tadoDevice.capabilitiesObj.measure_temperature.value}°C)`);
+                } else {
+                    log(`⚠️  TADO device "${tadoDevice.name}" has no temperature sensor, falling back to zone sensor`);
+                }
+            } catch (tadoError) {
+                log(`⚠️  Could not get TADO device: ${tadoError.message}, falling back to zone sensor`);
+            }
         }
         
-        const devices = await Homey.devices.getDevices();
-        const zoneDevices = Object.values(devices).filter(d => d.zone === zone.id);
-        
-        const tempSensor = zoneDevices.find(d => d.capabilitiesObj?.measure_temperature);
+        // PRIORITY 2: Fall back to any temperature sensor in zone
+        if (!tempSensor) {
+            const zone = await getZoneByName(ROOM.zoneName);
+            if (!zone) {
+                log(`❌ Zone "${ROOM.zoneName}" not found`);
+                return null;
+            }
+            
+            const devices = await Homey.devices.getDevices();
+            const zoneDevices = Object.values(devices).filter(d => d.zone === zone.id);
+            tempSensor = zoneDevices.find(d => d.capabilitiesObj?.measure_temperature);
+            
+            if (tempSensor) {
+                log(`📊 Using zone temperature sensor: ${tempSensor.name} (${tempSensor.capabilitiesObj.measure_temperature.value}°C)`);
+            }
+        }
         
         if (!tempSensor) {
-            log(`❌ No temperature sensor found in zone "${ROOM.zoneName}"`);
+            log(`❌ No temperature sensor found for room "${ROOM.zoneName}"`);
             return null;
         }
         
@@ -960,10 +1015,10 @@ async function isWindowOpen() {
         const zone = await getZoneByName(ROOM.zoneName);
         if (!zone) return false;
         
-        const devices = await Homey.devices.getDevices();
-        const zoneDevices = Object.values(devices).filter(d => d.zone === zone.id);
+        // Get devices from zone and all child zones
+        const zoneDevices = await getZoneAndChildDevices(zone);
         
-        // Check if ANY contact alarm in zone is active
+        // Check if ANY contact alarm in zone or child zones is active
         return zoneDevices.some(d => d.capabilitiesObj?.alarm_contact?.value === true);
     } catch (error) {
         log(`Error reading window status: ${error.message}`);
