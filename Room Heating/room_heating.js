@@ -27,11 +27,14 @@
  * - Manual intervention detection - respects manual changes for 90 minutes
  *
  * Author: Henrik Skovgaard
- * Version: 10.8.0
+ * Version: 10.8.6
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.8.6  (2026-01-17) - 🐛 Fix: Snowflake icon shown incorrectly during manual override
+ * 10.8.5  (2026-01-17) - 🐛 Fix: Grace period blocks manual control detection
+ * 10.8.4  (2026-01-17) - 🐛 Fix: Boost/pause cancelled by false manual detection
  * 10.8.3  (2026-01-17) - 🐛 Fix: TADO target calculation from scratch on air settle
  * 10.8.2  (2026-01-17) - 🐛 Fix: TADO set to wrong target after air settle
  * 10.8.1  (2026-01-17) - 🐛 Fix: Air settled notification not sent
@@ -269,12 +272,18 @@ async function getNextScheduleChange(schedule, currentSlot) {
 const BOOST_DURATION_MINUTES = 60;
 const BOOST_TEMPERATURE_TADO = 25;
 const PAUSE_DURATION_MINUTES = 60;
-const MANUAL_OVERRIDE_GRACE_PERIOD_MINUTES = 7; // 7 minutes - must exceed script interval (typically 5 min)
+const MANUAL_OVERRIDE_GRACE_PERIOD_MINUTES = 0.5; // 30 seconds - only for network/async delays, not blocking detection
 
 function activateBoostMode() {
     global.set(`${ROOM.zoneName}.Heating.BoostMode`, true);
     global.set(`${ROOM.zoneName}.Heating.BoostStartTime`, Date.now());
     global.set(`${ROOM.zoneName}.Heating.BoostDuration`, BOOST_DURATION_MINUTES);
+    
+    // Set expected target to boost temperature to prevent false manual detection
+    if (ROOM.heating.type === 'tado_valve') {
+        global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, BOOST_TEMPERATURE_TADO);
+    }
+    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
     
     log(`\n🚀 BOOST MODE ACTIVATED`);
     log(`Duration: ${BOOST_DURATION_MINUTES} minutes`);
@@ -349,6 +358,10 @@ function checkBoostMode() {
         global.set(`${ROOM.zoneName}.Heating.BoostStartTime`, null);
         global.set(`${ROOM.zoneName}.Heating.BoostDuration`, null);
         
+        // Reset grace period to prevent false manual detection after boost expires
+        global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+        log(`📝 Grace period reset to prevent false manual detection after boost expiration`);
+        
         addChange(`⏱️ Boost ended`);
         addChange(`Resumed schedule`);
         
@@ -403,6 +416,11 @@ async function controlHeatingBoost() {
                 log(`✓ TADO already at boost temperature`);
             }
             
+            // Update expected target to prevent false manual detection
+            global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, BOOST_TEMPERATURE_TADO);
+            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+            log(`📝 Expected target updated to ${BOOST_TEMPERATURE_TADO}°C (boost mode - prevents false manual detection)`);
+            
             return 'boost_tado';
         } catch (error) {
             log(`❌ Error controlling TADO: ${error.message}`);
@@ -421,6 +439,12 @@ function activatePauseMode() {
     global.set(`${ROOM.zoneName}.Heating.PauseMode`, true);
     global.set(`${ROOM.zoneName}.Heating.PauseStartTime`, Date.now());
     global.set(`${ROOM.zoneName}.Heating.PauseDuration`, PAUSE_DURATION_MINUTES);
+    
+    // Clear expected target and reset grace period to prevent false manual detection
+    if (ROOM.heating.type === 'tado_valve') {
+        global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, null);
+    }
+    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
     
     log(`\n⏸️ PAUSE MODE ACTIVATED`);
     log(`Duration: ${PAUSE_DURATION_MINUTES} minutes`);
@@ -481,6 +505,10 @@ function checkPauseMode() {
         global.set(`${ROOM.zoneName}.Heating.PauseStartTime`, null);
         global.set(`${ROOM.zoneName}.Heating.PauseDuration`, null);
         
+        // Reset grace period to prevent false manual detection after pause expires
+        global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+        log(`📝 Grace period reset to prevent false manual detection after pause expiration`);
+        
         addChange(`⏱️ Pause ended`);
         addChange(`Resumed schedule`);
         
@@ -528,6 +556,11 @@ async function controlHeatingPause() {
             } else {
                 log(`✓ TADO already OFF`);
             }
+            
+            // Clear expected target to prevent false manual detection during pause
+            global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, null);
+            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+            log(`📝 Expected target cleared (pause mode - prevents false manual detection)`);
             
             return 'pause_tado';
         } catch (error) {
@@ -1871,7 +1904,8 @@ if (manualOverrideStatus.active) {
         window: 'CLOSED',  // Don't show window icon during manual override
         windowSettle: false,
         inactivity: 'NO',  // Don't show inactivity icon during manual override
-        heating: heatingOn ? (ROOM.heating.type === 'tado_valve' ? 'HEATING' : 'ON') : 'OFF',
+        heating: heatingOn ? (ROOM.heating.type === 'tado_valve' ? 'HEATING' : 'ON') :
+                            (ROOM.heating.type === 'tado_valve' ? 'IDLE' : 'OFF'),
         tado: 'HOME',  // Don't show away icon during manual override
         nextChange: `Override ends in ${manualOverrideStatus.remainingMinutes} min`
     });

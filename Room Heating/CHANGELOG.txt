@@ -6,6 +6,56 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.8.6 (2026-01-17)
+==============================================
+🐛 Fix: Snowflake icon (❄️) shown incorrectly during manual override for TADO
+- Fixed bug where snowflake appeared in manual override notification when TADO was IDLE
+- Problem: Manual override notification showed 'OFF' for TADO when not actively heating
+- TADO has three states: HEATING (actively heating), IDLE (on but not heating), OFF (turned off)
+- Snowflake should only appear when heating is completely OFF, not when IDLE
+- Manual override notification now matches normal schedule notification logic
+- Now shows: HEATING (no icon), IDLE (no icon), OFF (❄️ snowflake)
+- Example: Manual override at 22.5°C, room at 22.3°C → IDLE state → no snowflake
+- Consistent with version 10.3.10 fix for normal notifications
+
+==============================================
+Version 10.8.5 (2026-01-17)
+==============================================
+🐛 CRITICAL FIX: Grace period blocks legitimate manual control detection
+- Fixed bug where 7-minute grace period prevented manual temperature changes from being detected
+- Problem: Grace period was meant to prevent false positives from automation's own changes
+- But it blocked ALL detection, including real user manual changes (e.g., 22°C → 22.5°C)
+- Example: User changes temp → Grace period active → Detection skipped → Next run resets to schedule
+- Result: Manual changes ignored, temperature reset back to schedule value
+- Root cause: Grace period was a band-aid for not properly updating ExpectedTargetTemp
+- Solution: Reduced grace period from 7 minutes to 30 seconds (0.5 minutes)
+- 30 seconds only accounts for network/async delays, not blocking detection across script runs
+- ExpectedTargetTemp is now properly maintained (thanks to v10.8.4 fixes)
+- Now: Manual change 22→22.5°C detected within 30 seconds → Manual override activated
+- System respects user's manual settings for 90 minutes as designed
+- Grace period no longer spans multiple script runs (was 7 min > 5 min script interval)
+- Trust ExpectedTargetTemp tracking: if actual ≠ expected after 30s → manual intervention!
+- Manual override feature now works as originally intended
+
+==============================================
+Version 10.8.4 (2026-01-17)
+==============================================
+🐛 CRITICAL FIX: Boost and pause modes cancelled by false manual override detection
+- Fixed bug where boost/pause modes were cancelled shortly after activation
+- Problem: controlHeatingBoost/Pause changed TADO temperature but didn't update ExpectedTargetTemp
+- Next automatic script run (5 min later) detected difference and thought user made manual change
+- Example: Boost sets 25°C → 5 min later → system sees 25°C vs expected 22°C → "manual override detected"
+- Result: Boost activated → then immediately cancelled → left in manual override mode instead
+- Solution 1: activateBoostMode() now pre-sets ExpectedTargetTemp to boost temperature (25°C)
+- Solution 2: controlHeatingBoost() updates ExpectedTargetTemp when setting TADO temperature
+- Solution 3: checkBoostMode() resets grace period when boost expires (prevents false detection after)
+- Solution 4: Same fixes applied to pause mode (activatePauseMode, controlHeatingPause, checkPauseMode)
+- Affected: All TADO valve rooms (Oliver, Soveværelse, Stue) using boost or pause modes
+- Smart plug rooms (Clara) unaffected - only use on/off switches, not temperature tracking
+- Now: Single "🚀 Boost activated" notification, boost runs for full 60 minutes without interference
+- Manual intervention detection still works - only triggers for actual user-initiated changes
+
+==============================================
 Version 10.8.3 (2026-01-17)
 ==============================================
 🐛 CRITICAL FIX: TADO target must be recalculated from scratch on air settle
