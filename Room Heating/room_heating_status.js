@@ -5,11 +5,13 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 4.6.3
+ * Version: 4.8.0
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
  * Version History:
+ * 4.8.0 (2026-01-17) - 🎛️ Show unified slot-override architecture (matches heating v10.8.0)
+ * 4.7.0 (2026-01-17) - ⏱️ Show per-slot inactivity timeout (matches heating v10.7.0)
  * 4.6.3 (2026-01-16) - 🐛 Fix: Schedule gap when Day ends before lateEvening starts (matches heating v10.6.13)
  * 4.6.2 (2026-01-15) - 🔍 Search child zones for motion and window sensors (matches heating v10.6.9)
  *   - Added getZoneAndChildDevices() helper to search parent zone + all child zones
@@ -240,6 +242,9 @@ function getCurrentScheduleInfo(zoneName) {
         
         const target = global.get(`${zoneName}.Temperature`);
         const inactivityOffset = global.get(`${zoneName}.Heating.InactivityOffset`) || 0;
+        const slotInactivityTimeout = global.get(`${zoneName}.Heating.SlotInactivityTimeout`);
+        const slotWindowOpenTimeout = global.get(`${zoneName}.Heating.SlotWindowOpenTimeout`);
+        const slotWindowClosedDelay = global.get(`${zoneName}.Heating.SlotWindowClosedDelay`);
         
         return {
             scheduleType: scheduleType,
@@ -248,7 +253,10 @@ function getCurrentScheduleInfo(zoneName) {
                 end: currentPeriod.split('-')[1],
                 name: periodName,
                 target: target,
-                inactivityOffset: inactivityOffset
+                inactivityOffset: inactivityOffset,
+                inactivityTimeout: slotInactivityTimeout,
+                windowOpenTimeout: slotWindowOpenTimeout,
+                windowClosedDelay: slotWindowClosedDelay
             },
             time: `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
         };
@@ -534,11 +542,28 @@ async function showRoomStatus(roomName, roomConfig) {
         log(`Time:           ${scheduleInfo.time}`);
         log(`Period:         ${scheduleInfo.currentSlot.start}-${scheduleInfo.currentSlot.end} (${scheduleInfo.currentSlot.name})`);
         log(`Base Target:    ${scheduleInfo.currentSlot.target}°C`);
-        if (scheduleInfo.currentSlot.inactivityOffset > 0) {
-            log(`Inactivity:     -${scheduleInfo.currentSlot.inactivityOffset}°C offset when inactive`);
+        
+        // Inactivity settings (show effective values and sources)
+        const effectiveOffset = scheduleInfo.currentSlot.inactivityOffset !== undefined ?
+            scheduleInfo.currentSlot.inactivityOffset : (roomConfig.settings.inactivityOffset || 0);
+        const offsetSource = scheduleInfo.currentSlot.inactivityOffset !== undefined ? 'slot' : 'room';
+        
+        if (effectiveOffset > 0) {
+            const effectiveTimeout = scheduleInfo.currentSlot.inactivityTimeout || roomConfig.settings.inactivityTimeout;
+            const timeoutSource = scheduleInfo.currentSlot.inactivityTimeout ? 'slot' : 'room';
+            log(`Inactivity:     -${effectiveOffset}°C (${offsetSource}) after ${effectiveTimeout} min (${timeoutSource})`);
         } else {
             log(`Inactivity:     No offset in this period`);
         }
+        
+        // Window settings (show effective values and sources)
+        const effectiveWindowOpen = scheduleInfo.currentSlot.windowOpenTimeout || roomConfig.settings.windowOpenTimeout;
+        const windowOpenSource = scheduleInfo.currentSlot.windowOpenTimeout ? 'slot' : 'room';
+        const effectiveWindowClosed = scheduleInfo.currentSlot.windowClosedDelay || roomConfig.settings.windowClosedDelay || 600;
+        const windowClosedSource = scheduleInfo.currentSlot.windowClosedDelay ? 'slot' : 'room';
+        
+        log(`Window Open:    ${effectiveWindowOpen} sec timeout (${windowOpenSource})`);
+        log(`Window Closed:  ${Math.floor(effectiveWindowClosed/60)} min settle delay (${windowClosedSource})`);
         
         // Show next schedule change
         if (nextChange) {

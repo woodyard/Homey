@@ -27,11 +27,16 @@
  * - Manual intervention detection - respects manual changes for 90 minutes
  *
  * Author: Henrik Skovgaard
- * Version: 10.6.13
+ * Version: 10.8.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.8.3  (2026-01-17) - 🐛 Fix: TADO target calculation from scratch on air settle
+ * 10.8.2  (2026-01-17) - 🐛 Fix: TADO set to wrong target after air settle
+ * 10.8.1  (2026-01-17) - 🐛 Fix: Air settled notification not sent
+ * 10.8.0  (2026-01-17) - 🎛️ Unified slot-override architecture
+ * 10.7.0  (2026-01-17) - ⏱️ Per-slot inactivity timeout support
  * 10.6.13 (2026-01-16) - 🐛 Fix: Schedule gap when Day ends before lateEvening starts
  * 10.6.12 (2026-01-16) - 🔕 Suppress "air settled" notifications in away mode
  * 10.6.11 (2026-01-15) - 🐛 Fix: Window settle delay only for long openings
@@ -134,6 +139,28 @@ const HOMEY_LOGIC_SCHOOLDAY_TOMORROW_VAR = GLOBAL_CONFIG?.homeyLogicVars?.school
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/**
+ * Get effective setting value with slot override support
+ * @param {Object} slot - Current time slot
+ * @param {string} settingName - Name of setting to retrieve
+ * @param {any} roomDefault - Room-level default value
+ * @returns {any} Slot value if defined, otherwise room default
+ */
+function getEffectiveSetting(slot, settingName, roomDefault) {
+    const slotValue = slot[settingName];
+    return slotValue !== undefined ? slotValue : roomDefault;
+}
+
+/**
+ * Get setting source indicator for logging/display
+ * @param {Object} slot - Current time slot
+ * @param {string} settingName - Name of setting
+ * @returns {string} 'slot override' or 'room default'
+ */
+function getSettingSource(slot, settingName) {
+    return slot[settingName] !== undefined ? 'slot override' : 'room default';
+}
 
 function getDanishLocalTime() {
     const now = new Date();
@@ -1062,13 +1089,17 @@ async function isSchoolDayTomorrow() {
 // Zone-Based Inactivity Detection
 // ============================================================================
 
-async function checkInactivity(inactivityOffset) {
+async function checkInactivity(slot) {
     try {
         const zone = await getZoneByName(ROOM.zoneName);
         if (!zone) {
             log(`⚠️  Zone "${ROOM.zoneName}" not found`);
             return { inactive: false, wasInactive: false, minutesSinceMotion: 0 };
         }
+        
+        // Get effective settings using unified override pattern
+        const inactivityOffset = getEffectiveSetting(slot, 'inactivityOffset', ROOM.settings.inactivityOffset || 0);
+        const inactivityTimeout = getEffectiveSetting(slot, 'inactivityTimeout', ROOM.settings.inactivityTimeout);
         
         // If offset=0, clear flag and return inactive=false
         if (inactivityOffset === 0) {
@@ -1079,6 +1110,10 @@ async function checkInactivity(inactivityOffset) {
             }
             return { inactive: false, wasInactive: false, minutesSinceMotion: 0 };
         }
+        
+        // Store active settings for status display
+        global.set(`${ROOM.zoneName}.Heating.ActiveInactivityTimeout`, inactivityTimeout);
+        global.set(`${ROOM.zoneName}.Heating.ActiveInactivityOffset`, inactivityOffset);
         
         // Use zone.active and zone.activeLastUpdated for tracking!
         if (zone.active) {
@@ -1099,19 +1134,22 @@ async function checkInactivity(inactivityOffset) {
         const lastActive = new Date(zone.activeLastUpdated).getTime();
         const minutesSinceActive = (now - lastActive) / (1000 * 60);
         
-        if (minutesSinceActive >= ROOM.settings.inactivityTimeout) {
+        if (minutesSinceActive >= inactivityTimeout) {
             const wasInactive = global.get(`${ROOM.zoneName}.Heating.InactivityMode`);
             
             if (!wasInactive) {
                 global.set(`${ROOM.zoneName}.Heating.InactivityMode`, true);
+                const timeoutSource = getSettingSource(slot, 'inactivityTimeout');
+                const offsetSource = getSettingSource(slot, 'inactivityOffset');
                 log(`💤 Zone inactive for ${Math.floor(minutesSinceActive)} minutes`);
-                return { inactive: true, wasInactive: false, minutesSinceMotion: Math.floor(minutesSinceActive) };
+                log(`   Timeout: ${inactivityTimeout} min (${timeoutSource}), Offset: ${inactivityOffset}°C (${offsetSource})`);
+                return { inactive: true, wasInactive: false, minutesSinceMotion: Math.floor(minutesSinceActive), inactivityOffset: inactivityOffset };
             }
             
-            return { inactive: true, wasInactive: true, minutesSinceMotion: Math.floor(minutesSinceActive) };
+            return { inactive: true, wasInactive: true, minutesSinceMotion: Math.floor(minutesSinceActive), inactivityOffset: inactivityOffset };
         }
         
-        return { inactive: false, wasInactive: false, minutesSinceMotion: Math.floor(minutesSinceActive) };
+        return { inactive: false, wasInactive: false, minutesSinceMotion: Math.floor(minutesSinceActive), inactivityOffset: 0 };
         
     } catch (error) {
         log(`⚠️  Could not check zone activity: ${error.message}`);
@@ -1201,11 +1239,16 @@ async function sendUnifiedNotification(status) {
 // Heating Control Logic
 // ============================================================================
 
-async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
+async function controlHeating(roomTemp, slot, windowOpen) {
     const heatingOn = await getHeatingStatus();
     const tadoAway = await isTadoAway();
-    const inactivity = await checkInactivity(inactivityOffset);
+    const inactivity = await checkInactivity(slot);
     const wasInTadoAway = global.get(`${ROOM.zoneName}.Heating.TadoAwayActive`);
+    
+    // Get effective settings using unified override pattern
+    const inactivityOffset = inactivity.inactivityOffset || 0;
+    const windowOpenTimeout = getEffectiveSetting(slot, 'windowOpenTimeout', ROOM.settings.windowOpenTimeout);
+    const windowClosedDelay = getEffectiveSetting(slot, 'windowClosedDelay', ROOM.settings.windowClosedDelay || 600);
     
     // Calculate effective target temperature
     let effectiveTarget = slot.target;
@@ -1265,7 +1308,7 @@ async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
     const windowOpenTime = global.get(`${ROOM.zoneName}.Heating.WindowOpenTime`);
     let windowTimeoutHandled = global.get(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`);
     const windowClosedTime = global.get(`${ROOM.zoneName}.Heating.WindowClosedTime`);
-    const windowClosedDelay = ROOM.settings.windowClosedDelay || 600;  // Default 10 minutes
+    // windowClosedDelay already defined at top of function using slot override pattern
     
     if (windowOpen) {
         // Clear any window closed delay if window opens again
@@ -1277,10 +1320,11 @@ async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
         if (!windowOpenTime) {
             global.set(`${ROOM.zoneName}.Heating.WindowOpenTime`, Date.now());
             global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, false);
-            log(`⏱️  Window opened - starting ${ROOM.settings.windowOpenTimeout} sec timeout`);
+            const timeoutSource = getSettingSource(slot, 'windowOpenTimeout');
+            log(`⏱️  Window opened - starting ${windowOpenTimeout} sec timeout (${timeoutSource})`);
         } else {
             const secondsOpen = (Date.now() - windowOpenTime) / 1000;
-            if (secondsOpen >= ROOM.settings.windowOpenTimeout) {
+            if (secondsOpen >= windowOpenTimeout) {
                 log(`⚠️  Window has been open for ${Math.floor(secondsOpen)} sec`);
                 
                 // Check if we need to turn off heating
@@ -1313,7 +1357,7 @@ async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
                 // Don't send confusing notifications about activity/inactivity changes
                 return 'window_open_skip';
             } else {
-                log(`ℹ️  Window open for ${Math.floor(secondsOpen)} sec (timeout: ${ROOM.settings.windowOpenTimeout} sec)`);
+                log(`ℹ️  Window open for ${Math.floor(secondsOpen)} sec (timeout: ${windowOpenTimeout} sec)`);
             }
         }
     } else {
@@ -1324,16 +1368,17 @@ async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
             
             // Only start settle delay if window was open long enough to trigger timeout
             // If window was only open briefly, no need to wait for air to settle
-            if (secondsOpen >= ROOM.settings.windowOpenTimeout) {
+            if (secondsOpen >= windowOpenTimeout) {
                 // Window was open long enough to turn off heating - start settle delay
                 global.set(`${ROOM.zoneName}.Heating.WindowClosedTime`, Date.now());
                 global.set(`${ROOM.zoneName}.Heating.WindowOpenTime`, null);
                 global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, false);
                 
                 const delayMinutes = Math.floor(windowClosedDelay / 60);
+                const delaySource = getSettingSource(slot, 'windowClosedDelay');
                 addChange("Window closed");
                 addChange(`Waiting ${delayMinutes}min`);
-                log(`✓ Window closed (was open ${Math.floor(secondsOpen)}s) - waiting ${delayMinutes} min for air to settle`);
+                log(`✓ Window closed (was open ${Math.floor(secondsOpen)}s) - waiting ${delayMinutes} min for air to settle (${delaySource})`);
                 
                 return 'window_closed_waiting';
             } else {
@@ -1350,7 +1395,7 @@ async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
         if (windowClosedTime) {
             const secondsSinceClosed = (Date.now() - windowClosedTime) / 1000;
             
-            if (secondsSinceClosed < windowClosedDelay || secondsSinceClosed < 60) {
+            if (secondsSinceClosed < windowClosedDelay) {
                 // Still waiting for air to settle
                 const remainingSeconds = Math.floor(windowClosedDelay - secondsSinceClosed);
                 const remainingMinutes = Math.floor(remainingSeconds / 60);
@@ -1368,12 +1413,34 @@ async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
                 }
                 log(`✓ Air settle delay complete - resuming heating${tadoAway ? ' (away mode - notification suppressed)' : ''}`);
                 
-                // For TADO, turn on and set target
+                // For TADO, turn on and set target - recalculate from scratch
                 if (ROOM.heating.type === 'tado_valve') {
-                    await setHeating(true, effectiveTarget);
-                    log(`🔥 TADO resumed - target set to ${effectiveTarget}°C`);
+                    // Start fresh with base slot target (not the potentially modified effectiveTarget)
+                    let resumeTarget = slot.target;
+                    
+                    // Apply away mode minimum if currently away
+                    if (tadoAway && ROOM.settings.tadoAwayMinTemp !== null) {
+                        resumeTarget = ROOM.settings.tadoAwayMinTemp;
+                        log(`🏠 Away mode: Using minimum ${resumeTarget}°C`);
+                    }
+                    // Apply inactivity offset if room is inactive and not in away mode
+                    else if (!tadoAway && inactivity.inactive && inactivityOffset > 0) {
+                        resumeTarget -= inactivityOffset;
+                        log(`💤 Inactivity mode active - reducing target by ${inactivityOffset}°C`);
+                        log(`→ Effective target: ${resumeTarget}°C (inactivity)`);
+                        
+                        if (!inactivity.wasInactive) {
+                            addChange(`Inactive (${inactivity.minutesSinceMotion}min)`);
+                            addChange(`-${inactivityOffset}°C → ${resumeTarget}°C`);
+                        }
+                    }
+                    
+                    await setHeating(true, resumeTarget);
+                    log(`🔥 TADO resumed - target set to ${resumeTarget}°C`);
+                    return 'window_settled_tado';
                 }
-                // For smart plugs, let the hysteresis logic below handle it
+                // For smart plugs, continue to hysteresis logic below to determine if heating needed
+                log(`💡 Smart plugs: Continuing to hysteresis check to determine heating state`);
             }
         }
     }
@@ -1397,7 +1464,7 @@ async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
     }
     
     // Heating Logic (only if window is closed or timeout not reached)
-    if (!windowOpen || (windowOpenTime && (Date.now() - windowOpenTime) / 1000 < ROOM.settings.windowOpenTimeout)) {
+    if (!windowOpen || (windowOpenTime && (Date.now() - windowOpenTime) / 1000 < windowOpenTimeout)) {
         
         if (ROOM.heating.type === 'smart_plug') {
             // Smart plug: Calculate hysteresis range
@@ -1463,7 +1530,8 @@ async function logDiagnostics(now, roomTemp, slot, action) {
         // Calculate effectiveTarget same way as main execution
         let effectiveTarget = slot.target;
         const tadoAway = await isTadoAway();
-        const inactivity = await checkInactivity(slot.inactivityOffset || 0);
+        const inactivity = await checkInactivity(slot);
+        const inactivityOffset = inactivity.inactivityOffset || 0;
         
         if (tadoAway && ROOM.settings.tadoAwayMinTemp) {
             effectiveTarget = ROOM.settings.tadoAwayMinTemp;
@@ -1849,11 +1917,20 @@ const currentSlot = getCurrentTimeSlot(schedule, now);
 log(`Time period: ${currentSlot.start}-${currentSlot.end}`);
 log(`Target: ${currentSlot.target}°C`);
 
-// Store target temperature in global variables
+// Store target temperature and effective settings in global variables
 const previousTarget = global.get(`${ROOM.zoneName}.Temperature`);
 
+// Get effective settings for storage
+const effectiveInactivityOffset = getEffectiveSetting(currentSlot, 'inactivityOffset', ROOM.settings.inactivityOffset || 0);
+const effectiveInactivityTimeout = getEffectiveSetting(currentSlot, 'inactivityTimeout', ROOM.settings.inactivityTimeout);
+const effectiveWindowOpenTimeout = getEffectiveSetting(currentSlot, 'windowOpenTimeout', ROOM.settings.windowOpenTimeout);
+const effectiveWindowClosedDelay = getEffectiveSetting(currentSlot, 'windowClosedDelay', ROOM.settings.windowClosedDelay || 600);
+
 global.set(`${ROOM.zoneName}.Temperature`, currentSlot.target);
-global.set(`${ROOM.zoneName}.Heating.InactivityOffset`, currentSlot.inactivityOffset || 0);
+global.set(`${ROOM.zoneName}.Heating.InactivityOffset`, effectiveInactivityOffset);
+global.set(`${ROOM.zoneName}.Heating.SlotInactivityTimeout`, currentSlot.inactivityTimeout || null);
+global.set(`${ROOM.zoneName}.Heating.SlotWindowOpenTimeout`, currentSlot.windowOpenTimeout || null);
+global.set(`${ROOM.zoneName}.Heating.SlotWindowClosedDelay`, currentSlot.windowClosedDelay || null);
 
 // For smart plugs, also store calculated low/high for reference
 if (ROOM.heating.type === 'smart_plug') {
@@ -1887,7 +1964,7 @@ if (roomTemp === null) {
 const windowOpen = await isWindowOpen();
 
 // Run heating control
-const action = await controlHeating(roomTemp, currentSlot, windowOpen, currentSlot.inactivityOffset);
+const action = await controlHeating(roomTemp, currentSlot, windowOpen);
 
 // Log diagnostics
 await logDiagnostics(now, roomTemp, currentSlot, action);

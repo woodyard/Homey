@@ -6,6 +6,85 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.8.3 (2026-01-17)
+==============================================
+🐛 CRITICAL FIX: TADO target must be recalculated from scratch on air settle
+- Fixed bug where TADO was still set to wrong temperature (18.1°C instead of 22°C)
+- Problem: effectiveTarget variable had been modified by away mode logic earlier in function
+- Using modified effectiveTarget resulted in wrong temperature when resuming after window settle
+- Solution: Start fresh with slot.target when resuming, then apply away/inactivity logic cleanly
+- Now calculates: slot.target → apply away min (if away) → apply inactivity offset (if inactive)
+- Example: slot.target=22°C, away min=18°C → if away then 18°C, if home+inactive then 20°C
+- Ensures TADO gets absolutely correct temperature on first attempt when air settle completes
+- Next script run will not need to correct the temperature
+
+==============================================
+Version 10.8.2 (2026-01-17)
+==============================================
+🐛 CRITICAL FIX: TADO set to wrong target temperature after air settle delay
+- Fixed bug where TADO was set to incorrect temperature when window settle delay completed
+- Problem: Inactivity offset was applied AFTER TADO was resumed, not before
+- Window settle logic ran before inactivity logic in code flow
+- Result: TADO resumed with base target (22°C) instead of effective target (e.g., 20°C with -2°C offset)
+- Example: Room inactive → window closes → wait 10 min → TADO resumed at 22°C (wrong!)
+- Should be: Room inactive → window closes → wait 10 min → TADO resumed at 20°C (correct!)
+- Solution: Calculate effective target (including inactivity offset) before resuming TADO
+- Now applies inactivity offset immediately when air settle completes, before setting target
+- Smart plug behavior unchanged (already correctly calculated in hysteresis logic)
+- Ensures TADO gets correct temperature immediately when heating resumes
+
+==============================================
+Version 10.8.1 (2026-01-17)
+==============================================
+🐛 CRITICAL FIX: "Air settled" notification not sent after window settle delay
+- Fixed bug where "Air settled • Heat resumed" notification was not sent for TADO valves
+- Problem: After window settle delay completed, code continued executing instead of returning
+- TADO heating was resumed correctly, but notification changes were cleared/overridden
+- Solution: Added explicit return 'window_settled_tado' for TADO valves after air settle
+- Smart plugs continue to hysteresis logic (correct behavior - need to check temperature)
+- Affects: TADO valve rooms (Oliver, Soveværelse, Stue) - now get proper notification
+- Smart plug rooms (Clara) - behavior unchanged (already working correctly)
+- Ensures users are notified when heating resumes after window closed delay
+
+==============================================
+Version 10.8.0 (2026-01-17)
+==============================================
+🎛️ Unified slot-override architecture
+- Introduced unified getEffectiveSetting() function for all slot-based overrides
+- All settings (inactivity, window timeouts) now use same override pattern
+- Slot values take precedence over room defaults when defined
+- Added getSettingSource() helper for logging override source ('slot override' or 'room default')
+- Replaces multiple ad-hoc override checks with consistent pattern
+- Documentation: See UNIFIED_SLOT_OVERRIDE_ARCHITECTURE.md and UNIFIED_SLOT_OVERRIDE_SYSTEM.md
+- Settings supporting slot overrides: inactivityOffset, inactivityTimeout, windowOpenTimeout, windowClosedDelay
+- Benefits: More maintainable, consistent behavior, easier to add new overridable settings
+
+==============================================
+Version 10.7.0 (2026-01-17)
+==============================================
+⏱️ Per-slot inactivity timeout support
+- Added slot-level inactivityTimeout override capability
+- Each schedule slot can now define custom inactivity timeout (overrides room default)
+- Example: Night slot with 5min timeout, Day slot with 30min timeout
+- Stored in global variable: SlotInactivityTimeout (null if using room default)
+- Displayed in status showing effective value and source (slot vs room)
+- Documentation: See SLOT_INACTIVITY_TIMEOUT_FEATURE.md
+- Complements existing slot-level inactivityOffset override
+- Enables fine-grained control over inactivity behavior per time period
+
+==============================================
+Version 10.6.13 (2026-01-16)
+==============================================
+🐛 Fix: Schedule gap when Day ends before lateEvening starts
+- Fixed bug where schedule had gap between Day end and lateEvening start on holidays
+- Problem: Weekday Day ends 20:00, but lateEvening starts 21:00 (when no school tomorrow)
+- Gap from 20:00-21:00 would use default slot (first Morning slot) instead of extending Day
+- Solution: If lateEvening starts later than last base slot ends, extend last slot to match
+- Example: Weekday Day (06:00-20:00) auto-extends to (06:00-21:00) when using lateEvening
+- Only affects holiday/vacation days when school tomorrow = false
+- Ensures smooth schedule transitions without unexpected temperature changes
+
+==============================================
 Version 10.6.12 (2026-01-16)
 ==============================================
 🔕 Suppress "air settled" and "heat resumed" notifications when in away mode

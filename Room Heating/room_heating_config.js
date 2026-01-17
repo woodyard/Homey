@@ -11,10 +11,24 @@
  *   3. Heating and status scripts automatically use the saved config
  *
  * Author: Henrik Skovgaard
- * Version: 1.0.3
+ * Version: 1.0.5
  * Created: 2025-12-31
  *
  * Version History:
+ * 1.0.5 (2026-01-17) - 🎛️ Unified slot-override architecture
+ *   - New room setting: inactivityOffset (default temperature reduction)
+ *   - Slot field now optional: inactivityOffset (uses room default if not specified)
+ *   - New optional slot field: windowOpenTimeout (override room default)
+ *   - New optional slot field: windowClosedDelay (override room default)
+ *   - Consistent override pattern: slot value || room default
+ *   - Reduces configuration repetition while maintaining flexibility
+ *   - All existing configs remain backward compatible
+ * 1.0.4 (2026-01-17) - ⏱️ Add per-slot inactivityTimeout support
+ *   - New optional slot field: inactivityTimeout (minutes)
+ *   - Allows time slots to override room's default inactivityTimeout
+ *   - If not specified on slot, uses room setting (backward compatible)
+ *   - Example: School slot can wait 60 min, evening slot 15 min
+ *   - Provides fine-grained control over inactivity detection timing
  * 1.0.3 (2026-01-13) - 🤚 Add manualOverrideDuration setting for manual intervention handling
  *   - New setting: manualOverrideDuration (minutes, default 90)
  *   - Allows system to detect and respect manual temperature/switch changes
@@ -72,6 +86,7 @@ const ROOMS = {
         settings: {
             tadoAwayMinTemp: 17.0,
             inactivityTimeout: 30,
+            inactivityOffset: 2.0,  // Default temperature reduction when inactive
             windowOpenTimeout: 60,
             windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
@@ -103,6 +118,7 @@ const ROOMS = {
         settings: {
             tadoAwayMinTemp: 17.0,
             inactivityTimeout: 30,
+            inactivityOffset: 1.0,  // Default temperature reduction when inactive
             windowOpenTimeout: 60,
             windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
@@ -134,6 +150,7 @@ const ROOMS = {
         settings: {
             tadoAwayMinTemp: 17.0,
             inactivityTimeout: 30,
+            inactivityOffset: 1.0,  // Default temperature reduction when inactive
             windowOpenTimeout: 60,
             windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
@@ -148,26 +165,27 @@ const ROOMS = {
         },
         schedules: {
             weekday: [
-                { start: '00:00', end: '05:00', target: 21, inactivityOffset: 0, name: 'Night' },
-                { start: '05:00', end: '07:00', target: 22.5, inactivityOffset: 0, name: 'Morning' },
+                { start: '00:00', end: '05:00', target: 21, name: 'Night' },
+                { start: '05:00', end: '07:00', target: 22.5, name: 'Morning' },
                 { start: '07:00', end: '22:00', target: 22, inactivityOffset: 1, name: 'Day' }
             ],
             weekend: [
-                { start: '00:00', end: '06:00', target: 21, inactivityOffset: 0, name: 'Night' },
-                { start: '06:00', end: '08:00', target: 22.5, inactivityOffset: 0, name: 'Morning' },
+                { start: '00:00', end: '06:00', target: 21, name: 'Night' },
+                { start: '06:00', end: '08:00', target: 22.5, name: 'Morning' },
                 { start: '08:00', end: '22:00', target: 22, inactivityOffset: 1, name: 'Day' }
             ],
             holiday: [
-                { start: '00:00', end: '06:00', target: 21, inactivityOffset: 0, name: 'Night' },
-                { start: '06:00', end: '08:00', target: 22.5, inactivityOffset: 0, name: 'Morning' },
+                { start: '00:00', end: '06:00', target: 21, name: 'Night' },
+                { start: '06:00', end: '08:00', target: 22.5, name: 'Morning' },
                 { start: '08:00', end: '22:00', target: 22, inactivityOffset: 1, name: 'Day' }
             ],
-            earlyEvening: { start: '22:00', end: '23:59', target: 22, inactivityOffset: 1, name: 'Evening' },
-            lateEvening: { start: '22:00', end: '23:59', target: 22, inactivityOffset: 1, name: 'Evening' }
+            earlyEvening: { start: '22:00', end: '23:59', target: 22, inactivityTimeout: 15, inactivityOffset: 1, name: 'Evening' },
+            lateEvening: { start: '22:00', end: '23:59', target: 22, inactivityTimeout: 15, inactivityOffset: 1, name: 'Evening' }
         },
         settings: {
             tadoAwayMinTemp: 17.0,
             inactivityTimeout: 90,
+            inactivityOffset: 0,  // Default temperature reduction when inactive
             windowOpenTimeout: 60,
             windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
@@ -210,7 +228,7 @@ log(`✅ Saved GLOBAL configuration`);
 
 // Save metadata
 global.set('Config.LastUpdate', new Date().toISOString());
-global.set('Config.Version', '1.0.3');
+global.set('Config.Version', '1.0.5');
 
 log('\n══ CONFIGURED ROOMS ══');
 for (const [roomName, roomConfig] of Object.entries(ROOMS)) {
