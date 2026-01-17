@@ -5,11 +5,12 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 4.6.2
+ * Version: 4.6.3
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
  * Version History:
+ * 4.6.3 (2026-01-16) - 🐛 Fix: Schedule gap when Day ends before lateEvening starts (matches heating v10.6.13)
  * 4.6.2 (2026-01-15) - 🔍 Search child zones for motion and window sensors (matches heating v10.6.9)
  *   - Added getZoneAndChildDevices() helper to search parent zone + all child zones
  *   - Motion sensors now shown in DEVICES section even if in child zones
@@ -344,10 +345,15 @@ async function getCompleteSchedule(baseSchedule, roomConfig) {
     const schoolDayTomorrow = await isSchoolDayTomorrow();
     const eveningSlot = schoolDayTomorrow ? roomConfig.schedules.earlyEvening : roomConfig.schedules.lateEvening;
     
-    if (!schoolDayTomorrow && eveningSlot.start === '22:00') {
+    // If evening slot starts later than the last base schedule slot ends, extend the last slot
+    // to prevent gaps (e.g., weekday Day ends 20:00, but lateEvening starts 21:00 on holiday)
+    const lastSlot = baseSchedule[baseSchedule.length - 1];
+    const lastSlotEnd = timeToMinutes(lastSlot.end);
+    const eveningStart = timeToMinutes(eveningSlot.start);
+    
+    if (!schoolDayTomorrow && eveningStart > lastSlotEnd) {
         const extendedSchedule = [...baseSchedule];
-        const lastSlot = extendedSchedule[extendedSchedule.length - 1];
-        extendedSchedule[extendedSchedule.length - 1] = { ...lastSlot, end: '22:00' };
+        extendedSchedule[extendedSchedule.length - 1] = { ...lastSlot, end: eveningSlot.start };
         return [...extendedSchedule, eveningSlot];
     }
     

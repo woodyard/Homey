@@ -27,245 +27,27 @@
  * - Manual intervention detection - respects manual changes for 90 minutes
  *
  * Author: Henrik Skovgaard
- * Version: 10.6.11
+ * Version: 10.6.13
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
- * Version History:
- * 10.6.11 (2026-01-15) - 🐛 CRITICAL FIX: Window settle delay triggered even for brief window openings
- *   - Fixed bug where "Window closed • Waiting 10min" shown even if window only open for seconds
- *   - Problem: Air settle delay started whenever window closed, regardless of how long it was open
- *   - If window open < timeout, heating never turned off, so no need to wait for air to settle
- *   - Solution: Only start settle delay if window was open long enough to trigger heating shutoff
- *   - Example: Open window 5 sec → close → no delay (heating never affected)
- *   - Example: Open window 6 min → close → 10 min delay (heating was off, air needs to settle)
- * 10.6.10 (2026-01-15) - 🐛 CRITICAL FIX: Window closed delay notification sent immediately
- *   - Fixed bug where "Air settled" notification appeared immediately after "Window closed"
- *   - Problem: WindowClosedTime could trigger premature completion check
- *   - Solution: Added minimum 60-second threshold to prevent immediate double notifications
- *   - Ensures script MUST wait at least 60 seconds before "Air settled" notification
- *   - Prevents both notifications from being sent with identical timestamps
-
- * 10.6.9 (2026-01-15) - 🔍 Search child zones for motion and window sensors
- *   - Added getZoneAndChildDevices() helper to search parent zone + all child zones
- *   - Window sensors now detected in child zones (fixes "No window sensors found")
- *   - Motion sensors now detected in child zones for proper activity tracking
- *   - Supports complex zone hierarchies (e.g., "Stue / Spisestue" with "Stue" and "Spisestue" children)
- *   - isWindowOpen() now searches child zones
- *   - Backward compatible - works with both simple and hierarchical zone structures
- * 10.6.8 (2026-01-15) - 📊 CRITICAL FIX: Use TADO device temperature sensor directly by ID
- *   - Fixed bug where TADO devices in different zones weren't found by zone filtering
- *   - TADO rooms now get thermostat directly by device ID instead of filtering by zone
- *   - Prioritizes TADO's built-in temperature sensor (more accurate at valve location)
- *   - Falls back to zone sensors if TADO device not found or lacks temperature capability
- *   - Affects: TADO valve rooms (Oliver, Soveværelse, Stue) - uses thermostat temperature
- *   - Smart plug rooms (Clara) unchanged - continues using zone sensors
- *   - Added detailed logging showing which sensor is used and current temperature value
- *   - Fixes "TADO device has no temperature sensor" false warning
- * 10.6.7 (2026-01-14) - 🐛 CRITICAL FIX: Away mode transition check MUST happen BEFORE manual detection
- *   - Fixed execution order bug causing false positive manual override when arriving home
- *   - Problem: detectManualIntervention() called BEFORE grace period reset in controlHeating()
- *   - When arriving home: TADO auto-adjusts temp → manual detection checks (stale grace) → false positive
- *   - Then too late: controlHeating() resets grace period (after damage already done)
- *   - Solution: Moved away→home transition check to MAIN EXECUTION before manual intervention detection
- *   - Now: Check away status early → reset grace if transitioning → THEN check for manual intervention
- *   - Result: Grace period properly set before detection runs, preventing false positives
- *   - Execution order: 1) Away check + grace reset, 2) Manual detection, 3) Control heating
- *   - This ensures TADO's automatic away→home adjustments are protected by grace period
- * 10.6.6 (2026-01-14) - 🐛 CRITICAL FIX: False positive manual override when returning from away mode
- *   - Fixed bug where TADO rooms triggered manual override when arriving home
- *   - Problem: TADO thermostats automatically adjust temperature when switching from away→home
- *   - System compared new TADO target against stale away-mode ExpectedTargetTemp → false positive
- *   - Example: Away at 18°C → TADO auto-adjusts to 20°C on arrival → detected as "manual" change
- *   - Solution: Reset grace period timer (LastAutomationChangeTime) when returning from away mode
- *   - 7-minute grace period prevents false detection during TADO's automatic adjustment
- *   - Affects: TADO valve rooms (Oliver, Soveværelse) - smart plug rooms unaffected
- *   - Prevents: "Home" notification → "Manual override" false positive sequence
- * 10.6.5 (2026-01-14) - 🐛 CRITICAL FIX: Grace period constantly reset causing false manual override detection
- *   - Fixed bug where LastAutomationChangeTime was updated on EVERY script run, even when no changes made
- *   - Problem: Script runs frequently (events: motion, window, schedule), constantly resetting grace period
- *   - Grace period never actually expired, then suddenly did when timing aligned → false positive
- *   - Between grace expiry, inactivity mode could toggle, changing target (21°C → 20°C with -1°C offset)
- *   - System detected its own inactivity changes as manual intervention after grace expired
- *   - Solution: Only update LastAutomationChangeTime when ACTUALLY making physical changes
- *   - Also increased grace period from 2 to 7 minutes for additional safety margin
- *   - Example prevented: "Air settled • Heat resumed" at 15:45 → "Manual override" at 15:50
- *   - Grace period now properly protects against detecting automation's own temperature adjustments
- * 10.6.4 (2026-01-14) - 🐛 CRITICAL FIX: Clear expected target when TADO turned off
- *   - Fixed bug where stale ExpectedTargetTemp values caused false positive manual override detection
- *   - Problem: When TADO turned off, ExpectedTargetTemp was left with old value
- *   - Later schedule changes would compare against stale expected value → false positive
- *   - Example: System sets 20°C, turns off, schedule changes to 18°C → false "manual override"
- *   - Solution: Clear ExpectedTargetTemp (set to null) when turning TADO off
- *   - detectManualIntervention() already handles null values correctly (returns detected=false)
- *   - Prevents: False manual override notifications when schedule changes while TADO is off
- * 10.6.3 (2026-01-13) - 🐛 CRITICAL FIX: False positive manual intervention detection
- *   - Fixed bug where system detected its own temperature changes as manual interventions
- *   - Problem: When turning TADO off (window open), stored currentTarget as expected value
- *   - This caused false positive when system later calculated different target (e.g., due to schedule)
- *   - Solution: Only store ExpectedTargetTemp when actively controlling (turnOn=true)
- *   - Increased grace period from 30 seconds to 2 minutes (scripts run every 5 min)
- *   - Now ALWAYS updates LastAutomationChangeTime when storing expected target
- *   - Added detailed logging to track when expected values are stored
- *   - Prevents: "Override ended → Manual override" notification loop when window closes
- * 10.6.2 (2026-01-13) - 🐛 CRITICAL FIX: Manual intervention detection not working when TADO already on
- *   - Fixed bug where ExpectedTargetTemp was only stored when turning TADO on
- *   - Now stores expected target on every heating control cycle (both on and off)
- *   - Manual temperature changes now properly detected even when automation hasn't recently changed target
- *   - Without this fix, manual intervention detection would fail if system was maintaining steady temperature
- *   - Example: User changes Soveværelse from 21°C to 22°C now triggers manual override notification
- * 10.6.1 (2026-01-13) - 🐛 Fix diagnostics logging during manual override mode
- *   - Manual override now logs actual TADO target temperature instead of 0°C
- *   - Diagnostics now show correct target (e.g., 22°C) instead of "Target: 0°C"
- *   - Fixes misleading log entries during manual override
- * 10.6.0 (2026-01-13) - 🤚 Add manual intervention detection and handling
- *   - Detects manual temperature changes (TADO) and switch changes (smart plugs)
- *   - Pauses automation for 90 minutes (configurable per room) when manual intervention detected
- *   - Manual override has highest priority - cancels active boost/pause modes
- *   - Auto-revert to schedule after timeout
- *   - Cancel command now cancels boost, pause, AND manual override
- *   - Boost/pause commands cancel manual override when activated
- *   - Grace period (30 seconds) prevents detecting automation's own changes
- *   - New global vars: ManualOverrideMode, ManualOverrideStartTime, ManualOverrideDuration, etc.
- *   - New functions: activateManualOverrideMode(), cancelManualOverrideMode(), checkManualOverrideMode(), detectManualIntervention()
- *   - Tracks expected values to detect changes: ExpectedTargetTemp (TADO), ExpectedOnOff (smart plugs)
- *   - Notifications when manual override starts, ends, and is active
- * 10.5.0 (2026-01-12) - ⏸️ Add pause heating mode (opposite of boost)
- *   - New "pause" argument: run('Clara', 'pause') forces heating OFF for 60 minutes
- *   - Smart plugs: Turn off all radiators, ignore all conditions
- *   - TADO valves: Turn completely OFF (onoff = false)
- *   - Ignores temperature, schedule, window, inactivity, away mode during pause
- *   - Latest call wins: pause cancels boost, boost cancels pause (mutually exclusive)
- *   - Cancel command now cancels both boost and pause modes
- *   - Automatic revert to schedule after 60 minutes
- *   - New global vars: PauseMode, PauseStartTime, PauseDuration
- *   - Notifications when pause starts, ends, and is active
- *   - New functions: activatePauseMode(), cancelPauseMode(), checkPauseMode(), controlHeatingPause()
- * 10.4.4 (2026-01-09) - 🐛 Fix next schedule showing wrong day type
- *   - getNextScheduleChange() now correctly determines tomorrow's schedule type
- *   - Friday evening no longer shows "School" when Saturday uses weekend schedule
- *   - Properly checks if tomorrow is weekend/school day/holiday
- *   - Shows actual first period from tomorrow's schedule, not today's
- *   - Example: Friday 20:27 now shows "Night" (weekend) not "School" (weekday)
- * 10.4.3 (2026-01-08) - 🔧 Fix Flow argument parsing
- *   - Homey Flows pass "Clara, boost" as single string (not separate args)
- *   - Script now splits comma-separated arguments automatically
- *   - Works with both: Flow "Clara, boost" and HomeyScript run('Clara', 'boost')
- *   - Example Flow input: "Clara, boost" or "oliver, cancel" (case-insensitive)
- * 10.4.2 (2026-01-08) - 🔧 Make room names case-insensitive
- *   - Can now use 'clara' or 'Clara', 'oliver' or 'Oliver'  
- *   - Fixes "Unknown room" error when using lowercase names
- *   - Example: run('clara', 'boost') works same as run('Clara', 'boost')
- * 10.4.1 (2026-01-08) - 🛑 Add cancel boost function
- *   - New "cancel" argument: run('Clara', 'cancel') cancels active boost
- *   - Immediately clears boost mode and resumes schedule
- *   - Notification sent when boost is cancelled
- *   - Works even if boost not active (safe to call anytime)
- * 10.4.0 (2026-01-08) - 🚀 Add boost heating mode
- *   - New "boost" argument: run('Clara', 'boost') activates boost for 60 minutes  
- *   - Smart plugs: Turn on all radiators, ignore schedule and hysteresis
- *   - TADO valves: Set to 25°C boost temperature
- *   - Ignores window open, inactivity, away mode during boost
- *   - Automatic revert to schedule after 60 minutes
- *   - New global vars: BoostMode, BoostStartTime, BoostDuration
- *   - Notifications when boost starts and ends
- * 10.3.11 (2026-01-08) - ⏳ Add window closed delay for air to settle
- *   - New setting: windowClosedDelay (seconds, default 600 = 10 minutes)
- *   - After window closes, heating waits before resuming
- *   - Allows air to mix and settle for accurate temperature reading
- *   - Prevents heating from working harder due to cold air near sensor
- *   - New global var: WindowClosedTime tracks when window was closed
- *   - New action: 'window_closed_waiting' during settle period
- *   - Notification shows "Window closed • Waiting Xmin" then "Air settled • Heat resumed"
- * 10.3.10 (2026-01-05) - 📱 Fix snowflake icon appearing when TADO is IDLE
- *   - Snowflake (❄️) now only shows when heating is OFF, not IDLE
- *   - IDLE is normal for TADO - means valve is on but not actively heating
- *   - "OFF" = heating completely turned off (e.g., window open)
- *   - "IDLE" = heating ready but room at target (no icon needed)
- * 10.3.9 (2026-01-03) - 🛠️ CRITICAL FIX: Double checkInactivity() call caused wrong notification target
- *   - checkInactivity() was called twice: once in controlHeating(), once before notification
- *   - Between calls, zone could become active (e.g., person closing window)
- *   - Second call returned different results, causing notification to show wrong target
- *   - Example: TADO set to 20°C (with inactivity), but notification showed 21°C (no inactivity)
- *   - Fix: Use stored EffectiveTemperature and InactivityMode flag instead of rechecking
- *   - "IDLE" = heating ready but room at target (no icon needed)
- * 10.3.8 (2026-01-03) - 📱 Changed window icon to wind icon
- *   - Changed open window icon from 🪟 to 💨 (wind/draft)
- *   - More intuitive - immediately suggests "air coming in from outside"
- *   - Icons: 💨=window open, 💤=inactive, ❄️=heating off, 🚶=away mode
- * 10.3.7 (2026-01-03) - 📱 Remove redundant temperature comparisons from notifications
- *   - Removed "21.9 > 20.75°C" and "19.7 < 20.5°C" from heat on/off messages
- *   - Temperature comparison is redundant (already shown in status: 🌡️21.9→20.5°C)
- *   - "Heat on • 19.7 < 20.5°C" → "Heat on"
- *   - "Heat off • 21.9 > 20.75°C" → "Heat off"
- *   - "Inactive (20min) • -2°C → 20.5°C • Heat off • 21.9 > 20.75°C" → "Inactive (20min) • -2°C → 20.5°C • Heat off"
- * 10.3.6 (2026-01-03) - 📱 Condensed change descriptions (Option 2 - More Condensed)
- *   - "Window opened • Heating turned off (open 75 sec)" → "Window (75s) • Heat off"
- *   - "Schedule changed to 06:00-20:00 • Target: 20°C → 22.5°C" → "Schedule 06:00-20:00 • 20→22.5°C"
- *   - "No activity detected (20+ min) • Target reduced by 2°C to 20.5°C" → "Inactive (20min) • -2°C → 20.5°C"
- *   - "Activity detected - resumed • Target restored to 22.5°C" → "Active • → 22.5°C"
- *   - "Nobody home detected (TADO) • Minimum temperature set: 18°C" → "Away • Min 18°C"
- *   - "Someone arrived home (TADO)" → "Home"
- *   - All messages now more compact while remaining clear
- * 10.3.5 (2026-01-03) - 📱 Use walking person icon for away mode (matches TADO app)
- *   - Changed away mode icon from 🏠 to 🚶 (walking person)
- *   - Matches TADO app's own away mode symbol
- *   - Icons: 💨=window open, 💤=inactive, ❄️=heating off, 🚶=away mode
- * 10.3.4 (2026-01-03) - 📱 Icon-only alerts - removed all text after icons
- *   - Icons are now standalone, self-explanatory symbols
- *   - 💨 = window open
- *   - 💤 = room inactive
- *   - ❄️ = heating off
- *   - 🚶 = away mode
- *   - Ultra-clean, minimal notification format
- * 10.3.3 (2026-01-03) - 📱 Condensed notifications - only show alert icons
- *   - Window icon only shown when OPEN (not when closed)
- *   - Inactive icon only shown when room IS inactive (not when active)
- *   - Heating icon only shown when NOT heating (OFF/IDLE, not when ON/HEATING)
- *   - House icon only shown when in AWAY mode (not when HOME)
- *   - Result: Normal operation shows just temperature, alerts show relevant icons
- * 10.3.2 (2026-01-03) - 📱 Compact notification format with icons
- *   - Notifications now much more compact (3-4 lines vs 8-10 lines)
- *   - Temperature display: "22.3→20°C" instead of separate lines
- *   - Window: ✓ (closed) or ✗ (open) - removed redundant status text
- *   - Inactivity: ✗ (active) or ✓ (inactive/sleeping)
- *   - Heating: 🔥 for ON/HEATING, ❄️ for OFF/IDLE
- *   - Added next schedule change time with target and period name
- *   - All status on single line with icons for quick scanning
- * 10.3.1 (2026-01-02) - 📝 Add specific 'window_closed' action when window closes
- * 10.3.0 (2026-01-02) - 🛠️ CRITICAL: Fix missing log entries when window closes
- * 10.2.9 (2026-01-02) - 📝 Fix inconsistent action logging between TADO and smart plugs
- * 10.2.8 (2026-01-02) - 🔥 CRITICAL: Stop sending unnecessary commands to TADO!
- * 10.2.7 (2026-01-02) - 🛠️ CRITICAL FIX: effectiveTarget was undefined in logDiagnostics!
- * 10.2.6 (2026-01-02) - 🕐 Fix DST timezone bug in getDanishLocalTime()
- * 10.2.5 (2026-01-02) - 🛠️ Fix false schedule change notifications
- * 10.2.4 (2026-01-02) - 📝 Fix diagnostic log to track effectiveTarget instead of slot.target (BROKEN!)
- * 10.2.3 (2026-01-02) - 🪟 Add notification when window closes
- * 10.2.2 (2026-01-02) - 🛠️ Fix confusing notifications when window open
- * 10.2.1 (2026-01-02) - 🛠️ Fix window timeout flag reset when heating still on
- * 10.2.0 (2026-01-02) - 🔥 Use TADO onoff capability to turn off properly (BREAKING CHANGE)
- * 10.1.6 (2026-01-02) - 🔥 TADO window handling: Turn OFF instead of reducing temp
- * 10.1.5 (2026-01-02) - 🛠️ Fix TADO window handling and notification status
- * 10.1.4 (2025-12-31) - 🔧 Revert to getVariables() method - the working approach
- * 10.1.3 (2025-12-31) - 🔧 Consistent Logic variable access across all functions (BROKEN)
- * 10.1.2 (2025-12-31) - 🔧 Fix to use Homey's built-in Logic variables (not Better Logic)
- * 10.1.1 (2025-12-31) - 🔧 Fix HeatingEnabled to use Logic variable (not global script variable)
- * 10.1.0 (2025-12-31) - 🎚️ Global heating control via HeatingEnabled variable
- * 10.0.1 (2025-12-31) - 🛠️ Fix excessive window logging and notifications
- * 10.0.0 (2025-12-31) - 🔧 Configuration via global variables (BREAKING CHANGE)
- * 9.0.0 (2025-12-31) - 🎯 Per-room schedules and settings (BREAKING CHANGE)
- * 8.0.1 (2025-12-31) - 🛠️ Fix excessive logging bug
- * 8.0.0 (2025-12-31) - 🎯 Target-based temperature control (BREAKING CHANGE)
- *   - Schedules now use single "target" temperature instead of low/high
- *   - Smart plugs automatically calculate hysteresis range (±0.25°C default)
- *   - TADO valves use target directly - handles heating power automatically
- *   - Clearer configuration: "I want 22.5°C" not "low 22.25, high 22.75"
- *   - Per-room hysteresis setting for smart plugs
- *   - TADO always gets correct target (not away temp when just off)
- *   - Simplified inactivity/away logic: target - offset
- *   - Global vars: Temperature (target), TemperatureLow/High (calculated for smart plugs)
- * 7.1.0 (2025-12-31) - 🎯 Multi-room support with argument selection
- * 7.0.0 (2025-12-31) - 🌟 Zone-based generic implementation
+ * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.6.13 (2026-01-16) - 🐛 Fix: Schedule gap when Day ends before lateEvening starts
+ * 10.6.12 (2026-01-16) - 🔕 Suppress "air settled" notifications in away mode
+ * 10.6.11 (2026-01-15) - 🐛 Fix: Window settle delay only for long openings
+ * 10.6.10 (2026-01-15) - 🐛 Fix: Prevent immediate double notifications
+ * 10.6.9  (2026-01-15) - 🔍 Search child zones for sensors
+ * 10.6.8  (2026-01-15) - 📊 Use TADO temperature sensor by ID
+ * 10.6.7  (2026-01-14) - 🐛 Fix: Away mode transition before manual detection
+ * 10.6.6  (2026-01-14) - 🐛 Fix: False manual override arriving home
+ * 10.6.5  (2026-01-14) - 🐛 Fix: Grace period reset causing false positives
+ * 10.6.0  (2026-01-13) - 🤚 Manual intervention detection
+ * 10.5.0  (2026-01-12) - ⏸️ Pause heating mode
+ * 10.4.0  (2026-01-08) - 🚀 Boost heating mode
+ * 10.3.11 (2026-01-08) - ⏳ Window closed delay for air to settle
+ * 10.0.0  (2025-12-31) - 🔧 Configuration via global variables
+ * 8.0.0   (2025-12-31) - 🎯 Target-based temperature control
+ * 7.0.0   (2025-12-31) - 🌟 Zone-based generic implementation
  */
 
 
@@ -396,10 +178,16 @@ async function getCompleteSchedule(baseSchedule) {
     
     log(`🌙 Evening Slot: ${eveningSlot.start}-${eveningSlot.end} (${schoolDayTomorrow ? 'School tomorrow' : 'Weekend/holiday tomorrow'})`);
     
-    if (!schoolDayTomorrow && eveningSlot.start === '22:00') {
+    // If evening slot starts later than the last base schedule slot ends, extend the last slot
+    // to prevent gaps (e.g., weekday Day ends 20:00, but lateEvening starts 21:00 on holiday)
+    const lastSlot = baseSchedule[baseSchedule.length - 1];
+    const lastSlotEnd = timeToMinutes(lastSlot.end);
+    const eveningStart = timeToMinutes(eveningSlot.start);
+    
+    if (!schoolDayTomorrow && eveningStart > lastSlotEnd) {
         const extendedSchedule = [...baseSchedule];
-        const lastSlot = extendedSchedule[extendedSchedule.length - 1];
-        extendedSchedule[extendedSchedule.length - 1] = { ...lastSlot, end: '22:00' };
+        extendedSchedule[extendedSchedule.length - 1] = { ...lastSlot, end: eveningSlot.start };
+        log(`📅 Extended last slot to ${eveningSlot.start} to match evening start (preventing gap)`);
         return [...extendedSchedule, eveningSlot];
     }
     
@@ -1572,9 +1360,13 @@ async function controlHeating(roomTemp, slot, windowOpen, inactivityOffset) {
             } else {
                 // Delay complete - clear flag and resume normal heating
                 global.set(`${ROOM.zoneName}.Heating.WindowClosedTime`, null);
-                addChange("Air settled");
-                addChange("Heat resumed");
-                log(`✓ Air settle delay complete - resuming heating`);
+                
+                // Suppress notifications when in away mode (not relevant when nobody home)
+                if (!tadoAway) {
+                    addChange("Air settled");
+                    addChange("Heat resumed");
+                }
+                log(`✓ Air settle delay complete - resuming heating${tadoAway ? ' (away mode - notification suppressed)' : ''}`);
                 
                 // For TADO, turn on and set target
                 if (ROOM.heating.type === 'tado_valve') {

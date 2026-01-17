@@ -162,8 +162,8 @@ const ROOMS = {
                 { start: '06:00', end: '08:00', target: 22.5, inactivityOffset: 0, name: 'Morning' },
                 { start: '08:00', end: '22:00', target: 22, inactivityOffset: 1, name: 'Day' }
             ],
-            earlyEvening: { start: '22:00', end: '23:59', target: 21, inactivityOffset: 0, name: 'Evening' },
-            lateEvening: { start: '22:00', end: '23:59', target: 21, inactivityOffset: 0, name: 'Evening' }
+            earlyEvening: { start: '22:00', end: '23:59', target: 22, inactivityOffset: 1, name: 'Evening' },
+            lateEvening: { start: '22:00', end: '23:59', target: 22, inactivityOffset: 1, name: 'Evening' }
         },
         settings: {
             tadoAwayMinTemp: 17.0,
