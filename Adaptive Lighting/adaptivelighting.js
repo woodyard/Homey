@@ -313,18 +313,18 @@ const PROFILES = {
   // Filament bulbs - reduced brightness (they appear brighter than regular LEDs)
   // Also slightly lower temperature since filament already has warm glow
   filament: [
-    { name: "Morning",  startTime: "06:00",              endTime: "sunrise+30>08:00",   brightness: 0.20, temperature: 0.55 },
-    { name: "Daytime",  startTime: "sunrise+30>08:00",   endTime: "sunset>17:00<19:00", brightness: 0.55, temperature: 0.40 },
-    { name: "Evening",  startTime: "sunset>17:00<19:00", endTime: "21:00",              brightness: 0.20, temperature: 0.70 },
-    { name: "Night",    startTime: "21:00",              endTime: "06:00",              brightness: 0.08, temperature: 0.70 }
+    { name: "Morning",  startTime: "06:00",              endTime: "sunrise+30>08:00",      brightness: 0.20, temperature: 0.55 },
+    { name: "Daytime",  startTime: "sunrise+30>08:00",   endTime: "sunset-60>15:30<19:00", brightness: 0.55, temperature: 0.40 },
+    { name: "Evening",  startTime: "sunset-60>15:30<19:00", endTime: "21:00",             brightness: 0.20, temperature: 0.70 },
+    { name: "Night",    startTime: "21:00",              endTime: "06:00",                 brightness: 0.08, temperature: 0.70 }
   ],
   
   // Stue (living room) - reduced morning brightness, comfortable evening
   stue: [
-    { name: "Morning",  startTime: "06:00",              endTime: "sunrise+30>08:00",   brightness: 0.35, temperature: 0.7 },
-    { name: "Daytime",  startTime: "sunrise+30>08:00",   endTime: "sunset>17:00<19:00", brightness: 0.80, temperature: 0.4 },
-    { name: "Evening",  startTime: "sunset>17:00<19:00", endTime: "21:00",              brightness: 0.35, temperature: 0.9 },
-    { name: "Night",    startTime: "21:00",              endTime: "06:00",              brightness: 0.10, temperature: 0.9 }
+    { name: "Morning",  startTime: "06:00",              endTime: "sunrise+30>08:00",      brightness: 0.35, temperature: 0.7 },
+    { name: "Daytime",  startTime: "sunrise+30>08:00",   endTime: "sunset-60>15:30<19:00", brightness: 0.80, temperature: 0.4 },
+    { name: "Evening",  startTime: "sunset-60>15:30<19:00", endTime: "21:00",             brightness: 0.35, temperature: 0.9 },
+    { name: "Night",    startTime: "21:00",              endTime: "06:00",                 brightness: 0.10, temperature: 0.9 }
   ],
   
   // Bathroom - bright until late, very dim at night
