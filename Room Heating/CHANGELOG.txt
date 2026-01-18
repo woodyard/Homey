@@ -6,6 +6,64 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.11.0 (2026-01-18)
+==============================================
+✨ RESUME: Set and verify temperature when resuming from pause/boost modes
+- Added new resumeNormalHeating() function for explicit resume logic
+- When pause mode cancelled: TADO now sets both onoff=true AND target_temperature with verification
+- When pause mode expires: Explicit resume with temperature setting and verification
+- When boost mode cancelled: TADO sets target back to schedule temperature with verification
+- When boost mode expires: Explicit resume with temperature setting and verification
+- Smart plugs: Calculate correct state using hysteresis when resuming
+- Debug notifications now show both onoff AND temperature changes during resume
+- Example: "🐛 Verified: onoff=true" + "🐛 Verified: target_temperature=22°C"
+- Prevents situation where only onoff shown but temperature not verified
+- Resume logic respects away mode (uses away minimum) and inactivity (applies offset)
+- Baseline (LastVerifiedTargetTemp) updated after resume to prevent false manual detection
+- Functions updated: cancelPauseMode(), cancelBoostMode(), cancelAllOverrideModes()
+- Main execution: Cancel request, pause expiry, boost expiry all call explicit resume
+- Significantly improves user confidence that heating is properly restored after override modes
+
+==============================================
+Version 10.10.2 (2026-01-18)
+==============================================
+🔧 OPTIMIZE: Store smart plug baseline once per room, not per device
+- Fixed inefficiency where LastVerifiedOnOff was updated for each device in a room
+- Now stores baseline ONCE after all devices in room are processed
+- For smart plugs: Store after all devices verified OR if no changes and all match expected
+- Prevents multiple baseline updates for same state (was updating 2-3 times per run)
+- Baseline storage moved from per-device loop to after-loop logic
+- More efficient, cleaner code, same functionality
+- Smart plug rooms with multiple devices benefit most from this optimization
+
+==============================================
+Version 10.10.1 (2026-01-18)
+==============================================
+🐛 DEBUG: Add debug notifications for queue and verification events
+- New HeatingDebugMode Logic variable enables detailed debug notifications
+- When enabled, sends notifications for command queue operations and verification
+- Examples: "📝 Queued onoff=true", "✅ Verified in 48ms: onoff=true", "📤 Sending onoff=true"
+- Helps troubleshoot command verification and queue behavior without checking logs
+- Set HeatingDebugMode=true in Homey Logic to enable, false to disable
+- Debug messages prefixed with room name for multi-room setups
+- Only affects notifications - logging behavior unchanged
+
+==============================================
+Version 10.10.0 (2026-01-18)
+==============================================
+🔧 VERIFIED-BASELINE: Only compare against verified device states for manual detection
+- Changed manual detection to use LastVerifiedTargetTemp instead of ExpectedTargetTemp
+- Only stores baseline when sendCommandWithVerification() confirms device accepted command
+- Eliminates false positives from comparing against unverified expected values
+- For TADO: Only updates LastVerifiedTargetTemp after target_temperature verification succeeds
+- For smart plugs: Only updates LastVerifiedOnOff after all devices verified OR confirmed matching
+- Manual detection now compares actual device state against last known VERIFIED state
+- If no verified baseline exists, manual detection returns "not detected" (safe fallback)
+- More reliable manual intervention detection - only triggers on actual device changes
+- Debug: New log message "📝 Stored verified target: 22°C (baseline for manual detection)"
+- Complements v10.9.0 state-based detection and verification system
+
+==============================================
 Version 10.9.2 (2026-01-18)
 ==============================================
 🔄 RETRY: Auto-retry TADO temperature commands up to 3 times if not verified

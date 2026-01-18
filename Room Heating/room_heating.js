@@ -29,11 +29,12 @@
  * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.10.2
+ * Version: 10.11.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.11.0 (2026-01-18) - ✨ Resume: Set and verify temperature when resuming from pause/boost
  * 10.10.2 (2026-01-18) - 🔧 Optimize: Store smart plug baseline once per room, not per device
  * 10.10.1 (2026-01-18) - 🐛 Debug notifications for queue/verification (HeatingDebugMode variable)
  * 10.10.0 (2026-01-18) - 🔧 Verified-baseline detection: Only compare against verified device states
@@ -432,7 +433,7 @@ function activateBoostMode() {
     addChange(`${BOOST_DURATION_MINUTES} min`);
 }
 
-function cancelBoostMode() {
+async function cancelBoostMode(currentSlot = null) {
     const wasActive = global.get(`${ROOM.zoneName}.Heating.BoostMode`);
     
     // Clear boost mode variables
@@ -447,6 +448,12 @@ function cancelBoostMode() {
         
         addChange(`🛑 Boost cancelled`);
         addChange(`Resumed schedule`);
+        
+        // Explicitly resume heating with temperature verification
+        if (currentSlot) {
+            await resumeNormalHeating(currentSlot, false, 'boost');
+        }
+        
         return true;
     } else {
         log(`\nℹ️ No active boost to cancel`);
@@ -455,9 +462,9 @@ function cancelBoostMode() {
     }
 }
 
-function cancelAllOverrideModes() {
-    const boostCancelled = cancelBoostMode();
-    const pauseCancelled = cancelPauseMode();
+async function cancelAllOverrideModes(currentSlot = null) {
+    const boostCancelled = await cancelBoostMode(currentSlot);
+    const pauseCancelled = await cancelPauseMode(currentSlot);
     const manualCancelled = cancelManualOverrideMode();
     
     if (boostCancelled || pauseCancelled || manualCancelled) {
@@ -651,7 +658,7 @@ function activatePauseMode() {
     addChange(`${PAUSE_DURATION_MINUTES} min`);
 }
 
-function cancelPauseMode() {
+async function cancelPauseMode(currentSlot = null) {
     const wasActive = global.get(`${ROOM.zoneName}.Heating.PauseMode`);
     
     // Clear pause mode variables
@@ -666,6 +673,12 @@ function cancelPauseMode() {
         
         addChange(`🔄 Pause cancelled`);
         addChange(`Resumed schedule`);
+        
+        // Explicitly resume heating with temperature verification
+        if (currentSlot) {
+            await resumeNormalHeating(currentSlot, false, 'pause');
+        }
+        
         return true;
     } else {
         log(`\nℹ️ No active pause to cancel`);
@@ -811,6 +824,156 @@ async function controlHeatingPause() {
     }
     
     return 'pause_unknown_type';
+}
+
+// ============================================================================
+// Resume Normal Heating (After Override Mode Exit)
+// ============================================================================
+
+/**
+ * Resume normal heating after override mode cancellation/expiry
+ * Explicitly sets both onoff and target temperature with verification
+ * @param {Object} slot - Current time slot with target temperature
+ * @param {boolean} fromExpiry - True if auto-expired, false if manually cancelled
+ * @param {string} modeType - 'pause', 'boost', or 'manual' for logging
+ * @returns {Promise<boolean>} True if resumed successfully
+ */
+async function resumeNormalHeating(slot, fromExpiry, modeType) {
+    log(`\n--- RESUMING NORMAL HEATING (${modeType} ${fromExpiry ? 'expired' : 'cancelled'}) ---`);
+    
+    // Calculate correct target temperature for current schedule
+    const tadoAway = await isTadoAway();
+    const inactivity = await checkInactivity(slot);
+    const inactivityOffset = inactivity.inactivityOffset || 0;
+    
+    let resumeTarget = slot.target;
+    
+    // Apply away mode minimum if currently away
+    if (tadoAway && ROOM.settings.tadoAwayMinTemp !== null) {
+        resumeTarget = ROOM.settings.tadoAwayMinTemp;
+        log(`🏠 Away mode: Using minimum ${resumeTarget}°C`);
+    }
+    // Apply inactivity offset if room is inactive and not in away mode
+    else if (!tadoAway && inactivity.inactive && inactivityOffset > 0) {
+        resumeTarget -= inactivityOffset;
+        log(`💤 Inactivity mode active - reducing target by ${inactivityOffset}°C`);
+        log(`→ Resume target: ${resumeTarget}°C (with inactivity offset)`);
+    } else {
+        log(`→ Resume target: ${resumeTarget}°C (scheduled target)`);
+    }
+    
+    if (ROOM.heating.type === 'smart_plug') {
+        log(`Smart plug mode: Resuming to scheduled state`);
+        
+        // For smart plugs, use hysteresis to determine if heating should be on/off
+        const roomTemp = await getRoomTemperature();
+        if (roomTemp === null) {
+            log(`❌ Cannot read room temperature - skipping resume`);
+            return false;
+        }
+        
+        const hysteresis = ROOM.heating.hysteresis || 0.5;
+        const targetLow = resumeTarget - (hysteresis / 2);
+        const targetHigh = resumeTarget + (hysteresis / 2);
+        const shouldTurnOn = roomTemp < targetLow;
+        
+        log(`Room: ${roomTemp}°C, Target range: ${targetLow}-${targetHigh}°C`);
+        log(`Resume state: ${shouldTurnOn ? 'ON' : 'OFF'}`);
+        
+        let anyVerified = false;
+        for (const deviceId of ROOM.heating.devices) {
+            try {
+                const device = await Homey.devices.getDevice({ id: deviceId });
+                const result = await sendCommandWithVerification(
+                    device,
+                    'onoff',
+                    shouldTurnOn,
+                    ROOM.zoneName,
+                    SESSION_ID
+                );
+                
+                if (result.success && result.verified) {
+                    log(`🔌 ${device.name}: ${shouldTurnOn ? 'ON' : 'OFF'} (verified)`);
+                    anyVerified = true;
+                } else if (result.success) {
+                    log(`⚠️ ${device.name}: ${shouldTurnOn ? 'ON' : 'OFF'} (not verified)`);
+                } else {
+                    log(`❌ ${device.name}: Failed to set state`);
+                }
+            } catch (error) {
+                log(`❌ Error resuming ${deviceId}: ${error.message}`);
+            }
+        }
+        
+        if (anyVerified) {
+            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+            log(`📝 Grace period reset (resume verified)`);
+        }
+        
+        return anyVerified;
+        
+    } else if (ROOM.heating.type === 'tado_valve') {
+        log(`TADO mode: Resuming with target ${resumeTarget}°C`);
+        
+        try {
+            const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
+            let verified = false;
+            
+            // ALWAYS set onoff to ensure it's on
+            const onoffResult = await sendCommandWithVerification(
+                device,
+                'onoff',
+                true,
+                ROOM.zoneName,
+                SESSION_ID
+            );
+            
+            if (onoffResult.success && onoffResult.verified) {
+                log(`🔥 TADO turned ON (verified)`);
+                verified = true;
+            } else if (onoffResult.success) {
+                log(`⚠️ TADO turned ON (not verified)`);
+            } else {
+                log(`❌ TADO turn ON failed`);
+            }
+            
+            // ALWAYS set temperature even if already correct (for explicit verification)
+            // This ensures user sees temperature verification when resuming
+            const tempResult = await sendCommandWithVerification(
+                device,
+                'target_temperature',
+                resumeTarget,
+                ROOM.zoneName,
+                SESSION_ID
+            );
+            
+            if (tempResult.success && tempResult.verified) {
+                log(`🎯 TADO target set to ${resumeTarget}°C (verified)`);
+                verified = true;
+            } else if (tempResult.success) {
+                log(`⚠️ TADO target set to ${resumeTarget}°C (not verified)`);
+            } else {
+                log(`❌ TADO temperature change failed`);
+            }
+            
+            // Update expected target to prevent false manual detection
+            global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, resumeTarget);
+            
+            if (verified) {
+                global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+                log(`📝 Expected target updated to ${resumeTarget}°C and grace period reset (verified)`);
+            } else {
+                log(`📝 Expected target updated to ${resumeTarget}°C (resume mode)`);
+            }
+            
+            return verified;
+        } catch (error) {
+            log(`❌ Error resuming TADO: ${error.message}`);
+            return false;
+        }
+    }
+    
+    return false;
 }
 
 // ============================================================================
@@ -2443,11 +2606,28 @@ if (!requestCancel && !requestBoost && !requestPause) {
 
 // Handle cancel request first - cancels boost, pause, AND manual override
 if (requestCancel) {
-    const wasCancelled = cancelAllOverrideModes();
+    // Get current slot before canceling (needed for resume)
+    const now = getDanishLocalTime();
+    const weekend = isWeekend(now);
+    const schoolDay = !weekend ? await isSchoolDay() : false;
+    
+    let baseSchedule;
+    if (weekend) {
+        baseSchedule = ROOM.schedules.weekend;
+    } else if (schoolDay) {
+        baseSchedule = ROOM.schedules.weekday;
+    } else {
+        baseSchedule = ROOM.schedules.holiday;
+    }
+    
+    const schedule = await getCompleteSchedule(baseSchedule);
+    const currentSlot = getCurrentTimeSlot(schedule, now);
+    
+    const wasCancelled = await cancelAllOverrideModes(currentSlot);
     
     if (wasCancelled) {
-        // Override was active and cancelled - continue with normal schedule
-        log(`Continuing to run normal schedule after cancellation...`);
+        // Override was active and cancelled - resume logic already called in cancel functions
+        log(`Override cancelled and heating resumed - continuing with normal schedule`);
     } else {
         // No active overrides - just run normally
         log(`No active overrides - running normal schedule`);
@@ -2524,9 +2704,28 @@ if (pauseStatus.active) {
     return;
 }
 
-// If pause just expired, continue with normal schedule
+// If pause just expired, explicitly resume heating
 if (pauseStatus.expired) {
     log(`\n⏱️ Pause mode expired - resuming normal schedule`);
+    
+    // Get current slot for temperature target
+    const now = getDanishLocalTime();
+    const weekend = isWeekend(now);
+    const schoolDay = !weekend ? await isSchoolDay() : false;
+    
+    let baseSchedule;
+    if (weekend) {
+        baseSchedule = ROOM.schedules.weekend;
+    } else if (schoolDay) {
+        baseSchedule = ROOM.schedules.weekday;
+    } else {
+        baseSchedule = ROOM.schedules.holiday;
+    }
+    
+    const schedule = await getCompleteSchedule(baseSchedule);
+    const currentSlot = getCurrentTimeSlot(schedule, now);
+    
+    await resumeNormalHeating(currentSlot, true, 'pause');
 }
 
 // Check if boost mode is active
@@ -2570,9 +2769,28 @@ if (boostStatus.active) {
     return;
 }
 
-// If boost just expired, continue with normal schedule
+// If boost just expired, explicitly resume heating
 if (boostStatus.expired) {
     log(`\n⏱️ Boost mode expired - resuming normal schedule`);
+    
+    // Get current slot for temperature target
+    const now = getDanishLocalTime();
+    const weekend = isWeekend(now);
+    const schoolDay = !weekend ? await isSchoolDay() : false;
+    
+    let baseSchedule;
+    if (weekend) {
+        baseSchedule = ROOM.schedules.weekend;
+    } else if (schoolDay) {
+        baseSchedule = ROOM.schedules.weekday;
+    } else {
+        baseSchedule = ROOM.schedules.holiday;
+    }
+    
+    const schedule = await getCompleteSchedule(baseSchedule);
+    const currentSlot = getCurrentTimeSlot(schedule, now);
+    
+    await resumeNormalHeating(currentSlot, true, 'boost');
 }
 
 // ============================================================================
