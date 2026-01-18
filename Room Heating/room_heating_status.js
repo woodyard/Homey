@@ -5,11 +5,12 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 4.8.0
+ * Version: 4.9.0
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
  * Version History:
+ * 4.9.0 (2026-01-18) - 📊 Show device queue status (matches heating v10.9.0)
  * 4.8.0 (2026-01-17) - 🎛️ Show unified slot-override architecture (matches heating v10.8.0)
  * 4.7.0 (2026-01-17) - ⏱️ Show per-slot inactivity timeout (matches heating v10.7.0)
  * 4.6.3 (2026-01-16) - 🐛 Fix: Schedule gap when Day ends before lateEvening starts (matches heating v10.6.13)
@@ -208,6 +209,36 @@ async function getZoneDevices(zoneName, heatingDeviceIds, roomConfig) {
     } catch (error) {
         return { error: error.message };
     }
+}
+
+// ============================================================================
+// Device State Management (for queue status display)
+// ============================================================================
+
+/**
+ * Get global variable key for device state
+ */
+function getDeviceStateKey(zoneName, deviceId) {
+    const cleanId = deviceId.replace(/-/g, '_');
+    return `${zoneName}.Heating.Device.${cleanId}.State`;
+}
+
+/**
+ * Get device state from global variables
+ */
+function getDeviceState(zoneName, deviceId) {
+    const stateKey = getDeviceStateKey(zoneName, deviceId);
+    const existingState = global.get(stateKey);
+    
+    if (existingState) {
+        try {
+            return JSON.parse(existingState);
+        } catch (error) {
+            return null;
+        }
+    }
+    
+    return null;
 }
 
 // ============================================================================
@@ -739,6 +770,77 @@ async function showRoomStatus(roomName, roomConfig) {
     log('\n══ WINDOW SETTINGS ══');
     log(`Open Timeout:   ${roomConfig.settings.windowOpenTimeout} sec (heating off after window open this long)`);
     log(`Closed Delay:   ${roomConfig.settings.windowClosedDelay || 600} sec (${Math.floor((roomConfig.settings.windowClosedDelay || 600) / 60)} min air settle time)`);
+    
+    // Device Queue Status (Command Verification System)
+    log('\n══ DEVICE QUEUE STATUS ══');
+    
+    if (devices.heatingDevices.length > 0) {
+        let anyDeviceBusy = false;
+        let totalQueueItems = 0;
+        
+        for (const device of devices.heatingDevices) {
+            const state = getDeviceState(ZONE_NAME, device.id);
+            
+            if (state) {
+                const deviceName = device.name.length > 20 ? device.name.substring(0, 17) + '...' : device.name;
+                const statusIcon = {
+                    'idle': '✓',
+                    'sending': '📤',
+                    'verifying': '🔍',
+                    'failed': '❌'
+                }[state.status] || '?';
+                
+                log(`${deviceName}:`);
+                log(`  Status:       ${statusIcon} ${state.status.toUpperCase()}`);
+                
+                if (state.command) {
+                    const age = Math.floor((Date.now() - state.command.timestamp) / 1000);
+                    log(`  Command:      ${state.command.type} = ${state.command.value} (${age}s ago)`);
+                    anyDeviceBusy = true;
+                }
+                
+                if (state.queue && state.queue.length > 0) {
+                    log(`  Queue:        ${state.queue.length} command(s) waiting`);
+                    totalQueueItems += state.queue.length;
+                    
+                    // Show first 3 queued commands
+                    state.queue.slice(0, 3).forEach((cmd, idx) => {
+                        const age = Math.floor((Date.now() - cmd.timestamp) / 1000);
+                        const sessionShort = cmd.sessionId.substr(8, 12);
+                        log(`    ${idx + 1}. ${cmd.type} = ${cmd.value} (${age}s, ${sessionShort})`);
+                    });
+                    
+                    if (state.queue.length > 3) {
+                        log(`    ... and ${state.queue.length - 3} more`);
+                    }
+                } else {
+                    log(`  Queue:        Empty`);
+                }
+                
+                if (state.lastVerified) {
+                    const since = Math.floor((Date.now() - state.lastVerified) / 1000);
+                    log(`  Last OK:      ${since}s ago`);
+                }
+                
+                if (state.lastError) {
+                    log(`  Last Error:   ${state.lastError}`);
+                }
+            } else {
+                log(`${device.name}:`);
+                log(`  Status:       ✓ No state (idle)`);
+            }
+        }
+        
+        if (anyDeviceBusy) {
+            log(`\n⚠️  ${devices.heatingDevices.length > 1 ? 'Devices are' : 'Device is'} being controlled - manual detection paused`);
+        }
+        
+        if (totalQueueItems > 0) {
+            log(`\n📋 Total queued: ${totalQueueItems} command(s) from concurrent sessions`);
+        }
+    } else {
+        log(`No heating devices found`);
+    }
     
     // Diagnostics
     log('\n══ DIAGNOSTICS ══');

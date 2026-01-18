@@ -25,13 +25,18 @@
  * - Supports both smart_plug and tado_valve
  * - Target-based temperature control with automatic hysteresis
  * - Manual intervention detection - respects manual changes for 90 minutes
+ * - Command verification with status polling
+ * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.8.6
+ * Version: 10.9.2
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.9.2  (2026-01-18) - 🔄 Retry: Auto-retry up to 3 times if TADO temperature not verified
+ * 10.9.1  (2026-01-18) - 🐛 Fix: False manual override when returning from away mode
+ * 10.9.0  (2026-01-18) - ✅ Command verification & queue system + state-based detection
  * 10.8.6  (2026-01-17) - 🐛 Fix: Snowflake icon shown incorrectly during manual override
  * 10.8.5  (2026-01-17) - 🐛 Fix: Grace period blocks manual control detection
  * 10.8.4  (2026-01-17) - 🐛 Fix: Boost/pause cancelled by false manual detection
@@ -97,7 +102,7 @@ if (args?.[0]?.includes(',')) {
     log(`📝 Parsed Flow arguments: room="${roomArgRaw}", action="${boostArg}"`);
 } else {
     // HomeyScript format: Separate arguments
-    roomArgRaw = args?.[0] || 'Stue';
+    roomArgRaw = args?.[0] || 'Oliver';
     boostArg = args?.[1];
 }
 
@@ -128,6 +133,14 @@ if (requestPause) {
 if (requestCancel) {
     log(`🛑 Cancel override requested via argument`);
 }
+
+// ============================================================================
+// Session Management - Unique ID for this script execution
+// ============================================================================
+
+const SESSION_ID = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+global.set(`${ROOM.zoneName}.Heating.CurrentSession`, SESSION_ID);
+log(`🔑 Session ID: ${SESSION_ID.substr(0, 30)}...`);
 
 // ============================================================================
 // Global Configuration (Shared) - from config script
@@ -266,13 +279,105 @@ async function getNextScheduleChange(schedule, currentSlot) {
 }
 
 // ============================================================================
+// Device State Management for Command Queue
+// ============================================================================
+
+/**
+ * Get global variable key for device state
+ * @param {string} zoneName - Zone name
+ * @param {string} deviceId - Device ID
+ * @returns {string} Global variable key
+ */
+function getDeviceStateKey(zoneName, deviceId) {
+    const cleanId = deviceId.replace(/-/g, '_');
+    return `${zoneName}.Heating.Device.${cleanId}.State`;
+}
+
+/**
+ * Initialize or retrieve device state from global variables
+ * @param {string} zoneName - Room zone name
+ * @param {string} deviceId - Device unique ID
+ * @returns {object} Device state object
+ */
+function initDeviceState(zoneName, deviceId) {
+    const stateKey = getDeviceStateKey(zoneName, deviceId);
+    const existingState = global.get(stateKey);
+    
+    if (existingState) {
+        try {
+            return JSON.parse(existingState);
+        } catch (error) {
+            log(`⚠️ Failed to parse device state for ${deviceId}, initializing fresh state`);
+        }
+    }
+    
+    // Initialize fresh state
+    const state = {
+        deviceId: deviceId,
+        status: 'idle',
+        command: null,
+        queue: [],
+        lastVerified: 0,
+        lastError: null
+    };
+    
+    saveDeviceState(zoneName, deviceId, state);
+    return state;
+}
+
+/**
+ * Save device state to global variables
+ * @param {string} zoneName - Zone name
+ * @param {string} deviceId - Device ID
+ * @param {object} state - State object to save
+ */
+function saveDeviceState(zoneName, deviceId, state) {
+    const stateKey = getDeviceStateKey(zoneName, deviceId);
+    global.set(stateKey, JSON.stringify(state));
+}
+
+/**
+ * Clean up stale device states
+ * Removes states for devices that timed out or are stuck
+ */
+async function cleanupStaleDeviceStates() {
+    const STALE_TIMEOUT = 300000; // 5 minutes
+    const now = Date.now();
+    
+    for (const deviceId of ROOM.heating.devices) {
+        const state = initDeviceState(ROOM.zoneName, deviceId);
+        
+        // Check if command has been stuck for too long
+        if (state.command && (now - state.command.timestamp) > STALE_TIMEOUT) {
+            log(`🧹 Cleaning up stale state for device ${deviceId.substr(0, 8)}...`);
+            
+            state.status = 'idle';
+            state.command = null;
+            state.lastError = 'Cleaned up stale state';
+            saveDeviceState(ROOM.zoneName, deviceId, state);
+        }
+        
+        // Clean up old queue items
+        const validQueueItems = state.queue.filter(cmd =>
+            (now - cmd.timestamp) < STALE_TIMEOUT
+        );
+        
+        if (validQueueItems.length !== state.queue.length) {
+            log(`🧹 Removed ${state.queue.length - validQueueItems.length} stale queue items for device ${deviceId.substr(0, 8)}...`);
+            state.queue = validQueueItems;
+            saveDeviceState(ROOM.zoneName, deviceId, state);
+        }
+    }
+}
+
+// ============================================================================
 // Boost & Pause Heating Functions
 // ============================================================================
 
 const BOOST_DURATION_MINUTES = 60;
 const BOOST_TEMPERATURE_TADO = 25;
 const PAUSE_DURATION_MINUTES = 60;
-const MANUAL_OVERRIDE_GRACE_PERIOD_MINUTES = 0.5; // 30 seconds - only for network/async delays, not blocking detection
+// Note: Grace period eliminated - using state-based detection instead (checking device status)
 
 function activateBoostMode() {
     global.set(`${ROOM.zoneName}.Heating.BoostMode`, true);
@@ -378,20 +483,42 @@ async function controlHeatingBoost() {
     if (ROOM.heating.type === 'smart_plug') {
         log(`Smart plug mode: Turning ON all radiators`);
         
+        let anyVerified = false;
+        
         for (const deviceId of ROOM.heating.devices) {
             try {
                 const device = await Homey.devices.getDevice({ id: deviceId });
                 const currentState = device.capabilitiesObj.onoff.value;
                 
                 if (!currentState) {
-                    await device.setCapabilityValue('onoff', true);
-                    log(`🔌 ${device.name}: ON`);
+                    const result = await sendCommandWithVerification(
+                        device,
+                        'onoff',
+                        true,
+                        ROOM.zoneName,
+                        SESSION_ID
+                    );
+                    
+                    if (result.success && result.verified) {
+                        log(`🔌 ${device.name}: ON (verified)`);
+                        anyVerified = true;
+                    } else if (result.success) {
+                        log(`⚠️ ${device.name}: ON (not verified)`);
+                    } else {
+                        log(`❌ ${device.name}: Failed to turn ON`);
+                    }
                 } else {
                     log(`✓ ${device.name}: already ON`);
                 }
             } catch (error) {
                 log(`❌ Error controlling ${deviceId}: ${error.message}`);
             }
+        }
+        
+        // Only reset grace period if commands were verified
+        if (anyVerified) {
+            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+            log(`📝 Grace period reset (boost commands verified)`);
         }
         
         return 'boost_heating';
@@ -404,22 +531,58 @@ async function controlHeatingBoost() {
             const currentOnOff = device.capabilitiesObj.onoff.value;
             const currentTarget = device.capabilitiesObj.target_temperature.value;
             
+            let verified = false;
+            
             if (currentOnOff !== true) {
-                await device.setCapabilityValue('onoff', true);
-                log(`🔥 TADO turned ON`);
+                const result = await sendCommandWithVerification(
+                    device,
+                    'onoff',
+                    true,
+                    ROOM.zoneName,
+                    SESSION_ID
+                );
+                
+                if (result.success && result.verified) {
+                    log(`🔥 TADO turned ON (verified)`);
+                    verified = true;
+                } else if (result.success) {
+                    log(`⚠️ TADO turned ON (not verified)`);
+                } else {
+                    log(`❌ TADO turn ON failed`);
+                }
             }
             
             if (currentTarget !== BOOST_TEMPERATURE_TADO) {
-                await device.setCapabilityValue('target_temperature', BOOST_TEMPERATURE_TADO);
-                log(`🎯 TADO boost temperature set to ${BOOST_TEMPERATURE_TADO}°C`);
+                const result = await sendCommandWithVerification(
+                    device,
+                    'target_temperature',
+                    BOOST_TEMPERATURE_TADO,
+                    ROOM.zoneName,
+                    SESSION_ID
+                );
+                
+                if (result.success && result.verified) {
+                    log(`🎯 TADO boost temperature set to ${BOOST_TEMPERATURE_TADO}°C (verified)`);
+                    verified = true;
+                } else if (result.success) {
+                    log(`⚠️ TADO boost temperature set to ${BOOST_TEMPERATURE_TADO}°C (not verified)`);
+                } else {
+                    log(`❌ TADO temperature change failed`);
+                }
             } else {
                 log(`✓ TADO already at boost temperature`);
             }
             
             // Update expected target to prevent false manual detection
             global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, BOOST_TEMPERATURE_TADO);
-            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-            log(`📝 Expected target updated to ${BOOST_TEMPERATURE_TADO}°C (boost mode - prevents false manual detection)`);
+            
+            // Only reset grace period if commands were verified
+            if (verified) {
+                global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+                log(`📝 Expected target updated to ${BOOST_TEMPERATURE_TADO}°C and grace period reset (verified)`);
+            } else {
+                log(`📝 Expected target updated to ${BOOST_TEMPERATURE_TADO}°C (boost mode - prevents false manual detection)`);
+            }
             
             return 'boost_tado';
         } catch (error) {
@@ -525,20 +688,42 @@ async function controlHeatingPause() {
     if (ROOM.heating.type === 'smart_plug') {
         log(`Smart plug mode: Turning OFF all radiators`);
         
+        let anyVerified = false;
+        
         for (const deviceId of ROOM.heating.devices) {
             try {
                 const device = await Homey.devices.getDevice({ id: deviceId });
                 const currentState = device.capabilitiesObj.onoff.value;
                 
                 if (currentState) {
-                    await device.setCapabilityValue('onoff', false);
-                    log(`🔌 ${device.name}: OFF`);
+                    const result = await sendCommandWithVerification(
+                        device,
+                        'onoff',
+                        false,
+                        ROOM.zoneName,
+                        SESSION_ID
+                    );
+                    
+                    if (result.success && result.verified) {
+                        log(`🔌 ${device.name}: OFF (verified)`);
+                        anyVerified = true;
+                    } else if (result.success) {
+                        log(`⚠️ ${device.name}: OFF (not verified)`);
+                    } else {
+                        log(`❌ ${device.name}: Failed to turn OFF`);
+                    }
                 } else {
                     log(`✓ ${device.name}: already OFF`);
                 }
             } catch (error) {
                 log(`❌ Error controlling ${deviceId}: ${error.message}`);
             }
+        }
+        
+        // Only reset grace period if commands were verified
+        if (anyVerified) {
+            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+            log(`📝 Grace period reset (pause commands verified)`);
         }
         
         return 'pause_heating';
@@ -550,17 +735,39 @@ async function controlHeatingPause() {
             const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
             const currentOnOff = device.capabilitiesObj.onoff.value;
             
+            let verified = false;
+            
             if (currentOnOff !== false) {
-                await device.setCapabilityValue('onoff', false);
-                log(`🔥 TADO turned OFF`);
+                const result = await sendCommandWithVerification(
+                    device,
+                    'onoff',
+                    false,
+                    ROOM.zoneName,
+                    SESSION_ID
+                );
+                
+                if (result.success && result.verified) {
+                    log(`🔥 TADO turned OFF (verified)`);
+                    verified = true;
+                } else if (result.success) {
+                    log(`⚠️ TADO turned OFF (not verified)`);
+                } else {
+                    log(`❌ TADO turn OFF failed`);
+                }
             } else {
                 log(`✓ TADO already OFF`);
             }
             
             // Clear expected target to prevent false manual detection during pause
             global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, null);
-            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-            log(`📝 Expected target cleared (pause mode - prevents false manual detection)`);
+            
+            // Only reset grace period if command was verified
+            if (verified) {
+                global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+                log(`📝 Expected target cleared and grace period reset (verified)`);
+            } else {
+                log(`📝 Expected target cleared (pause mode - prevents false manual detection)`);
+            }
             
             return 'pause_tado';
         } catch (error) {
@@ -664,15 +871,20 @@ function checkManualOverrideMode() {
 }
 
 async function detectManualIntervention() {
-    // Grace period check - don't detect changes within 7 minutes of last ACTUAL automation change
-    // LastAutomationChangeTime is only updated when system makes physical changes (not on every run)
-    // This prevents false positives from system's own temperature adjustments (schedule, inactivity, away mode)
-    const lastChangeTime = global.get(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`) || 0;
-    const minutesSinceLastChange = (Date.now() - lastChangeTime) / 1000 / 60;
-    
-    if (minutesSinceLastChange < MANUAL_OVERRIDE_GRACE_PERIOD_MINUTES) {
-        return { detected: false };
+    // CRITICAL: Check if any device is currently being controlled by automation
+    // If a device is 'sending' or 'verifying', skip manual detection entirely
+    // This eliminates the need for time-based grace periods - we check actual device state
+    for (const deviceId of ROOM.heating.devices) {
+        const state = initDeviceState(ROOM.zoneName, deviceId);
+        
+        if (state.status === 'sending' || state.status === 'verifying') {
+            log(`⏸️ Skipping manual detection - device ${deviceId.substr(0, 8)}... is ${state.status}`);
+            return { detected: false };
+        }
     }
+    
+    // All devices idle - safe to check for manual intervention
+    log(`✓ All devices idle - checking for manual intervention`);
     
     if (ROOM.heating.type === 'tado_valve') {
         // TADO: Detect temperature changes
@@ -889,6 +1101,329 @@ async function isWindowOpen() {
 }
 
 // ============================================================================
+// Command Queue Management Functions
+// ============================================================================
+
+/**
+ * Try to acquire lock for sending command
+ * @param {string} zoneName - Room zone name
+ * @param {string} deviceId - Device ID
+ * @param {string} sessionId - Current session ID
+ * @returns {boolean} True if lock acquired, false otherwise
+ */
+function tryAcquireLock(zoneName, deviceId, sessionId) {
+    const state = initDeviceState(zoneName, deviceId);
+    const now = Date.now();
+    const LOCK_TIMEOUT = 30000; // 30 seconds
+    
+    if (state.status === 'idle') {
+        return true;
+    }
+    
+    // Check if previous command has timed out
+    if (state.command && (now - state.command.timestamp) > LOCK_TIMEOUT) {
+        log(`⏱️ Previous command timed out, acquiring lock for new command`);
+        state.status = 'idle';
+        state.command = null;
+        state.lastError = 'Previous command timed out';
+        saveDeviceState(zoneName, deviceId, state);
+        return true;
+    }
+    
+    // Check if it's our own session (re-entry)
+    if (state.command && state.command.sessionId === sessionId) {
+        log(`✓ Lock already held by this session`);
+        return true;
+    }
+    
+    return false;
+}
+
+/**
+ * Add command to device queue
+ * @param {string} zoneName - Room zone name
+ * @param {string} deviceId - Device ID
+ * @param {object} command - Command to queue
+ * @param {string} sessionId - Current session ID
+ */
+function queueCommand(zoneName, deviceId, command, sessionId) {
+    const state = initDeviceState(zoneName, deviceId);
+    
+    // Add to queue if not already present
+    const existingIndex = state.queue.findIndex(c => c.sessionId === sessionId);
+    
+    if (existingIndex === -1) {
+        state.queue.push({
+            ...command,
+            sessionId: sessionId,
+            timestamp: Date.now(),
+            priority: command.priority || 'normal'
+        });
+        
+        log(`📝 Command queued (position: ${state.queue.length})`);
+    } else {
+        log(`✓ Command already in queue (position: ${existingIndex + 1})`);
+    }
+    
+    saveDeviceState(zoneName, deviceId, state);
+}
+
+/**
+ * Wait for command to reach front of queue
+ * @param {string} zoneName - Room zone name
+ * @param {string} deviceId - Device ID
+ * @param {string} sessionId - Current session ID
+ * @param {number} timeout - Total timeout in milliseconds
+ * @returns {Promise<object>} Result object with success status
+ */
+async function waitForQueuePosition(zoneName, deviceId, sessionId, timeout) {
+    const startTime = Date.now();
+    const POLL_INTERVAL = 2000; // Check every 2 seconds
+    
+    while ((Date.now() - startTime) < timeout) {
+        const state = initDeviceState(zoneName, deviceId);
+        
+        // Check if we're at front of queue and device is idle
+        if (state.status === 'idle' && state.queue.length > 0) {
+            const nextCommand = state.queue[0];
+            
+            if (nextCommand.sessionId === sessionId) {
+                log(`✅ Reached front of queue`);
+                
+                // Remove from queue
+                state.queue.shift();
+                saveDeviceState(zoneName, deviceId, state);
+                
+                return { success: true };
+            }
+        }
+        
+        // Log position in queue
+        const position = state.queue.findIndex(c => c.sessionId === sessionId);
+        if (position >= 0) {
+            const remaining = Math.floor((timeout - (Date.now() - startTime)) / 1000);
+            log(`⏳ Queue position: ${position + 1}/${state.queue.length} (${remaining}s remaining)`);
+        } else {
+            log(`⚠️ Command no longer in queue`);
+            return { success: false, reason: 'removed_from_queue' };
+        }
+        
+        // Wait before next check
+        await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+    }
+    
+    log(`⏱️ Queue wait timeout`);
+    
+    // Remove from queue on timeout
+    const state = initDeviceState(zoneName, deviceId);
+    state.queue = state.queue.filter(c => c.sessionId !== sessionId);
+    saveDeviceState(zoneName, deviceId, state);
+    
+    return { success: false, reason: 'timeout' };
+}
+
+/**
+ * Process the next command in queue (if any)
+ * @param {string} zoneName - Room zone name
+ * @param {string} deviceId - Device ID
+ */
+async function processNextQueuedCommand(zoneName, deviceId) {
+    const state = initDeviceState(zoneName, deviceId);
+    
+    if (state.queue.length > 0) {
+        log(`📋 Queue has ${state.queue.length} pending command(s)`);
+        
+        // Sort queue by priority and timestamp
+        state.queue.sort((a, b) => {
+            if (a.priority === 'high' && b.priority !== 'high') return -1;
+            if (a.priority !== 'high' && b.priority === 'high') return 1;
+            return a.timestamp - b.timestamp;
+        });
+        
+        saveDeviceState(zoneName, deviceId, state);
+        
+        log(`👉 Next session can now acquire lock: ${state.queue[0].sessionId.substr(0, 20)}...`);
+    } else {
+        log(`✓ Queue is empty`);
+    }
+}
+
+/**
+ * Verify device status after command
+ * @param {object} device - Homey device object
+ * @param {string} capability - Capability to check
+ * @param {any} expectedValue - Expected value after command
+ * @param {string} zoneName - Room zone name
+ * @param {string} deviceId - Device ID
+ * @param {number} timeout - Timeout in milliseconds
+ * @returns {Promise<boolean>} True if verified, false if timeout
+ */
+async function verifyDeviceStatus(device, capability, expectedValue, zoneName, deviceId, timeout) {
+    const startTime = Date.now();
+    const POLL_INTERVAL = 1000; // Check every 1 second
+    const TOLERANCE = 0.3; // For temperature comparisons
+    
+    while ((Date.now() - startTime) < timeout) {
+        try {
+            // Refresh device state
+            const currentDevice = await Homey.devices.getDevice({ id: deviceId });
+            const currentValue = currentDevice.capabilitiesObj[capability]?.value;
+            
+            if (currentValue === undefined) {
+                log(`⚠️ Capability ${capability} not found on device`);
+                return false;
+            }
+            
+            // Compare values (with tolerance for temperatures)
+            let matches = false;
+            if (capability === 'target_temperature') {
+                matches = Math.abs(currentValue - expectedValue) <= TOLERANCE;
+            } else {
+                matches = currentValue === expectedValue;
+            }
+            
+            if (matches) {
+                const elapsed = Date.now() - startTime;
+                log(`✅ Status verified in ${elapsed}ms: ${capability} = ${currentValue}`);
+                return true;
+            }
+            
+            // Wait before next poll
+            await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+            
+        } catch (error) {
+            log(`⚠️ Error during verification: ${error.message}`);
+        }
+    }
+    
+    log(`⏱️ Verification timeout after ${timeout}ms`);
+    return false;
+}
+
+/**
+ * Send command to device and verify status update with retry logic
+ * @param {object} device - Homey device object
+ * @param {string} capability - Capability name (onoff, target_temperature)
+ * @param {any} value - Value to set
+ * @param {string} zoneName - Room zone name
+ * @param {string} sessionId - Current session ID
+ * @param {number} timeout - Verification timeout in milliseconds
+ * @param {number} maxRetries - Maximum number of retry attempts (default: 3)
+ * @returns {Promise<object>} Result object with success status
+ */
+async function sendCommandWithVerification(device, capability, value, zoneName, sessionId, timeout = 30000, maxRetries = 3) {
+    const deviceId = device.id;
+    const state = initDeviceState(zoneName, deviceId);
+    
+    // Try to acquire lock
+    if (!tryAcquireLock(zoneName, deviceId, sessionId)) {
+        log(`⏸️ Device busy, queuing command...`);
+        queueCommand(zoneName, deviceId, { type: capability, value: value }, sessionId);
+        
+        // Wait for our turn in queue (60 seconds total)
+        const result = await waitForQueuePosition(zoneName, deviceId, sessionId, 60000);
+        if (!result.success) {
+            return { success: false, reason: 'queue_timeout', skipped: true };
+        }
+        
+        // Retry acquiring lock after queue wait
+        if (!tryAcquireLock(zoneName, deviceId, sessionId)) {
+            return { success: false, reason: 'lock_failed', skipped: true };
+        }
+    }
+    
+    // We have the lock - send command with retry logic
+    let attemptNumber = 0;
+    let lastError = null;
+    
+    while (attemptNumber < maxRetries) {
+        attemptNumber++;
+        
+        try {
+            // Set status to sending
+            state.status = 'sending';
+            state.command = {
+                type: capability,
+                value: value,
+                expectedValue: value,
+                timestamp: Date.now(),
+                sessionId: sessionId,
+                retryCount: attemptNumber - 1
+            };
+            saveDeviceState(zoneName, deviceId, state);
+            
+            if (attemptNumber === 1) {
+                log(`📤 Sending command: ${capability} = ${value}`);
+            } else {
+                log(`🔄 Retry attempt ${attemptNumber}/${maxRetries}: ${capability} = ${value}`);
+            }
+            
+            // Send actual command
+            await device.setCapabilityValue(capability, value);
+            
+            // Set status to verifying
+            state.status = 'verifying';
+            state.command.timestamp = Date.now(); // Reset timestamp for verification phase
+            saveDeviceState(zoneName, deviceId, state);
+            
+            log(`🔍 Verifying device status update...`);
+            
+            // Wait for status verification
+            const verified = await verifyDeviceStatus(device, capability, value, zoneName, deviceId, timeout);
+            
+            if (verified) {
+                log(`✅ Command verified successfully${attemptNumber > 1 ? ` (after ${attemptNumber} attempts)` : ''}`);
+                
+                // Clear state and process queue
+                state.status = 'idle';
+                state.command = null;
+                state.lastVerified = Date.now();
+                state.lastError = null;
+                saveDeviceState(zoneName, deviceId, state);
+                
+                // Process next queued command
+                await processNextQueuedCommand(zoneName, deviceId);
+                
+                return { success: true, verified: true, attempts: attemptNumber };
+            } else {
+                lastError = 'Verification timeout';
+                log(`⚠️ Command verification failed on attempt ${attemptNumber}/${maxRetries}`);
+                
+                // If not last attempt, wait a bit before retrying
+                if (attemptNumber < maxRetries) {
+                    const retryDelay = 2000; // 2 seconds between retries
+                    log(`⏳ Waiting ${retryDelay/1000}s before retry...`);
+                    await new Promise(resolve => setTimeout(resolve, retryDelay));
+                }
+            }
+            
+        } catch (error) {
+            lastError = error.message;
+            log(`❌ Command failed on attempt ${attemptNumber}/${maxRetries}: ${error.message}`);
+            
+            // If not last attempt, wait a bit before retrying
+            if (attemptNumber < maxRetries) {
+                const retryDelay = 2000; // 2 seconds between retries
+                log(`⏳ Waiting ${retryDelay/1000}s before retry...`);
+                await new Promise(resolve => setTimeout(resolve, retryDelay));
+            }
+        }
+    }
+    
+    // All retries exhausted
+    log(`❌ Command failed after ${maxRetries} attempts - giving up`);
+    
+    state.status = 'failed';
+    state.lastError = lastError;
+    saveDeviceState(zoneName, deviceId, state);
+    
+    // Process queue even on final failure
+    await processNextQueuedCommand(zoneName, deviceId);
+    
+    return { success: true, verified: false, attempts: maxRetries, error: lastError };
+}
+
+// ============================================================================
 // Heating Control Abstraction
 // ============================================================================
 
@@ -926,6 +1461,7 @@ async function setHeating(turnOn, effectiveTarget) {
         // turnOn parameter determines action
         const results = [];
         let anyChanged = false;
+        let anyVerified = false;
         
         for (const deviceId of ROOM.heating.devices) {
             try {
@@ -934,24 +1470,54 @@ async function setHeating(turnOn, effectiveTarget) {
                 
                 // Only set if different to avoid unnecessary commands
                 if (currentState !== turnOn) {
-                    await device.setCapabilityValue('onoff', turnOn);
-                    log(`🔌 Smart plug ${device.name}: ${turnOn ? 'ON' : 'OFF'}`);
-                    anyChanged = true;
+                    // Use command verification system
+                    const result = await sendCommandWithVerification(
+                        device,
+                        'onoff',
+                        turnOn,
+                        ROOM.zoneName,
+                        SESSION_ID
+                    );
+                    
+                    if (result.success) {
+                        if (result.verified) {
+                            log(`🔌 Smart plug ${device.name}: ${turnOn ? 'ON' : 'OFF'} (verified)`);
+                            anyChanged = true;
+                            anyVerified = true;
+                            results.push(true);
+                        } else {
+                            log(`⚠️ Smart plug ${device.name}: Command sent but not verified`);
+                            anyChanged = true;
+                            results.push(true);
+                        }
+                    } else if (result.skipped) {
+                        log(`⏭️ Smart plug ${device.name}: Command skipped (${result.reason})`);
+                        results.push(false);
+                    } else {
+                        log(`❌ Smart plug ${device.name}: Command failed - ${result.error}`);
+                        results.push(false);
+                    }
                 } else {
                     log(`✓ Smart plug ${device.name} already ${turnOn ? 'ON' : 'OFF'}`);
+                    results.push(true);
                 }
-                results.push(true);
             } catch (error) {
                 log(`❌ Error controlling radiator ${deviceId}: ${error.message}`);
                 results.push(false);
             }
         }
+        
         // Store expected state for manual intervention detection
         // Always store expected state to maintain baseline
         global.set(`${ROOM.zoneName}.Heating.ExpectedOnOff`, turnOn);
-        // Only update change time if we actually made a change
-        if (anyChanged) {
+        
+        // CRITICAL: Only reset grace period if commands were VERIFIED
+        // This ensures we don't reset grace period for commands that might not have taken effect
+        if (anyVerified) {
             global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+            log(`📝 Grace period reset (verified change)`);
+        } else if (anyChanged) {
+            log(`📝 Grace period NOT reset (changes sent but not verified)`);
         }
         
         return { success: results.every(r => r), changed: anyChanged };
@@ -964,19 +1530,50 @@ async function setHeating(turnOn, effectiveTarget) {
             const currentTarget = device.capabilitiesObj.target_temperature.value;
             
             let changed = false;
+            let verified = false;
             
             if (turnOn) {
                 // Turn on and set target temperature - but only if needed!
                 if (currentOnOff !== true) {
-                    await device.setCapabilityValue('onoff', true);
-                    log(`🔥 TADO turned ON`);
-                    changed = true;
+                    const result = await sendCommandWithVerification(
+                        device,
+                        'onoff',
+                        true,
+                        ROOM.zoneName,
+                        SESSION_ID
+                    );
+                    
+                    if (result.success && result.verified) {
+                        log(`🔥 TADO turned ON (verified)`);
+                        changed = true;
+                        verified = true;
+                    } else if (result.success) {
+                        log(`⚠️ TADO turned ON (not verified)`);
+                        changed = true;
+                    } else {
+                        log(`❌ TADO turn ON failed: ${result.error || result.reason}`);
+                    }
                 }
                 
                 if (currentTarget !== effectiveTarget) {
-                    await device.setCapabilityValue('target_temperature', effectiveTarget);
-                    log(`🎯 TADO target set to ${effectiveTarget}°C (was ${currentTarget}°C)`);
-                    changed = true;
+                    const result = await sendCommandWithVerification(
+                        device,
+                        'target_temperature',
+                        effectiveTarget,
+                        ROOM.zoneName,
+                        SESSION_ID
+                    );
+                    
+                    if (result.success && result.verified) {
+                        log(`🎯 TADO target set to ${effectiveTarget}°C (was ${currentTarget}°C) (verified)`);
+                        changed = true;
+                        verified = true;
+                    } else if (result.success) {
+                        log(`⚠️ TADO target set to ${effectiveTarget}°C (not verified)`);
+                        changed = true;
+                    } else {
+                        log(`❌ TADO target change failed: ${result.error || result.reason}`);
+                    }
                 }
                 
                 if (!changed) {
@@ -985,20 +1582,37 @@ async function setHeating(turnOn, effectiveTarget) {
                 
                 // Store expected target for manual intervention detection
                 global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, effectiveTarget);
-                // Only update LastAutomationChangeTime when we ACTUALLY made a change
-                // This prevents constantly resetting the grace period on every script run
-                if (changed) {
+                
+                // CRITICAL: Only reset grace period when commands are VERIFIED
+                if (verified) {
                     global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-                    log(`📝 Stored expected target: ${effectiveTarget}°C and reset grace period (changed)`);
+                    log(`📝 Stored expected target: ${effectiveTarget}°C and reset grace period (verified)`);
+                } else if (changed) {
+                    log(`📝 Updated expected target: ${effectiveTarget}°C (sent but not verified, grace period not reset)`);
                 } else {
                     log(`📝 Updated expected target: ${effectiveTarget}°C (no physical change, grace period not reset)`);
                 }
             } else {
                 // Turn off completely - but only if needed!
                 if (currentOnOff !== false) {
-                    await device.setCapabilityValue('onoff', false);
-                    log(`🔥 TADO turned OFF`);
-                    changed = true;
+                    const result = await sendCommandWithVerification(
+                        device,
+                        'onoff',
+                        false,
+                        ROOM.zoneName,
+                        SESSION_ID
+                    );
+                    
+                    if (result.success && result.verified) {
+                        log(`🔥 TADO turned OFF (verified)`);
+                        changed = true;
+                        verified = true;
+                    } else if (result.success) {
+                        log(`⚠️ TADO turned OFF (not verified)`);
+                        changed = true;
+                    } else {
+                        log(`❌ TADO turn OFF failed: ${result.error || result.reason}`);
+                    }
                 }
                 
                 if (!changed) {
@@ -1008,7 +1622,14 @@ async function setHeating(turnOn, effectiveTarget) {
                 // CLEAR ExpectedTargetTemp when turning off - prevents false positives from stale values
                 // Stale expected values could cause false positive manual override detection when schedule changes
                 global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, null);
-                log(`📝 Cleared expected target (TADO off - prevents false positive detection from stale values)`);
+                
+                // CRITICAL: Only reset grace period when OFF command is VERIFIED
+                if (verified) {
+                    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+                    log(`📝 Cleared expected target and reset grace period (verified OFF)`);
+                } else {
+                    log(`📝 Cleared expected target (TADO off - prevents false positive detection from stale values)`);
+                }
             }
             
             return { success: true, changed: changed };
@@ -1662,18 +2283,27 @@ try {
 }
 
 // ============================================================================
+// Cleanup Stale Device States
+// ============================================================================
+
+// Clean up any stale device states from timed-out or crashed previous executions
+await cleanupStaleDeviceStates();
+
+// ============================================================================
 // Away Mode Transition Check (BEFORE Manual Intervention Detection)
 // ============================================================================
 
-// Check if we're returning from away mode and reset grace period BEFORE detecting manual intervention
+// Check if we're returning from away mode and clear expected target BEFORE detecting manual intervention
 // This prevents false positive detection during TADO's automatic away→home temperature adjustment
 const currentTadoAway = await isTadoAway();
 const wasInTadoAway = global.get(`${ROOM.zoneName}.Heating.TadoAwayActive`);
 
 if (wasInTadoAway && !currentTadoAway) {
-    // Returning from away mode - reset grace period NOW (before manual intervention check)
-    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-    log(`\n✅ TADO returning from away mode - grace period reset to prevent false positive manual detection`);
+    // Returning from away mode - CLEAR expected target to prevent false positive
+    // TADO automatically adjusts temperature when returning home, so we can't compare against old away value
+    global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, null);
+    log(`\n✅ TADO returning from away mode - cleared expected target to prevent false positive manual detection`);
+    log(`   TADO will automatically restore scheduled temperature, which should not be treated as manual intervention`);
 }
 
 // ============================================================================

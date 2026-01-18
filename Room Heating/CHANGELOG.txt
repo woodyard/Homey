@@ -6,6 +6,37 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.9.2 (2026-01-18)
+==============================================
+🔄 RETRY: Auto-retry TADO temperature commands up to 3 times if not verified
+- Added retry logic to sendCommandWithVerification() function
+- If temperature verification fails, automatically retries up to 3 times (configurable)
+- 2-second delay between retry attempts to allow device to process
+- Fixes issue where TADO sometimes sets to default 18.1°C instead of target temperature
+- Example: Target 20.5°C fails verification → retry 1 → retry 2 → retry 3 → success
+- Logs show: "🔄 Retry attempt 2/3: target_temperature = 20.5"
+- Success message indicates attempts: "✅ Command verified successfully (after 2 attempts)"
+- Applies to all device commands: onoff switches and target_temperature for TADO
+- Smart plug commands also benefit from retry logic (though less likely to need it)
+- Significantly improves reliability of TADO temperature setting
+- Default maxRetries = 3, configurable via function parameter if needed
+
+==============================================
+Version 10.9.1 (2026-01-18)
+==============================================
+🐛 CRITICAL FIX: False manual override when returning from away mode
+- Fixed bug where returning home triggered manual override for TADO rooms
+- Problem: ExpectedTargetTemp still contained away mode minimum (18.1°C)
+- When TADO auto-adjusted to schedule (20.5°C), system detected difference as manual change
+- Result: "Home" notification followed by incorrect "Manual override • 90 min" notification
+- Solution: Clear ExpectedTargetTemp when transitioning from away→home
+- TADO's automatic temperature restoration is no longer treated as manual intervention
+- Affected: TADO valve rooms (Oliver, Soveværelse, Stue) returning from away mode
+- Example prevented: Away 18.1°C → Home (TADO auto-sets 20.5°C) → false "Manual override"
+- Now shows: Away → Home (correct behavior, no false manual override)
+- Complements v10.6.6 and v10.6.7 fixes for away mode transition handling
+
+==============================================
 Version 10.8.6 (2026-01-17)
 ==============================================
 🐛 Fix: Snowflake icon (❄️) shown incorrectly during manual override for TADO
