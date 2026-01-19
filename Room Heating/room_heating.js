@@ -25,15 +25,17 @@
  * - Supports both smart_plug and tado_valve
  * - Target-based temperature control with automatic hysteresis
  * - Manual intervention detection - respects manual changes for 90 minutes
+ * - Smart schedule monitoring - auto-exits manual mode when device returns to schedule
  * - Command verification with status polling
  * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.11.0
+ * Version: 10.12.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.12.0 (2026-01-19) - 🔄 Smart schedule: Exit manual mode when device returns to auto
  * 10.11.0 (2026-01-18) - ✨ Resume: Set and verify temperature when resuming from pause/boost
  * 10.10.2 (2026-01-18) - 🔧 Optimize: Store smart plug baseline once per room, not per device
  * 10.10.1 (2026-01-18) - 🐛 Debug notifications for queue/verification (HeatingDebugMode variable)
@@ -106,7 +108,7 @@ if (args?.[0]?.includes(',')) {
     log(`📝 Parsed Flow arguments: room="${roomArgRaw}", action="${boostArg}"`);
 } else {
     // HomeyScript format: Separate arguments
-    roomArgRaw = args?.[0] || 'Oliver';
+    roomArgRaw = args?.[0] || 'Stue';
     boostArg = args?.[1];
 }
 
@@ -1003,7 +1005,7 @@ function activateManualOverrideMode(overrideType, originalValue, currentValue) {
     addChange(`${duration} min`);
 }
 
-function cancelManualOverrideMode() {
+async function cancelManualOverrideMode(currentSlot = null) {
     const wasActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
     
     // Clear manual override mode variables
@@ -1020,6 +1022,12 @@ function cancelManualOverrideMode() {
         
         addChange(`🔄 Override cancelled`);
         addChange(`Resumed schedule`);
+        
+        // Explicitly resume heating with temperature verification
+        if (currentSlot) {
+            await resumeNormalHeating(currentSlot, false, 'manual');
+        }
+        
         return true;
     } else {
         log(`\nℹ️ No active manual override to cancel`);
@@ -1028,11 +1036,11 @@ function cancelManualOverrideMode() {
     }
 }
 
-function checkManualOverrideMode() {
+async function checkManualOverrideMode() {
     const overrideActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
     
     if (!overrideActive) {
-        return { active: false, expired: false, remainingMinutes: 0 };
+        return { active: false, expired: false, remainingMinutes: 0, reason: null };
     }
     
     const overrideStartTime = global.get(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`);
@@ -1041,14 +1049,60 @@ function checkManualOverrideMode() {
     if (!overrideStartTime) {
         // Override flag set but no start time - clear it
         global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, false);
-        return { active: false, expired: false, remainingMinutes: 0 };
+        return { active: false, expired: false, remainingMinutes: 0, reason: null };
     }
     
     const minutesElapsed = (Date.now() - overrideStartTime) / 1000 / 60;
     const remainingMinutes = Math.max(0, overrideDuration - minutesElapsed);
     
+    // Check if device has returned to automatic schedule mode (only for TADO)
+    // The device's onoff.smart_schedule property becomes true when manual control expires
+    // and the device returns to following its automatic schedule
+    // NOTE: "onoff.smart_schedule" is a separate capability, not a sub-property of onoff!
+    if (ROOM.heating.type === 'tado_valve') {
+        try {
+            const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
+            
+            // Access onoff.smart_schedule as a separate capability (note the bracket notation due to dot in name)
+            const smartScheduleCapability = device.capabilitiesObj['onoff.smart_schedule'];
+            
+            if (smartScheduleCapability) {
+                const smartSchedule = smartScheduleCapability.value;
+                log(`🔍 Smart schedule status: ${smartSchedule} (${smartSchedule ? 'AUTO MODE' : 'MANUAL MODE'})`);
+                
+                if (smartSchedule === true) {
+                    // Device has returned to automatic schedule mode
+                    // User's manual control on the device has expired (shorter than our 90-min override)
+                    log(`\n🔄 MANUAL OVERRIDE AUTO-CANCELLED`);
+                    log(`Device returned to automatic schedule (smart_schedule = true)`);
+                    log(`Duration: ${Math.floor(minutesElapsed)} minutes elapsed of ${overrideDuration} planned`);
+                    log(`User's device manual control was shorter than system override period`);
+                    
+                    // Clear manual override mode variables
+                    global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, false);
+                    global.set(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`, null);
+                    global.set(`${ROOM.zoneName}.Heating.ManualOverrideDuration`, null);
+                    global.set(`${ROOM.zoneName}.Heating.ManualOverrideType`, null);
+                    global.set(`${ROOM.zoneName}.Heating.ManualOverrideOriginalValue`, null);
+                    
+                    addChange(`🔄 Device → auto`);
+                    addChange(`Override ended`);
+                    
+                    return { active: false, expired: true, remainingMinutes: 0, reason: 'smart_schedule' };
+                } else {
+                    log(`✓ Device still in manual mode (smart_schedule = false)`);
+                }
+            } else {
+                log(`⚠️ onoff.smart_schedule capability not found on device`);
+            }
+        } catch (error) {
+            log(`⚠️ Could not check smart_schedule property: ${error.message}`);
+            // Continue with normal expiration check
+        }
+    }
+    
     if (minutesElapsed >= overrideDuration) {
-        // Override expired - clear it
+        // Override expired normally (90 minutes elapsed)
         log(`\n⏱️ MANUAL OVERRIDE MODE EXPIRED`);
         log(`Duration: ${overrideDuration} minutes elapsed`);
         
@@ -1061,10 +1115,10 @@ function checkManualOverrideMode() {
         addChange(`⏱️ Override ended`);
         addChange(`Resumed schedule`);
         
-        return { active: false, expired: true, remainingMinutes: 0 };
+        return { active: false, expired: true, remainingMinutes: 0, reason: 'timeout' };
     }
     
-    return { active: true, expired: false, remainingMinutes: Math.ceil(remainingMinutes) };
+    return { active: true, expired: false, remainingMinutes: Math.ceil(remainingMinutes), reason: null };
 }
 
 async function detectManualIntervention() {
@@ -2194,8 +2248,14 @@ async function controlHeating(roomTemp, slot, windowOpen) {
     } else {
         if (wasInTadoAway) {
             global.set(`${ROOM.zoneName}.Heating.TadoAwayActive`, false);
-            log(`✅ TADO back to home mode`);
+            log(`✅ TADO back to home mode - resuming normal schedule`);
             addChange("Home");
+            
+            // Explicitly resume heating with temperature verification when returning home
+            await resumeNormalHeating(slot, false, 'away_return');
+            
+            // Return early to allow resume to complete, normal schedule continues on next run
+            return 'tado_home_resume';
         }
     }
     
@@ -2298,52 +2358,27 @@ async function controlHeating(roomTemp, slot, windowOpen) {
                 log(`⏳ Waiting for air to settle: ${remainingMinutes}m ${remainingSecs}s remaining`);
                 return 'window_closed_waiting';
             } else {
-                // Delay complete - try to resume normal heating
-                log(`✓ Air settle delay complete - attempting to resume heating${tadoAway ? ' (away mode)' : ''}`);
+                // Delay complete - use explicit resume logic with verification
+                log(`✓ Air settle delay complete - resuming heating with verification${tadoAway ? ' (away mode)' : ''}`);
                 
-                // For TADO, turn on and set target - recalculate from scratch
-                if (ROOM.heating.type === 'tado_valve') {
-                    // Start fresh with base slot target (not the potentially modified effectiveTarget)
-                    let resumeTarget = slot.target;
+                // Use resumeNormalHeating for consistent behavior with temperature verification
+                const resumed = await resumeNormalHeating(slot, true, 'window_settle');
+                
+                if (resumed) {
+                    // Clear the settle delay flag
+                    global.set(`${ROOM.zoneName}.Heating.WindowClosedTime`, null);
                     
-                    // Apply away mode minimum if currently away
-                    if (tadoAway && ROOM.settings.tadoAwayMinTemp !== null) {
-                        resumeTarget = ROOM.settings.tadoAwayMinTemp;
-                        log(`🏠 Away mode: Using minimum ${resumeTarget}°C`);
-                    }
-                    // Apply inactivity offset if room is inactive and not in away mode
-                    else if (!tadoAway && inactivity.inactive && inactivityOffset > 0) {
-                        resumeTarget -= inactivityOffset;
-                        log(`💤 Inactivity mode active - reducing target by ${inactivityOffset}°C`);
-                        log(`→ Effective target: ${resumeTarget}°C (inactivity)`);
-                        
-                        if (!inactivity.wasInactive) {
-                            addChange(`Inactive (${inactivity.minutesSinceMotion}min)`);
-                            addChange(`-${inactivityOffset}°C → ${resumeTarget}°C`);
-                        }
+                    // Suppress notifications when in away mode (not relevant when nobody home)
+                    if (!tadoAway) {
+                        addChange("Air settled");
+                        addChange("Heat resumed");
                     }
                     
-                    const result = await setHeating(true, resumeTarget);
-                    
-                    // Only clear the window settle delay if heating was successfully resumed
-                    if (result.changed) {
-                        log(`🔥 TADO resumed - target set to ${resumeTarget}°C`);
-                        
-                        // Clear the settle delay flag
-                        global.set(`${ROOM.zoneName}.Heating.WindowClosedTime`, null);
-                        
-                        // Suppress notifications when in away mode (not relevant when nobody home)
-                        if (!tadoAway) {
-                            addChange("Air settled");
-                            addChange("Heat resumed");
-                        }
-                        
-                        return 'window_settled_tado';
-                    } else {
-                        // Command failed or wasn't needed - don't clear settle delay yet
-                        log(`⚠️ TADO resume failed or no change - will retry on next run`);
-                        return 'window_settle_retry';
-                    }
+                    return 'window_settled';
+                } else {
+                    // Resume failed or no change - don't clear settle delay yet, will retry
+                    log(`⚠️ Resume failed or no change - will retry on next run`);
+                    return 'window_settle_retry';
                 }
                 
                 // For smart plugs, clear settle delay and continue to hysteresis logic
@@ -2798,7 +2833,7 @@ if (boostStatus.expired) {
 // ============================================================================
 
 // Check if manual override mode is active (pause takes precedence over normal, manual over all)
-const manualOverrideStatus = checkManualOverrideMode();
+const manualOverrideStatus = await checkManualOverrideMode();
 
 if (manualOverrideStatus.active) {
     log(`\n🤚 MANUAL OVERRIDE MODE ACTIVE`);
@@ -2860,9 +2895,34 @@ if (manualOverrideStatus.active) {
     return;
 }
 
-// If manual override just expired, continue with normal schedule
+// If manual override just expired, explicitly resume heating
 if (manualOverrideStatus.expired) {
-    log(`\n⏱️ Manual override expired - resuming normal schedule`);
+    // Enhanced logging based on expiration reason
+    if (manualOverrideStatus.reason === 'smart_schedule') {
+        log(`\n🔄 Manual override cancelled by device - returning to automatic schedule`);
+        log(`Device's manual control period expired before system's 90-minute override`);
+    } else {
+        log(`\n⏱️ Manual override expired - resuming normal schedule`);
+    }
+    
+    // Get current slot for temperature target
+    const now = getDanishLocalTime();
+    const weekend = isWeekend(now);
+    const schoolDay = !weekend ? await isSchoolDay() : false;
+    
+    let baseSchedule;
+    if (weekend) {
+        baseSchedule = ROOM.schedules.weekend;
+    } else if (schoolDay) {
+        baseSchedule = ROOM.schedules.weekday;
+    } else {
+        baseSchedule = ROOM.schedules.holiday;
+    }
+    
+    const schedule = await getCompleteSchedule(baseSchedule);
+    const currentSlot = getCurrentTimeSlot(schedule, now);
+    
+    await resumeNormalHeating(currentSlot, true, 'manual');
 }
 
 // ============================================================================

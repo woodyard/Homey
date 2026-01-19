@@ -6,23 +6,48 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.12.0 (2026-01-19)
+==============================================
+🔄 SMART SCHEDULE: Auto-exit manual override when device returns to schedule mode
+- Manual override now monitors device.capabilitiesObj.onoff.smart_schedule property
+- When smart_schedule becomes true, device has returned to automatic schedule mode
+- System immediately exits manual override and resumes normal schedule operation
+- Solves problem: System 90-min override vs user's shorter device manual control duration
+- Example: User sets 30-min manual on device → At 30 min: device→auto → System exits early
+- checkManualOverrideMode() is now async to check device property
+- Returns reason: 'smart_schedule' (early exit) or 'timeout' (normal 90-min expiry)
+- Enhanced logging shows which expiration type occurred
+- Notification: "🔄 Device → auto • Override ended" vs "⏱️ Override ended"
+- Only applies to TADO valves (smart plugs unchanged - no smart_schedule property)
+- Respects user's device-level manual control duration instead of forcing 90 minutes
+- Better synchronization between device and system manual control periods
+- Safety: If property doesn't exist or check fails, falls back to normal 90-min timeout
+- Function changes: checkManualOverrideMode() made async, manual expiry logging enhanced
+- Files modified: room_heating.js (lines 1037-1113, 2788, 2850-2875)
+
+==============================================
 Version 10.11.0 (2026-01-18)
 ==============================================
-✨ RESUME: Set and verify temperature when resuming from pause/boost modes
-- Added new resumeNormalHeating() function for explicit resume logic
-- When pause mode cancelled: TADO now sets both onoff=true AND target_temperature with verification
+✨ RESUME: Set and verify temperature when resuming from any heating interruption
+- Added new resumeNormalHeating() function for explicit resume logic with temperature verification
+- When pause mode cancelled: TADO sets both onoff=true AND target_temperature with verification
 - When pause mode expires: Explicit resume with temperature setting and verification
 - When boost mode cancelled: TADO sets target back to schedule temperature with verification
 - When boost mode expires: Explicit resume with temperature setting and verification
+- When manual override cancelled: Explicit resume with temperature verification
+- When manual override expires: Explicit resume with temperature setting and verification
+- When window air settles: Uses same explicit resume logic with temperature verification
+- When returning home from away: Explicit resume with temperature verification
 - Smart plugs: Calculate correct state using hysteresis when resuming
 - Debug notifications now show both onoff AND temperature changes during resume
 - Example: "🐛 Verified: onoff=true" + "🐛 Verified: target_temperature=22°C"
 - Prevents situation where only onoff shown but temperature not verified
 - Resume logic respects away mode (uses away minimum) and inactivity (applies offset)
 - Baseline (LastVerifiedTargetTemp) updated after resume to prevent false manual detection
-- Functions updated: cancelPauseMode(), cancelBoostMode(), cancelAllOverrideModes()
-- Main execution: Cancel request, pause expiry, boost expiry all call explicit resume
-- Significantly improves user confidence that heating is properly restored after override modes
+- Functions updated: cancelPauseMode(), cancelBoostMode(), cancelManualOverrideMode(), cancelAllOverrideModes()
+- Control heating: Away->home transition, window settle all use explicit resume
+- Main execution: Cancel request, pause expiry, boost expiry, manual expiry all call explicit resume
+- Significantly improves user confidence that heating is properly restored after any interruption
 
 ==============================================
 Version 10.10.2 (2026-01-18)
