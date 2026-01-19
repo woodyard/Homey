@@ -133,19 +133,19 @@ const ROOMS = {
         },
         schedules: {
             weekday: [
-                { start: '00:00', end: '07:00', target: 18, inactivityOffset: 0, name: 'Night' },
-                { start: '07:00', end: '20:00', target: 21, inactivityOffset: 1, name: 'Day' }
+                { start: '00:00', end: '07:00', target: 17, inactivityOffset: 0, name: 'Night' },
+                { start: '07:00', end: '19:00', target: 20, inactivityOffset: 1, name: 'Day' }
             ],
             weekend: [
-                { start: '00:00', end: '09:00', target: 18, inactivityOffset: 0, name: 'Night' },
-                { start: '09:00', end: '21:00', target: 21, inactivityOffset: 1, name: 'Day' }
+                { start: '00:00', end: '09:00', target: 17, inactivityOffset: 0, name: 'Night' },
+                { start: '09:00', end: '19:00', target: 20, inactivityOffset: 1, name: 'Day' }
             ],
             holiday: [
-                { start: '00:00', end: '09:00', target: 18, inactivityOffset: 0, name: 'Night' },
-                { start: '09:00', end: '21:00', target: 21, inactivityOffset: 1, name: 'Day' }
+                { start: '00:00', end: '09:00', target: 17, inactivityOffset: 0, name: 'Night' },
+                { start: '09:00', end: '19:00', target: 20, inactivityOffset: 1, name: 'Day' }
             ],
-            earlyEvening: { start: '20:00', end: '23:59', target: 19, inactivityOffset: 0, name: 'Evening' },
-            lateEvening: { start: '21:00', end: '23:59', target: 19, inactivityOffset: 0, name: 'Evening' }
+            earlyEvening: { start: '19:00', end: '23:59', target: 18, inactivityOffset: 0, name: 'Evening' },
+            lateEvening: { start: '19:00', end: '23:59', target: 18, inactivityOffset: 0, name: 'Evening' }
         },
         settings: {
             tadoAwayMinTemp: 17.0,

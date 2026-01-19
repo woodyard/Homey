@@ -6,6 +6,60 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.12.1 (2026-01-19)
+==============================================
+🐛 CRITICAL FIX: False positive manual intervention detection for smart plugs (five separate bugs)
+- Fixed five separate bugs causing incorrect manual override detection for smart plug rooms (e.g., Clara)
+- All bugs had same symptom: False "Manual override • 90 min" notification appearing unexpectedly
+
+Bug #1: Away→home transition baseline not cleared
+- Problem: Away→home transition only cleared LastVerifiedTargetTemp (TADO), not LastVerifiedOnOff (smart plugs)
+- When arriving home, smart plug states changed based on hysteresis logic
+- Old baseline from before away mode still stored → system detected change as manual intervention
+- Result: "Home" notification followed 3 minutes later by false "Manual override • 90 min"
+- Solution: Also clear LastVerifiedOnOff when returning from away mode (same as TADO baseline clearing)
+- Files modified: room_heating.js (line 2647)
+
+Bug #2: Cancel override modes don't clear stale baselines
+- Problem: When cancelling override (manual/boost/pause), baseline from BEFORE override still stored
+- During override, user manually changed device states (e.g., turned ON while baseline was OFF)
+- Cancel → Resume tries to change state → Verification may fail → Baseline not updated → False detection!
+- Result: Cancel override → 10 seconds later → "Manual override" (comparing new state vs old baseline)
+- Solution: Clear baselines in all cancel functions BEFORE resuming (cancelManualOverrideMode, cancelBoostMode, cancelPauseMode)
+- Resume then establishes fresh baseline based on actual post-resume state
+- Files modified: room_heating.js (lines 452-459, 677-684, 1067-1074)
+
+Bug #3: Resume only stores baseline if commands were verified
+- Problem: resumeNormalHeating() only stored baseline if anyVerified=true (at least one device verified)
+- Also needed to track anyCommandSent to distinguish "no changes needed" from "changes failed"
+- Without tracking: Resume sends commands → verification fails → baseline not stored → false detection
+- Solution: Track anyCommandSent separately from anyVerified, only check fallback if no commands sent
+- Files modified: room_heating.js (lines 887-959)
+
+Bug #4: Resume missing "no changes needed" baseline storage
+- Problem: If all devices already in correct state → no commands sent → anyVerified=false → baseline not stored
+- Missing logic: "If no commands sent (all already correct), verify state and store baseline"
+- Result: Resume completes without baseline → 10 seconds later → false "Manual override"
+- Solution: Added fallback baseline storage when no commands sent - verify all devices match expected state
+- Mirrors same logic used in setHeating() function (lines 1835-1859)
+- Files modified: room_heating.js (lines 933-959)
+
+Bug #5: Missing initial baseline bootstrap on first run
+- Problem: If no baseline exists (first run, or after clearing), system would skip manual detection
+- Should establish initial baseline from current device state, then detect changes going forward
+- Result: "No verified baseline state yet - skipping manual detection" message
+- Solution: Added bootstrap logic to establish initial baseline from current device states
+- Smart plugs: Read all devices, if all match → store as baseline
+- TADO: Read current target if ON and not away → store as baseline
+- Files modified: room_heating.js (lines 1186-1212, 1233-1269)
+
+All five fixes ensure smart plugs have fresh baseline after any mode transition
+- Affected: Smart plug rooms (Clara) in all override cancel/resume/away scenarios
+- TADO rooms (Oliver, Soveværelse, Stue) - same fixes applied for consistency
+- System now self-initializes baselines when missing instead of skipping detection
+- Complements v10.9.1 fix which solved similar issue for TADO valves
+
+==============================================
 Version 10.12.0 (2026-01-19)
 ==============================================
 🔄 SMART SCHEDULE: Auto-exit manual override when device returns to schedule mode

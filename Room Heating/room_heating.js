@@ -30,11 +30,12 @@
  * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.12.0
+ * Version: 10.12.1
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.12.1 (2026-01-19) - 🐛 Fix: False manual detection for smart plugs (away→home + resume bugs)
  * 10.12.0 (2026-01-19) - 🔄 Smart schedule: Exit manual mode when device returns to auto
  * 10.11.0 (2026-01-18) - ✨ Resume: Set and verify temperature when resuming from pause/boost
  * 10.10.2 (2026-01-18) - 🔧 Optimize: Store smart plug baseline once per room, not per device
@@ -108,7 +109,7 @@ if (args?.[0]?.includes(',')) {
     log(`📝 Parsed Flow arguments: room="${roomArgRaw}", action="${boostArg}"`);
 } else {
     // HomeyScript format: Separate arguments
-    roomArgRaw = args?.[0] || 'Stue';
+    roomArgRaw = args?.[0] || 'Clara';
     boostArg = args?.[1];
 }
 
@@ -448,6 +449,16 @@ async function cancelBoostMode(currentSlot = null) {
         log(`Room: ${roomArg} (${ROOM.zoneName})`);
         log(`Resuming normal schedule operation`);
         
+        // CRITICAL: Clear baselines before resuming - they're stale from before boost
+        // Resume will establish fresh baselines based on new state
+        if (ROOM.heating.type === 'smart_plug') {
+            global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, null);
+            log(`📝 Cleared smart plug baseline (stale from before boost)`);
+        } else if (ROOM.heating.type === 'tado_valve') {
+            global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, null);
+            log(`📝 Cleared TADO baseline (stale from before boost)`);
+        }
+        
         addChange(`🛑 Boost cancelled`);
         addChange(`Resumed schedule`);
         
@@ -673,6 +684,16 @@ async function cancelPauseMode(currentSlot = null) {
         log(`Room: ${roomArg} (${ROOM.zoneName})`);
         log(`Resuming normal schedule operation`);
         
+        // CRITICAL: Clear baselines before resuming - they're stale from before pause
+        // Resume will establish fresh baselines based on new state
+        if (ROOM.heating.type === 'smart_plug') {
+            global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, null);
+            log(`📝 Cleared smart plug baseline (stale from before pause)`);
+        } else if (ROOM.heating.type === 'tado_valve') {
+            global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, null);
+            log(`📝 Cleared TADO baseline (stale from before pause)`);
+        }
+        
         addChange(`🔄 Pause cancelled`);
         addChange(`Resumed schedule`);
         
@@ -883,24 +904,35 @@ async function resumeNormalHeating(slot, fromExpiry, modeType) {
         log(`Resume state: ${shouldTurnOn ? 'ON' : 'OFF'}`);
         
         let anyVerified = false;
+        let anyCommandSent = false;
+        
         for (const deviceId of ROOM.heating.devices) {
             try {
                 const device = await Homey.devices.getDevice({ id: deviceId });
-                const result = await sendCommandWithVerification(
-                    device,
-                    'onoff',
-                    shouldTurnOn,
-                    ROOM.zoneName,
-                    SESSION_ID
-                );
+                const currentState = device.capabilitiesObj.onoff.value;
                 
-                if (result.success && result.verified) {
-                    log(`🔌 ${device.name}: ${shouldTurnOn ? 'ON' : 'OFF'} (verified)`);
-                    anyVerified = true;
-                } else if (result.success) {
-                    log(`⚠️ ${device.name}: ${shouldTurnOn ? 'ON' : 'OFF'} (not verified)`);
+                // Only send command if state is different (like setHeating does)
+                if (currentState !== shouldTurnOn) {
+                    anyCommandSent = true;
+                    
+                    const result = await sendCommandWithVerification(
+                        device,
+                        'onoff',
+                        shouldTurnOn,
+                        ROOM.zoneName,
+                        SESSION_ID
+                    );
+                    
+                    if (result.success && result.verified) {
+                        log(`🔌 ${device.name}: ${shouldTurnOn ? 'ON' : 'OFF'} (verified)`);
+                        anyVerified = true;
+                    } else if (result.success) {
+                        log(`⚠️ ${device.name}: ${shouldTurnOn ? 'ON' : 'OFF'} (not verified)`);
+                    } else {
+                        log(`❌ ${device.name}: Failed to set state`);
+                    }
                 } else {
-                    log(`❌ ${device.name}: Failed to set state`);
+                    log(`✓ ${device.name}: already ${shouldTurnOn ? 'ON' : 'OFF'}`);
                 }
             } catch (error) {
                 log(`❌ Error resuming ${deviceId}: ${error.message}`);
@@ -908,8 +940,42 @@ async function resumeNormalHeating(slot, fromExpiry, modeType) {
         }
         
         if (anyVerified) {
+            // CRITICAL: Store baseline for smart plugs after resume
+            global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, shouldTurnOn);
             global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-            log(`📝 Grace period reset (resume verified)`);
+            log(`📝 Stored baseline: ${shouldTurnOn ? 'ON' : 'OFF'} and reset grace period (resume verified)`);
+        } else if (!anyCommandSent) {
+            // No commands were sent - all devices already in correct state
+            // Verify state and store baseline (safe since no state changes in progress)
+            let allMatch = true;
+            for (const deviceId of ROOM.heating.devices) {
+                try {
+                    const device = await Homey.devices.getDevice({ id: deviceId });
+                    const currentState = device.capabilitiesObj.onoff.value;
+                    if (currentState !== shouldTurnOn) {
+                        allMatch = false;
+                        log(`⚠️ Device ${device.name} is ${currentState ? 'ON' : 'OFF'} but expected ${shouldTurnOn ? 'ON' : 'OFF'}`);
+                        break;
+                    }
+                } catch (error) {
+                    allMatch = false;
+                    break;
+                }
+            }
+            
+            if (allMatch) {
+                // All devices match expected state - safe to store baseline
+                global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, shouldTurnOn);
+                global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+                log(`📝 Stored baseline: ${shouldTurnOn ? 'ON' : 'OFF'} (verified current state matches expected)`);
+            } else {
+                // Mismatch detected - don't store baseline, let manual detection handle it
+                log(`⚠️ Device states don't match expected after resume - not storing baseline`);
+            }
+        } else {
+            // Commands were sent but not verified - devices may still be changing
+            // Don't store baseline (unsafe - state in flux)
+            log(`⚠️ Resume commands sent but not verified - not storing baseline (will retry next run)`);
         }
         
         return anyVerified;
@@ -1019,6 +1085,16 @@ async function cancelManualOverrideMode(currentSlot = null) {
         log(`\n🔄 MANUAL OVERRIDE MODE CANCELLED`);
         log(`Room: ${roomArg} (${ROOM.zoneName})`);
         log(`Resuming normal schedule operation`);
+        
+        // CRITICAL: Clear baselines before resuming - they're stale from before manual override
+        // Resume will establish fresh baselines based on new state
+        if (ROOM.heating.type === 'smart_plug') {
+            global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, null);
+            log(`📝 Cleared smart plug baseline (stale from before manual override)`);
+        } else if (ROOM.heating.type === 'tado_valve') {
+            global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, null);
+            log(`📝 Cleared TADO baseline (stale from before manual override)`);
+        }
         
         addChange(`🔄 Override cancelled`);
         addChange(`Resumed schedule`);
@@ -1143,9 +1219,37 @@ async function detectManualIntervention() {
         const lastVerifiedTarget = global.get(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`);
         
         if (lastVerifiedTarget === null || lastVerifiedTarget === undefined) {
-            // No verified baseline yet - can't detect manual changes
-            log(`ℹ️ No verified baseline target yet - skipping manual detection`);
-            return { detected: false };
+            // No verified baseline yet - establish initial baseline from current state
+            log(`ℹ️ No verified baseline target yet - establishing initial baseline`);
+            
+            try {
+                const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
+                const currentTarget = device.capabilitiesObj.target_temperature.value;
+                const currentOnOff = device.capabilitiesObj.onoff.value;
+                
+                // Check if TADO is in away mode (don't establish baseline during away mode)
+                const tadoAway = await isTadoAway();
+                if (tadoAway) {
+                    log(`⚠️ TADO in away mode - will establish baseline when returning home`);
+                    return { detected: false };
+                }
+                
+                // Only establish baseline if TADO is ON (has a meaningful target temperature)
+                if (currentOnOff) {
+                    global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, currentTarget);
+                    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+                    log(`📝 Initial baseline established: ${currentTarget}°C (TADO on)`);
+                } else {
+                    log(`⚠️ TADO is OFF - will establish baseline after next heating control`);
+                }
+                
+                // Don't detect manual intervention on first run - need baseline to compare against
+                return { detected: false };
+                
+            } catch (error) {
+                log(`⚠️ Error establishing initial baseline: ${error.message}`);
+                return { detected: false };
+            }
         }
         
         try {
@@ -1188,9 +1292,44 @@ async function detectManualIntervention() {
         const lastVerifiedOnOff = global.get(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`);
         
         if (lastVerifiedOnOff === null || lastVerifiedOnOff === undefined) {
-            // No verified baseline yet - can't detect manual changes
-            log(`ℹ️ No verified baseline state yet - skipping manual detection`);
-            return { detected: false };
+            // No verified baseline yet - establish initial baseline from current state
+            log(`ℹ️ No verified baseline state yet - establishing initial baseline`);
+            
+            try {
+                // Read all device states to establish consensus baseline
+                const deviceStates = [];
+                let allSame = true;
+                let firstState = null;
+                
+                for (const deviceId of ROOM.heating.devices) {
+                    const device = await Homey.devices.getDevice({ id: deviceId });
+                    const currentState = device.capabilitiesObj.onoff.value;
+                    deviceStates.push({ id: deviceId, name: device.name, state: currentState });
+                    
+                    if (firstState === null) {
+                        firstState = currentState;
+                    } else if (currentState !== firstState) {
+                        allSame = false;
+                    }
+                }
+                
+                if (allSame && firstState !== null) {
+                    // All devices in same state - use as initial baseline
+                    global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, firstState);
+                    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+                    log(`📝 Initial baseline established: ${firstState ? 'ON' : 'OFF'} (all ${deviceStates.length} devices match)`);
+                } else {
+                    // Devices in mixed state - can't establish reliable baseline yet
+                    log(`⚠️ Devices in mixed state - will establish baseline after next heating control`);
+                }
+                
+                // Don't detect manual intervention on first run - need baseline to compare against
+                return { detected: false };
+                
+            } catch (error) {
+                log(`⚠️ Error establishing initial baseline: ${error.message}`);
+                return { detected: false };
+            }
         }
         
         try {
@@ -2598,8 +2737,10 @@ if (wasInTadoAway && !currentTadoAway) {
     // Returning from away mode - CLEAR baseline to prevent false positive
     // TADO automatically adjusts temperature when returning home, so we can't compare against old away value
     global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, null);
-    log(`\n✅ TADO returning from away mode - cleared verified baseline to prevent false positive manual detection`);
-    log(`   TADO will automatically restore scheduled temperature, which should not be treated as manual intervention`);
+    // ALSO clear smart plug baseline for same reason - plugs may change state when resuming
+    global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, null);
+    log(`\n✅ TADO returning from away mode - cleared verified baselines to prevent false positive manual detection`);
+    log(`   Both TADO temperature and smart plug states will be re-established on first heating control`);
 }
 
 // ============================================================================
