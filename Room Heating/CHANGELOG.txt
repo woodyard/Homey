@@ -6,6 +6,24 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.12.2 (2026-01-20)
+==============================================
+🐛 CRITICAL FIX: False manual override detection during window settle delay
+- Fixed bug where closing a window triggered false "Manual override" notification
+- Problem: Manual detection ran during window settle delay when TADO baseline is null/stale
+- When window closes after timeout, system enters 10-min settle delay while baseline cleared
+- Manual detection still ran during this period, comparing against null/stale baseline
+- Result: "Window closed • Waiting 10min" → 30 seconds later → false "Manual override • 90 min"
+- Especially occurred if schedule changed while window was open (baseline from different period)
+- Solution: Skip manual detection entirely when WindowClosedTime is set (during settle delay)
+- Added check in detectManualIntervention() to skip when windowClosedTime !== null
+- Window settle is a known transitional state - don't detect changes during this period
+- Similar to existing checks that skip detection when devices are 'sending' or 'verifying'
+- Prevents false positives during the 10-minute air settle delay after window closes
+- Affected: All TADO rooms (TADO baseline cleared when turned off for open window)
+- Files modified: room_heating.js (lines 1207-1212)
+
+==============================================
 Version 10.12.1 (2026-01-19)
 ==============================================
 🐛 CRITICAL FIX: False positive manual intervention detection for smart plugs (five separate bugs)

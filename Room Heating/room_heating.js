@@ -30,11 +30,12 @@
  * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.12.1
+ * Version: 10.12.2
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.12.2 (2026-01-20) - 🐛 Fix: False manual detection during window settle delay
  * 10.12.1 (2026-01-19) - 🐛 Fix: False manual detection for smart plugs (away→home + resume bugs)
  * 10.12.0 (2026-01-19) - 🔄 Smart schedule: Exit manual mode when device returns to auto
  * 10.11.0 (2026-01-18) - ✨ Resume: Set and verify temperature when resuming from pause/boost
@@ -1208,6 +1209,15 @@ async function detectManualIntervention() {
             log(`⏸️ Skipping manual detection - device ${deviceId.substr(0, 8)}... is ${state.status}`);
             return { detected: false };
         }
+    }
+    
+    // CRITICAL: Skip manual detection during window settle delay
+    // When window closes after timeout, TADO is in transitional state (baseline cleared)
+    // Detecting changes during this period leads to false positives
+    const windowClosedTime = global.get(`${ROOM.zoneName}.Heating.WindowClosedTime`);
+    if (windowClosedTime !== null) {
+        log(`⏸️ Skipping manual detection - window settle delay active`);
+        return { detected: false };
     }
     
     // All devices idle - safe to check for manual intervention
