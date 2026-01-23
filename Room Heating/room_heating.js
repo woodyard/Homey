@@ -30,11 +30,12 @@
  * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.12.2
+ * Version: 10.12.3
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.12.3 (2026-01-23) - 🔔 Notify on slot name change even when temperature stays the same
  * 10.12.2 (2026-01-20) - 🐛 Fix: False manual detection during window settle delay
  * 10.12.1 (2026-01-19) - 🐛 Fix: False manual detection for smart plugs (away→home + resume bugs)
  * 10.12.0 (2026-01-19) - 🔄 Smart schedule: Exit manual mode when device returns to auto
@@ -3135,13 +3136,24 @@ if (ROOM.heating.type === 'smart_plug') {
 // Store schedule info for status script
 global.set(`${ROOM.zoneName}.Heating.ScheduleType`, dayType);
 global.set(`${ROOM.zoneName}.Heating.CurrentPeriod`, `${currentSlot.start}-${currentSlot.end}`);
+const previousSlotName = global.get(`${ROOM.zoneName}.Heating.PeriodName`);
 global.set(`${ROOM.zoneName}.Heating.PeriodName`, currentSlot.name || 'Unknown');
 
-// Notification if target changes
-if (previousTarget !== null && previousTarget !== currentSlot.target) {
-    log(`📊 Target temperature changed: ${previousTarget}°C → ${currentSlot.target}°C`);
-    addChange(`Schedule ${currentSlot.start}-${currentSlot.end}`);
-    addChange(`${previousTarget}→${currentSlot.target}°C`);
+// Notification if target or slot name changes
+const slotNameChanged = previousSlotName !== null && previousSlotName !== (currentSlot.name || 'Unknown');
+const targetChanged = previousTarget !== null && previousTarget !== currentSlot.target;
+
+if (targetChanged || slotNameChanged) {
+    if (targetChanged) {
+        log(`📊 Target temperature changed: ${previousTarget}°C → ${currentSlot.target}°C`);
+        addChange(`Schedule ${currentSlot.start}-${currentSlot.end}`);
+        addChange(`${previousTarget}→${currentSlot.target}°C`);
+    } else {
+        // Slot name changed but temperature is the same
+        log(`📊 Schedule slot changed: ${previousSlotName} → ${currentSlot.name}`);
+        addChange(`${previousSlotName} → ${currentSlot.name}`);
+        addChange(`${currentSlot.target}°C`);
+    }
 }
 
 // Read room temperature

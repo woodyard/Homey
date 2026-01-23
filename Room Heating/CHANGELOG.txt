@@ -6,6 +6,17 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.12.3 (2026-01-23)
+==============================================
+🔔 Notify on slot name change even when temperature stays the same
+- Previously, schedule change notifications only triggered when target temperature changed
+- Problem: Stue Day→Evening transition has same temperature (22°C), so no notification was sent
+- Now tracks previousSlotName and compares with current slot name
+- Notifications trigger on EITHER temperature change OR slot name change
+- When only slot name changes, notification shows: "Day → Evening • 22°C"
+- Files modified: room_heating.js (lines 3138-3154)
+
+==============================================
 Version 10.12.2 (2026-01-20)
 ==============================================
 🐛 CRITICAL FIX: False manual override detection during window settle delay
