@@ -5,11 +5,12 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 4.9.0
+ * Version: 4.10.0
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
  * Version History:
+ * 4.10.0 (2026-01-23) - 📚 Direct Skoleintra calendar fetch with caching (matches heating v10.13.0)
  * 4.9.0 (2026-01-18) - 📊 Show device queue status (matches heating v10.9.0)
  * 4.8.0 (2026-01-17) - 🎛️ Show unified slot-override architecture (matches heating v10.8.0)
  * 4.7.0 (2026-01-17) - ⏱️ Show per-slot inactivity timeout (matches heating v10.7.0)
@@ -113,25 +114,29 @@
 
 function loadConfiguration() {
     const roomsJson = global.get('Config.Rooms');
-    
+    const globalJson = global.get('Config.Global');
+
     if (!roomsJson) {
         throw new Error('❌ Configuration not found! Please run room-heating-config.js first to save configuration.');
     }
-    
-    return JSON.parse(roomsJson);
+
+    const ROOMS = JSON.parse(roomsJson);
+    const GLOBAL_CONFIG = globalJson ? JSON.parse(globalJson) : null;
+
+    return { ROOMS, GLOBAL_CONFIG };
 }
 
 // Load configuration
-const ROOMS = loadConfiguration();
+const { ROOMS, GLOBAL_CONFIG } = loadConfiguration();
 
 
 // ============================================================================
 // Global Configuration
 // ============================================================================
 
-const TADO_HOME_ID = 'acc819ec-fc88-4e8c-b98b-5de8bb97d91c';
-const HOMEY_LOGIC_SCHOOLDAY_VAR = 'IsSchoolDay';
-const HOMEY_LOGIC_SCHOOLDAY_TOMORROW_VAR = 'IsSchoolDayTomorrow';
+const TADO_HOME_ID = GLOBAL_CONFIG?.tadoHomeId || 'acc819ec-fc88-4e8c-b98b-5de8bb97d91c';
+const SCHOOL_CALENDAR_URL = GLOBAL_CONFIG?.schoolCalendarUrl || null;
+const SCHOOL_CALENDAR_CACHE_TTL = GLOBAL_CONFIG?.schoolCalendarCacheTTL || 3600;  // 1 hour default
 
 // ============================================================================
 // Zone-Based Device Functions
@@ -299,38 +304,114 @@ function getCurrentScheduleInfo(zoneName) {
     }
 }
 
-async function getSchoolDayStatus() {
+// ============================================================================
+// School Day Detection (Direct Calendar Fetch with Caching)
+// ============================================================================
+
+/**
+ * Get Danish local date in YYYYMMDD format (for iCal comparison)
+ */
+function getDanishDateString(offsetDays = 0) {
+    const now = new Date();
+    const danish = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Copenhagen' }));
+    danish.setDate(danish.getDate() + offsetDays);
+
+    const year = danish.getFullYear();
+    const month = String(danish.getMonth() + 1).padStart(2, '0');
+    const day = String(danish.getDate()).padStart(2, '0');
+
+    return `${year}${month}${day}`;
+}
+
+/**
+ * Check if cached school calendar data is still valid
+ */
+function isSchoolCalendarCacheValid() {
+    const cacheTime = global.get('SchoolCalendar.CacheTime');
+    if (!cacheTime) return false;
+
+    const ageSeconds = (Date.now() - cacheTime) / 1000;
+    return ageSeconds < SCHOOL_CALENDAR_CACHE_TTL;
+}
+
+/**
+ * Fetch and cache school calendar data from Skoleintra
+ */
+async function getSchoolCalendarData() {
+    // Check if we have valid cached data
+    if (isSchoolCalendarCacheValid()) {
+        const cachedData = global.get('SchoolCalendar.Data');
+        if (cachedData) {
+            return cachedData;
+        }
+    }
+
+    // No valid cache - fetch fresh data
+    if (!SCHOOL_CALENDAR_URL) {
+        return null;
+    }
+
     try {
-        const variables = await Homey.logic.getVariables();
-        
-        let isSchoolDayToday = null;
-        let isSchoolDayTomorrow = null;
-        
-        for (const varId in variables) {
-            const variable = variables[varId];
-            if (variable.name === HOMEY_LOGIC_SCHOOLDAY_VAR) {
-                isSchoolDayToday = variable.value;
-            }
-            if (variable.name === HOMEY_LOGIC_SCHOOLDAY_TOMORROW_VAR) {
-                isSchoolDayTomorrow = variable.value;
+        const response = await fetch(SCHOOL_CALENDAR_URL);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const icalData = await response.text();
+        global.set('SchoolCalendar.Data', icalData);
+        global.set('SchoolCalendar.CacheTime', Date.now());
+        return icalData;
+
+    } catch (error) {
+        // Return stale cache if available
+        return global.get('SchoolCalendar.Data') || null;
+    }
+}
+
+/**
+ * Check if calendar has events on a specific date (YYYYMMDD format)
+ */
+function hasEventsOnDate(icalData, dateStr) {
+    if (!icalData) return null;
+
+    const lines = icalData.split('\n');
+    for (const line of lines) {
+        if (line.startsWith('DTSTART:') || line.startsWith('DTSTART;')) {
+            const value = line.includes(':') ? line.split(':').pop().trim() : '';
+            const eventDate = value.substring(0, 8);
+            if (eventDate === dateStr) {
+                return true;
             }
         }
-        
+    }
+    return false;
+}
+
+async function getSchoolDayStatus() {
+    try {
         const today = getDanishLocalTime();
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 1);
-        
+
+        const todayStr = getDanishDateString(0);
+        const tomorrowStr = getDanishDateString(1);
+
+        // Try direct calendar check
+        const icalData = await getSchoolCalendarData();
+        let isSchoolDayToday = hasEventsOnDate(icalData, todayStr);
+        let isSchoolDayTomorrow = hasEventsOnDate(icalData, tomorrowStr);
+
+        // Fallback to weekday detection if calendar unavailable
         if (isSchoolDayToday === null) {
             isSchoolDayToday = !isWeekend(today);
         }
-        
         if (isSchoolDayTomorrow === null) {
             isSchoolDayTomorrow = !isWeekend(tomorrow);
         }
-        
+
         const todayType = isWeekend(today) ? 'Weekend' : (isSchoolDayToday ? 'School Day' : 'Holiday/Vacation');
         const tomorrowType = isWeekend(tomorrow) ? 'Weekend' : (isSchoolDayTomorrow ? 'School Day' : 'Holiday/Vacation');
-        
+
         return {
             today: todayType,
             tomorrow: tomorrowType,
@@ -347,32 +428,21 @@ async function getSchoolDayStatus() {
 }
 
 async function isSchoolDayTomorrow() {
-    try {
-        const variables = await Homey.logic.getVariables();
-        let schoolDayVariable = null;
-        
-        for (const [id, variable] of Object.entries(variables)) {
-            if (variable.name === HOMEY_LOGIC_SCHOOLDAY_TOMORROW_VAR) {
-                schoolDayVariable = variable;
-                break;
-            }
-        }
-        
-        if (!schoolDayVariable) {
-            const tomorrow = new Date();
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            const isTomorrowWeekend = tomorrow.getDay() === 0 || tomorrow.getDay() === 6;
-            return !isTomorrowWeekend;
-        }
-        
-        return schoolDayVariable.value;
-        
-    } catch (error) {
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const isTomorrowWeekend = tomorrow.getDay() === 0 || tomorrow.getDay() === 6;
-        return !isTomorrowWeekend;
+    const tomorrowStr = getDanishDateString(1);
+
+    // Try direct calendar check
+    const icalData = await getSchoolCalendarData();
+    const hasEvents = hasEventsOnDate(icalData, tomorrowStr);
+
+    if (hasEvents !== null) {
+        return hasEvents;
     }
+
+    // Fallback to weekday detection
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isTomorrowWeekend = tomorrow.getDay() === 0 || tomorrow.getDay() === 6;
+    return !isTomorrowWeekend;
 }
 
 function timeToMinutes(timeStr) {

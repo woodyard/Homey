@@ -6,6 +6,22 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.13.0 (2026-01-23)
+==============================================
+📚 Direct Skoleintra calendar fetch with caching
+- Directly queries Clara's school calendar from Skoleintra (nsg.m.skoleintra.dk)
+- Cached for 1 hour to avoid excessive API calls (configurable via schoolCalendarCacheTTL)
+- Parses iCal format to check for events on specific dates (YYYYMMDD matching)
+- Both isSchoolDay() and isSchoolDayTomorrow() now use cached calendar data
+- Falls back to weekday detection if calendar unavailable
+- Eliminates dependency on IcalCalendar flow cards and Homey Logic variables
+- Can determine both today AND tomorrow school status in a single calendar fetch
+- Calendar URL configured in GLOBAL_CONFIG.schoolCalendarUrl
+- Cache stored in global variables: SchoolCalendar.Data, SchoolCalendar.CacheTime
+- Status script also updated to use same cached calendar approach
+- Files modified: room_heating_config.js (v1.0.6), room_heating.js (v10.13.0), room_heating_status.js (v4.10.0)
+
+==============================================
 Version 10.12.3 (2026-01-23)
 ==============================================
 🔔 Notify on slot name change even when temperature stays the same

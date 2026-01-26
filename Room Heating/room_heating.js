@@ -30,11 +30,12 @@
  * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.12.3
+ * Version: 10.13.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.13.0 (2026-01-23) - 📚 Direct Skoleintra calendar: cached fetch replaces IcalCalendar/Homey Logic
  * 10.12.3 (2026-01-23) - 🔔 Notify on slot name change even when temperature stays the same
  * 10.12.2 (2026-01-20) - 🐛 Fix: False manual detection during window settle delay
  * 10.12.1 (2026-01-19) - 🐛 Fix: False manual detection for smart plugs (away→home + resume bugs)
@@ -191,8 +192,8 @@ async function debugNotify(message) {
 
 const TADO_HOME_ID = GLOBAL_CONFIG?.tadoHomeId || 'acc819ec-fc88-4e8c-b98b-5de8bb97d91c';
 const ICALCALENDAR_DEVICE_ID = GLOBAL_CONFIG?.icalCalendarId || '2ba196bb-b710-4b99-8bb2-72da3987d38c';
-const HOMEY_LOGIC_SCHOOLDAY_VAR = GLOBAL_CONFIG?.homeyLogicVars?.schoolDay || 'IsSchoolDay';
-const HOMEY_LOGIC_SCHOOLDAY_TOMORROW_VAR = GLOBAL_CONFIG?.homeyLogicVars?.schoolDayTomorrow || 'IsSchoolDayTomorrow';
+const SCHOOL_CALENDAR_URL = GLOBAL_CONFIG?.schoolCalendarUrl || null;
+const SCHOOL_CALENDAR_CACHE_TTL = GLOBAL_CONFIG?.schoolCalendarCacheTTL || 3600;  // 1 hour default
 
 
 // ============================================================================
@@ -2105,83 +2106,156 @@ async function isTadoAway() {
 }
 
 // ============================================================================
-// School Day Detection
+// School Day Detection (Direct Calendar Fetch with Caching)
 // ============================================================================
 
-async function isSchoolDay() {
-    // Try direct calendar reading first
-    try {
-        const hasEventsToday = await Homey.flow.runFlowCardCondition({
-            uri: 'homey:app:no.runely.calendar:any_event_in',
-            id: 'no.runely.calendar:any_event_in',
-            args: { when: 1, type: '3' }
-        });
-        
-        log(`📚 School Day (Calendar): ${hasEventsToday ? 'SCHOOL DAY' : 'HOLIDAY/VACATION'}`);
-        return hasEventsToday;
-        
-    } catch (directError) {
-        // Fallback to Homey Logic
-        try {
-            const variables = await Homey.logic.getVariables();
-            let schoolDayVariable = null;
-            
-            for (const [id, variable] of Object.entries(variables)) {
-                if (variable.name === HOMEY_LOGIC_SCHOOLDAY_VAR) {
-                    schoolDayVariable = variable;
-                    break;
-                }
-            }
-            
-            if (!schoolDayVariable) {
-                throw new Error(`Homey Logic variable "${HOMEY_LOGIC_SCHOOLDAY_VAR}" not found`);
-            }
-            
-            const schoolDay = schoolDayVariable.value;
-            log(`📚 School Day (Homey Logic): ${schoolDay ? 'SCHOOL DAY' : 'HOLIDAY/VACATION'}`);
-            return schoolDay;
-            
-        } catch (homeyLogicError) {
-            // Final fallback to weekday detection
-            log(`⚠️  Could not read School Day status - using weekday fallback`);
-            const now = new Date();
-            const day = now.getDay();
-            const isWeekday = (day >= 1 && day <= 5);
-            log(`📚 School Day (Fallback): ${isWeekday ? 'SCHOOL DAY (assumed)' : 'WEEKEND'}`);
-            return isWeekday;
+/**
+ * Get Danish local date in YYYYMMDD format (for iCal comparison)
+ */
+function getDanishDateString(offsetDays = 0) {
+    const now = new Date();
+    const danish = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Copenhagen' }));
+    danish.setDate(danish.getDate() + offsetDays);
+
+    const year = danish.getFullYear();
+    const month = String(danish.getMonth() + 1).padStart(2, '0');
+    const day = String(danish.getDate()).padStart(2, '0');
+
+    return `${year}${month}${day}`;
+}
+
+/**
+ * Check if cached school calendar data is still valid
+ */
+function isSchoolCalendarCacheValid() {
+    const cacheTime = global.get('SchoolCalendar.CacheTime');
+    if (!cacheTime) return false;
+
+    const ageSeconds = (Date.now() - cacheTime) / 1000;
+    return ageSeconds < SCHOOL_CALENDAR_CACHE_TTL;
+}
+
+/**
+ * Fetch and cache school calendar data from Skoleintra
+ * Returns cached data if still valid, otherwise fetches fresh data
+ */
+async function getSchoolCalendarData() {
+    // Check if we have valid cached data
+    if (isSchoolCalendarCacheValid()) {
+        const cachedData = global.get('SchoolCalendar.Data');
+        if (cachedData) {
+            log(`📚 Using cached school calendar (age: ${Math.floor((Date.now() - global.get('SchoolCalendar.CacheTime')) / 60000)} min)`);
+            return cachedData;
         }
+    }
+
+    // No valid cache - fetch fresh data
+    if (!SCHOOL_CALENDAR_URL) {
+        log(`⚠️  No school calendar URL configured`);
+        return null;
+    }
+
+    try {
+        log(`📚 Fetching school calendar from Skoleintra...`);
+        const response = await fetch(SCHOOL_CALENDAR_URL);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const icalData = await response.text();
+
+        // Cache the data
+        global.set('SchoolCalendar.Data', icalData);
+        global.set('SchoolCalendar.CacheTime', Date.now());
+
+        log(`✅ School calendar fetched and cached (${icalData.length} bytes)`);
+        return icalData;
+
+    } catch (error) {
+        log(`⚠️  Failed to fetch school calendar: ${error.message}`);
+
+        // Return stale cache if available (better than nothing)
+        const staleData = global.get('SchoolCalendar.Data');
+        if (staleData) {
+            log(`📚 Using stale cached data as fallback`);
+            return staleData;
+        }
+
+        return null;
     }
 }
 
-async function isSchoolDayTomorrow() {
-    try {
-        const variables = await Homey.logic.getVariables();
-        let schoolDayVariable = null;
-        
-        for (const [id, variable] of Object.entries(variables)) {
-            if (variable.name === HOMEY_LOGIC_SCHOOLDAY_TOMORROW_VAR) {
-                schoolDayVariable = variable;
-                break;
+/**
+ * Check if calendar has events on a specific date (YYYYMMDD format)
+ */
+function hasEventsOnDate(icalData, dateStr) {
+    if (!icalData) return null;
+
+    const lines = icalData.split('\n');
+
+    for (const line of lines) {
+        if (line.startsWith('DTSTART:') || line.startsWith('DTSTART;')) {
+            // Extract the date value (handles both DTSTART:20260121T090000Z and DTSTART;VALUE=DATE:20260121)
+            const value = line.includes(':') ? line.split(':').pop().trim() : '';
+            const eventDate = value.substring(0, 8);  // Extract YYYYMMDD
+
+            if (eventDate === dateStr) {
+                return true;
             }
         }
-        
-        if (!schoolDayVariable) {
-            log(`⚠️  ${HOMEY_LOGIC_SCHOOLDAY_TOMORROW_VAR} variable not found - using weekend detection`);
-            const tomorrow = new Date();
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            const isTomorrowWeekend = tomorrow.getDay() === 0 || tomorrow.getDay() === 6;
-            return !isTomorrowWeekend;
-        }
-        
-        return schoolDayVariable.value;
-        
-    } catch (error) {
-        log(`⚠️  Could not read ${HOMEY_LOGIC_SCHOOLDAY_TOMORROW_VAR} - using weekend detection`);
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const isTomorrowWeekend = tomorrow.getDay() === 0 || tomorrow.getDay() === 6;
-        return !isTomorrowWeekend;
     }
+
+    return false;
+}
+
+/**
+ * Check if today is a school day
+ * Uses direct Skoleintra calendar with caching, falls back to weekday detection
+ */
+async function isSchoolDay() {
+    const todayStr = getDanishDateString(0);
+
+    // Try direct calendar check
+    const icalData = await getSchoolCalendarData();
+    const hasEvents = hasEventsOnDate(icalData, todayStr);
+
+    if (hasEvents !== null) {
+        log(`📚 School Day (Skoleintra): ${hasEvents ? 'SCHOOL DAY' : 'HOLIDAY/VACATION'} (${todayStr})`);
+        return hasEvents;
+    }
+
+    // Fallback to weekday detection
+    log(`⚠️  Could not check school calendar - using weekday fallback`);
+    const now = new Date();
+    const day = now.getDay();
+    const isWeekday = (day >= 1 && day <= 5);
+    log(`📚 School Day (Fallback): ${isWeekday ? 'SCHOOL DAY (assumed)' : 'WEEKEND'}`);
+    return isWeekday;
+}
+
+/**
+ * Check if tomorrow is a school day
+ * Uses direct Skoleintra calendar with caching, falls back to weekday detection
+ */
+async function isSchoolDayTomorrow() {
+    const tomorrowStr = getDanishDateString(1);
+
+    // Try direct calendar check
+    const icalData = await getSchoolCalendarData();
+    const hasEvents = hasEventsOnDate(icalData, tomorrowStr);
+
+    if (hasEvents !== null) {
+        log(`📚 School Day Tomorrow (Skoleintra): ${hasEvents ? 'SCHOOL DAY' : 'HOLIDAY/VACATION'} (${tomorrowStr})`);
+        return hasEvents;
+    }
+
+    // Fallback to weekday detection
+    log(`⚠️  Could not check school calendar - using weekend fallback`);
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const isTomorrowWeekend = tomorrow.getDay() === 0 || tomorrow.getDay() === 6;
+    return !isTomorrowWeekend;
 }
 
 // ============================================================================

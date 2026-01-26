@@ -11,10 +11,11 @@
  *   3. Heating and status scripts automatically use the saved config
  *
  * Author: Henrik Skovgaard
- * Version: 1.0.5
+ * Version: 1.0.6
  * Created: 2025-12-31
  *
  * Version History:
+ * 1.0.6 (2026-01-23) - 📚 Add schoolCalendarUrl for direct Skoleintra calendar access
  * 1.0.5 (2026-01-17) - 🎛️ Unified slot-override architecture
  *   - New room setting: inactivityOffset (default temperature reduction)
  *   - Slot field now optional: inactivityOffset (uses room default if not specified)
@@ -202,6 +203,8 @@ const ROOMS = {
 const GLOBAL_CONFIG = {
     tadoHomeId: 'acc819ec-fc88-4e8c-b98b-5de8bb97d91c',
     icalCalendarId: '2ba196bb-b710-4b99-8bb2-72da3987d38c',
+    schoolCalendarUrl: 'https://nsg.m.skoleintra.dk/feed/schedule/v1?type=Schedule&unifiedId=366903&culture=da-DK&hash=79e59b9f779667ab7dbc022cd4918ab9',
+    schoolCalendarCacheTTL: 3600,  // Cache for 1 hour (in seconds)
     homeyLogicVars: {
         schoolDay: 'IsSchoolDay',
         schoolDayTomorrow: 'IsSchoolDayTomorrow'
@@ -228,7 +231,7 @@ log(`✅ Saved GLOBAL configuration`);
 
 // Save metadata
 global.set('Config.LastUpdate', new Date().toISOString());
-global.set('Config.Version', '1.0.5');
+global.set('Config.Version', '1.0.6');
 
 log('\n══ CONFIGURED ROOMS ══');
 for (const [roomName, roomConfig] of Object.entries(ROOMS)) {
