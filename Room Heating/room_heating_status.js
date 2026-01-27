@@ -5,11 +5,12 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 4.10.0
+ * Version: 4.10.1
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
  * Version History:
+ * 4.10.1 (2026-01-27) - 📊 Show school calendar cache info (matches heating v10.13.1)
  * 4.10.0 (2026-01-23) - 📚 Direct Skoleintra calendar fetch with caching (matches heating v10.13.0)
  * 4.9.0 (2026-01-18) - 📊 Show device queue status (matches heating v10.9.0)
  * 4.8.0 (2026-01-17) - 🎛️ Show unified slot-override architecture (matches heating v10.8.0)
@@ -1011,6 +1012,23 @@ try {
         
         log(`Today:         ${todayIcon} ${schoolStatus.today}`);
         log(`Tomorrow:      ${tomorrowIcon} ${schoolStatus.tomorrow}`);
+    }
+
+    // Cache Info
+    const cacheTime = global.get('SchoolCalendar.CacheTime');
+    const cachedData = global.get('SchoolCalendar.Data');
+    
+    if (cacheTime) {
+        const ageMinutes = Math.floor((Date.now() - cacheTime) / 60000);
+        log(`Cache Age:     ${ageMinutes} minutes ago`);
+    } else {
+        log(`Cache Age:     N/A (No cache time)`);
+    }
+    
+    if (cachedData) {
+        log(`Data Size:     ${cachedData.length} chars`);
+    } else {
+        log(`Data Size:     0 (No data)`);
     }
 } catch (error) {
     log(`School Day:    Error - ${error.message}`);

@@ -2726,12 +2726,15 @@ async function logDiagnostics(now, roomTemp, slot, action) {
         const isImportantAction = importantActions.includes(action);
         
         // Window-related actions should only log when window status changes
-        const isWindowAction = action === 'window_timeout_off' || action === 'window_open_skip';
+        const isWindowAction = action === 'window_timeout_off'; // Removed window_open_skip to suppress pre-timeout logs
         const windowStatusChanged = windowOpen !== lastWindowOpen;
         const shouldLogWindowAction = isWindowAction && windowStatusChanged;
         
-        // ALWAYS log when window status changes, even if action is "no_change"
-        const shouldLogWindowStatusChange = windowStatusChanged;
+        // Suppress window open logging until timeout reached (window_open_skip means waiting)
+        const suppressWindowLog = action === 'window_open_skip';
+        
+        // ALWAYS log when window status changes, even if action is "no_change", UNLESS suppressed
+        const shouldLogWindowStatusChange = windowStatusChanged && !suppressWindowLog;
         
         // Other conditions for logging
         // Use effectiveTarget (with inactivity offset) not slot.target
@@ -2746,7 +2749,11 @@ async function logDiagnostics(now, roomTemp, slot, action) {
             global.set(`${ROOM.zoneName}.Heating.CurrentTemp`, roomTemp);
             global.set(`${ROOM.zoneName}.Heating.LastAction`, action);
             global.set(`${ROOM.zoneName}.Heating.LastEffectiveTarget`, effectiveTarget);
-            global.set(`${ROOM.zoneName}.Heating.LastWindowOpen`, windowOpen);
+            
+            // Only update LastWindowOpen if not suppressed (treats "waiting" as still closed)
+            if (!suppressWindowLog) {
+                global.set(`${ROOM.zoneName}.Heating.LastWindowOpen`, windowOpen);
+            }
             return;
         }
         
@@ -2765,7 +2772,12 @@ async function logDiagnostics(now, roomTemp, slot, action) {
         
         global.set(`${ROOM.zoneName}.Heating.DiagnostikLog`, trimmedLog);
         global.set(`${ROOM.zoneName}.Heating.LastLogTime`, Date.now());
-        global.set(`${ROOM.zoneName}.Heating.LastWindowOpen`, windowOpen);
+        
+        // Only update LastWindowOpen if not suppressed
+        if (!suppressWindowLog) {
+            global.set(`${ROOM.zoneName}.Heating.LastWindowOpen`, windowOpen);
+        }
+        
         global.set(`${ROOM.zoneName}.Heating.LastUpdate`, formatDateTime(now));
         global.set(`${ROOM.zoneName}.Heating.CurrentTemp`, roomTemp);
         global.set(`${ROOM.zoneName}.Heating.LastAction`, action);

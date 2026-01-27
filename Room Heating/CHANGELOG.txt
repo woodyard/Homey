@@ -6,6 +6,17 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.13.1 (2026-01-27)
+==============================================
+🔇 Suppress excessive window open logging
+- Modified logging logic to ignore window open events until the timeout is reached
+- Helps suppress log spam from flapping contact sensors or brief window openings
+- "Window: OPEN" is now only logged when the action is 'window_timeout_off'
+- "window_open_skip" events are ignored for logging and status tracking
+- Status script now shows School Calendar cache details (age and size) for verification
+- Files modified: room_heating.js (v10.13.1), room_heating_status.js (v4.10.1)
+
+==============================================
 Version 10.13.0 (2026-01-23)
 ==============================================
 📚 Direct Skoleintra calendar fetch with caching
