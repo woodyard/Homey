@@ -7,6 +7,9 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 3.4  2026-02-04  Fix race condition with AdaptiveLighting
+//                  - Clear fade timestamp BEFORE restoring settings
+//                  - Ensures AdaptiveLighting sees cleared flag when triggered by turn-on
 // 3.3  2026-01-14  Parallel restore for group members
 //                  - All bulbs restore simultaneously
 //                  - Uses Promise.all() for parallel execution
@@ -82,6 +85,12 @@ try {
 
   log(`Saved values: dim=${savedDim !== null ? Math.round(savedDim * 100) + '%' : 'N/A'}, temp=${savedTemp !== null ? Math.round(savedTemp * 100) + '%' : 'N/A'}`);
 
+  // Clear timestamp immediately - allows AdaptiveLighting to update to correct profile
+  // Clearing it BEFORE restore ensures that when the light turns on (triggering AL),
+  // AL sees the flag as cleared and applies the correct time-based profile.
+  global.set(fadeActiveUntilVar, 0);
+  log(`Fade timestamp cleared (allows AdaptiveLighting to update)`);
+
   // Find group members (to cancel hardware fade on each)
   async function findGroupMembers(groupName) {
     const devices = await Homey.devices.getDevices();
@@ -144,13 +153,6 @@ try {
     await restoreDevice(device, savedDim, savedTemp);
     log(`âœ“ Restored brightness to ${Math.round(savedDim * 100)}%`);
   }
-
-  // Extend timestamp instead of clearing - prevents AdaptiveLighting from overriding
-  // This gives a 3-second window for the "light turned on" trigger to complete
-  // After that, the timestamp expires and normal operation resumes
-  const restoreBuffer = Date.now() + 3000; // 3 second buffer
-  global.set(fadeActiveUntilVar, restoreBuffer);
-  log(`Fade timestamp extended by 3s (prevents AdaptiveLighting override)`);
 
   return `${device.name}: Restored to ${Math.round(savedDim * 100)}%${savedTemp !== null ? ` / ${Math.round(savedTemp * 100)}% temp` : ''}`;
 
