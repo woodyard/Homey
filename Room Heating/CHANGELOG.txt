@@ -6,6 +6,52 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.14.4 (2026-02-04)
+==============================================
+🐛 Fix: Robustly handle object-wrapped sensor values in logging and logic
+- Detects if sensor value is an object (unexpected format change) and attempts to extract value
+- Safe-guards diagnostics logging to stringify objects instead of printing [object Object]
+- Fixes "Temp: [object Object]" error appearing in logs
+- Files modified: room_heating.js (v10.14.4)
+
+==============================================
+Version 10.14.3 (2026-02-04)
+==============================================
+🐛 Fix: [object Object] in notifications during override modes
+- Files modified: room_heating.js (v10.14.3)
+
+==============================================
+Version 10.14.2 (2026-02-03)
+==============================================
+⏳ Increase minimum smart settling time to 10 minutes
+- Increased minSettlingTime from 120s (2 min) to 600s (10 min)
+- Ensures system waits at least 10 minutes for air to settle before checking stability
+- Even if temperature stabilizes quickly, system will wait the full 10 minutes
+- Improved comfort by preventing premature heating resumption
+- Files modified: room_heating.js (v10.14.2)
+
+==============================================
+Version 10.14.1 (2026-02-03)
+==============================================
+🐛 Fix: Ensure smart settling logic uses fresh sensor data (check timestamp)
+- Smart monitoring was resuming too early on stale sensor data (timestamp check added)
+- Now requires sensorLastUpdated > windowClosedTime to consider stability
+- Files modified: room_heating.js (v10.14.1)
+
+==============================================
+Version 10.14.0 (2026-02-01)
+==============================================
+🌡️ Smart window settling: Resume heating early if temperature stabilizes
+- New smart monitoring logic replaces fixed window closed delay
+- When window closes, system now monitors temperature stability (every run)
+- If temperature stabilizes (change < 0.2°C) after minimum 2 minutes, heating resumes early
+- windowClosedDelay now acts as a safety MAXIMUM wait time (default increased to 30 min)
+- Prevents freezing if sensor is noisy or unstable for long periods
+- Ensures heating resumes as soon as air has settled, optimizing comfort and efficiency
+- Updated config: Default windowClosedDelay increased from 10m (600s) to 30m (1800s)
+- Files modified: room_heating.js (v10.14.0), room_heating_config.js (v1.0.7)
+
+==============================================
 Version 10.13.1 (2026-01-27)
 ==============================================
 🔇 Suppress excessive window open logging

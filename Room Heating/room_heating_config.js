@@ -11,10 +11,11 @@
  *   3. Heating and status scripts automatically use the saved config
  *
  * Author: Henrik Skovgaard
- * Version: 1.0.6
+ * Version: 1.0.7
  * Created: 2025-12-31
  *
  * Version History:
+ * 1.0.7 (2026-02-01) - 🌡️ Update default windowClosedDelay to 30 min (for smart settling logic)
  * 1.0.6 (2026-01-23) - 📚 Add schoolCalendarUrl for direct Skoleintra calendar access
  * 1.0.5 (2026-01-17) - 🎛️ Unified slot-override architecture
  *   - New room setting: inactivityOffset (default temperature reduction)
@@ -89,7 +90,7 @@ const ROOMS = {
             inactivityTimeout: 30,
             inactivityOffset: 2.0,  // Default temperature reduction when inactive
             windowOpenTimeout: 60,
-            windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
+            windowClosedDelay: 3600,  // 60 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
         }
     },
@@ -103,15 +104,15 @@ const ROOMS = {
         schedules: {
             weekday: [
                 { start: '00:00', end: '08:00', target: 18, inactivityOffset: 0, name: 'Night' },
-                { start: '08:00', end: '20:00', target: 21, inactivityOffset: 1, name: 'Day' }
+                { start: '08:00', end: '20:00', target: 20.5, inactivityOffset: 1, name: 'Day' }
             ],
             weekend: [
                 { start: '00:00', end: '09:00', target: 18, inactivityOffset: 0, name: 'Night' },
-                { start: '09:00', end: '21:00', target: 21, inactivityOffset: 1, name: 'Day' }
+                { start: '09:00', end: '21:00', target: 20.5, inactivityOffset: 1, name: 'Day' }
             ],
             holiday: [
                 { start: '00:00', end: '09:00', target: 18, inactivityOffset: 0, name: 'Night' },
-                { start: '09:00', end: '21:00', target: 21, inactivityOffset: 1, name: 'Day' }
+                { start: '09:00', end: '21:00', target: 20.5, inactivityOffset: 1, name: 'Day' }
             ],
             earlyEvening: { start: '20:00', end: '23:59', target: 19, inactivityOffset: 1, name: 'Evening' },
             lateEvening: { start: '21:00', end: '23:59', target: 19, inactivityOffset: 1, name: 'Evening' }
@@ -121,7 +122,7 @@ const ROOMS = {
             inactivityTimeout: 30,
             inactivityOffset: 1.0,  // Default temperature reduction when inactive
             windowOpenTimeout: 60,
-            windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
+            windowClosedDelay: 3600,  // 60 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
         }
     },
@@ -134,26 +135,26 @@ const ROOMS = {
         },
         schedules: {
             weekday: [
-                { start: '00:00', end: '07:00', target: 17, inactivityOffset: 0, name: 'Night' },
+                { start: '00:00', end: '07:00', target: 15, inactivityOffset: 0, name: 'Night' },
                 { start: '07:00', end: '19:00', target: 20, inactivityOffset: 1, name: 'Day' }
             ],
             weekend: [
-                { start: '00:00', end: '09:00', target: 17, inactivityOffset: 0, name: 'Night' },
+                { start: '00:00', end: '09:00', target: 15, inactivityOffset: 0, name: 'Night' },
                 { start: '09:00', end: '19:00', target: 20, inactivityOffset: 1, name: 'Day' }
             ],
             holiday: [
-                { start: '00:00', end: '09:00', target: 17, inactivityOffset: 0, name: 'Night' },
+                { start: '00:00', end: '09:00', target: 15, inactivityOffset: 0, name: 'Night' },
                 { start: '09:00', end: '19:00', target: 20, inactivityOffset: 1, name: 'Day' }
             ],
-            earlyEvening: { start: '19:00', end: '23:59', target: 18, inactivityOffset: 0, name: 'Evening' },
-            lateEvening: { start: '19:00', end: '23:59', target: 18, inactivityOffset: 0, name: 'Evening' }
+            earlyEvening: { start: '19:00', end: '23:59', target: 15, inactivityOffset: 0, name: 'Evening' },
+            lateEvening: { start: '19:00', end: '23:59', target: 15, inactivityOffset: 0, name: 'Evening' }
         },
         settings: {
             tadoAwayMinTemp: 17.0,
             inactivityTimeout: 30,
             inactivityOffset: 1.0,  // Default temperature reduction when inactive
             windowOpenTimeout: 60,
-            windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
+            windowClosedDelay: 3600,  // 60 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
         }
     },
@@ -188,7 +189,7 @@ const ROOMS = {
             inactivityTimeout: 90,
             inactivityOffset: 0,  // Default temperature reduction when inactive
             windowOpenTimeout: 60,
-            windowClosedDelay: 600,  // 10 minutes for air to settle after window closes
+            windowClosedDelay: 3600,  // 60 minutes for air to settle after window closes
             manualOverrideDuration: 90  // 90 minutes - pause automation when manual intervention detected
         }
     }
@@ -231,7 +232,7 @@ log(`✅ Saved GLOBAL configuration`);
 
 // Save metadata
 global.set('Config.LastUpdate', new Date().toISOString());
-global.set('Config.Version', '1.0.6');
+global.set('Config.Version', '1.0.7');
 
 log('\n══ CONFIGURED ROOMS ══');
 for (const [roomName, roomConfig] of Object.entries(ROOMS)) {

@@ -30,11 +30,16 @@
  * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.13.0
+ * Version: 10.14.4
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.14.4 (2026-02-04) - 🐛 Fix: Robustly handle object-wrapped sensor values in logging and logic
+ * 10.14.3 (2026-02-04) - 🐛 Fix: [object Object] in notifications during override modes
+ * 10.14.2 (2026-02-03) - ⏳ Increase minimum smart settling time to 10 minutes (was 2 min)
+ * 10.14.1 (2026-02-03) - 🐛 Fix: Ensure smart settling logic uses fresh sensor data (check timestamp)
+ * 10.14.0 (2026-02-01) - 🌡️ Smart window settling: Resume early if temperature stabilizes (safety max: 30m)
  * 10.13.0 (2026-01-23) - 📚 Direct Skoleintra calendar: cached fetch replaces IcalCalendar/Homey Logic
  * 10.12.3 (2026-01-23) - 🔔 Notify on slot name change even when temperature stays the same
  * 10.12.2 (2026-01-20) - 🐛 Fix: False manual detection during window settle delay
@@ -892,8 +897,9 @@ async function resumeNormalHeating(slot, fromExpiry, modeType) {
         log(`Smart plug mode: Resuming to scheduled state`);
         
         // For smart plugs, use hysteresis to determine if heating should be on/off
-        const roomTemp = await getRoomTemperature();
-        if (roomTemp === null) {
+        const roomTempObj = await getRoomTemperature();
+        const roomTemp = roomTempObj?.value;
+        if (roomTemp === null || roomTemp === undefined) {
             log(`❌ Cannot read room temperature - skipping resume`);
             return false;
         }
@@ -1482,7 +1488,22 @@ async function getRoomTemperature() {
             return null;
         }
         
-        return tempSensor.capabilitiesObj.measure_temperature.value;
+        let rawValue = tempSensor.capabilitiesObj.measure_temperature.value;
+        
+        // 🐛 Fix: Handle case where sensor returns object instead of number
+        if (typeof rawValue === 'object' && rawValue !== null) {
+            log(`⚠️ Temperature value is an object: ${JSON.stringify(rawValue)}`);
+            // Try to extract value if it exists
+            if (rawValue.hasOwnProperty('value')) {
+                rawValue = rawValue.value;
+            }
+        }
+        
+        return {
+            value: rawValue,
+            lastUpdated: tempSensor.capabilitiesObj.measure_temperature.lastUpdated,
+            source: tempSensor.name
+        };
     } catch (error) {
         log(`Error reading room temperature: ${error.message}`);
         return null;
@@ -2412,7 +2433,8 @@ async function sendUnifiedNotification(status) {
 // Heating Control Logic
 // ============================================================================
 
-async function controlHeating(roomTemp, slot, windowOpen) {
+async function controlHeating(roomTempObj, slot, windowOpen) {
+    const roomTemp = roomTempObj?.value;
     const heatingOn = await getHeatingStatus();
     const tadoAway = await isTadoAway();
     const inactivity = await checkInactivity(slot);
@@ -2483,6 +2505,13 @@ async function controlHeating(roomTemp, slot, windowOpen) {
         }
     }
     
+    // Track LastRunTemp for stability checking (smart window settling)
+    const lastRunTemp = global.get(`${ROOM.zoneName}.Heating.LastRunTemp`);
+    if (roomTemp !== null) {
+        // Store current temp for next run's stability check
+        global.set(`${ROOM.zoneName}.Heating.LastRunTemp`, roomTemp);
+    }
+
     // Window Timeout Check - CHECK THIS FIRST before sending any notifications!
     const windowOpenTime = global.get(`${ROOM.zoneName}.Heating.WindowOpenTime`);
     let windowTimeoutHandled = global.get(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`);
@@ -2574,12 +2603,46 @@ async function controlHeating(roomTemp, slot, windowOpen) {
         if (windowClosedTime) {
             const secondsSinceClosed = (Date.now() - windowClosedTime) / 1000;
             
-            if (secondsSinceClosed < windowClosedDelay) {
+            // Smart Settling Logic
+            const minSettlingTime = 600; // 10 minutes minimum wait
+            const stabilityThreshold = 0.2; // 0.2°C change allowed
+            let isStable = false;
+            let stabilityReason = "";
+
+            // Check stability if we are past min time and have data
+            if (secondsSinceClosed > minSettlingTime) {
+                // Ensure sensor has updated since window closed
+                const sensorTimestamp = roomTempObj?.lastUpdated ? new Date(roomTempObj.lastUpdated).getTime() : 0;
+                
+                if (sensorTimestamp <= windowClosedTime) {
+                    log(`⏳ Sensor value is stale (from before window closed) - waiting for update`);
+                    isStable = false;
+                    stabilityReason = "(waiting for fresh sensor reading)";
+                }
+                else if (lastRunTemp !== null && lastRunTemp !== undefined && roomTemp !== null) {
+                    const change = Math.abs(roomTemp - lastRunTemp);
+                    if (change < stabilityThreshold) {
+                        isStable = true;
+                        stabilityReason = `(stable: change ${change.toFixed(2)}°C < ${stabilityThreshold}°C)`;
+                        log(`🌡️ Temperature stable ${stabilityReason} - settling complete early`);
+                    } else {
+                        stabilityReason = `(unstable: change ${change.toFixed(2)}°C >= ${stabilityThreshold}°C)`;
+                        log(`🌡️ Temperature changing ${stabilityReason} - still settling`);
+                    }
+                } else {
+                    log(`🌡️ Cannot check stability (missing temp data) - waiting full delay`);
+                }
+            }
+
+            // Resume if:
+            // 1. Time > Max Delay (windowClosedDelay)
+            // 2. Time > Min Delay AND Temperature is Stable
+            if (secondsSinceClosed < windowClosedDelay && !isStable) {
                 // Still waiting for air to settle
                 const remainingSeconds = Math.floor(windowClosedDelay - secondsSinceClosed);
                 const remainingMinutes = Math.floor(remainingSeconds / 60);
                 const remainingSecs = remainingSeconds % 60;
-                log(`⏳ Waiting for air to settle: ${remainingMinutes}m ${remainingSecs}s remaining`);
+                log(`⏳ Waiting for air to settle: ${remainingMinutes}m ${remainingSecs}s remaining ${stabilityReason}`);
                 return 'window_closed_waiting';
             } else {
                 // Delay complete - use explicit resume logic with verification
@@ -2765,7 +2828,13 @@ async function logDiagnostics(now, roomTemp, slot, action) {
             ? (heatingOn ? 'HEATING' : 'IDLE')
             : (heatingOn ? 'ON' : 'OFF');
         
-        const newEntry = `${formatDateTime(now)}|${roomTemp}|${effectiveTarget}|${heatingStatus}|${windowOpen?'OPEN':'CLOSED'}|${action}\n`;
+        // 🐛 Fix: Ensure roomTemp is logged correctly even if it's an object
+        let tempLog = roomTemp;
+        if (typeof roomTemp === 'object' && roomTemp !== null) {
+            tempLog = JSON.stringify(roomTemp);
+        }
+
+        const newEntry = `${formatDateTime(now)}|${tempLog}|${effectiveTarget}|${heatingStatus}|${windowOpen?'OPEN':'CLOSED'}|${action}\n`;
         
         const lines = (logText + newEntry).split('\n').filter(l => l.length > 0);
         const trimmedLog = lines.slice(-5000).join('\n') + '\n';
@@ -2947,7 +3016,9 @@ if (pauseStatus.active) {
     log(`Remaining: ${pauseStatus.remainingMinutes} minutes`);
     
     // Read room temperature for status
-    const roomTemp = await getRoomTemperature();
+    const roomTempObj = await getRoomTemperature();
+    const roomTemp = roomTempObj ? roomTempObj.value : null;
+
     if (roomTemp === null) {
         log('❌ Could not read room temperature!');
         return;
@@ -3009,7 +3080,9 @@ if (boostStatus.active) {
     log(`Remaining: ${boostStatus.remainingMinutes} minutes`);
     
     // Read room temperature for status
-    const roomTemp = await getRoomTemperature();
+    const roomTempObj = await getRoomTemperature();
+    const roomTemp = roomTempObj ? roomTempObj.value : null;
+
     if (roomTemp === null) {
         log('❌ Could not read room temperature!');
         return;
@@ -3078,7 +3151,9 @@ if (manualOverrideStatus.active) {
     log(`Remaining: ${manualOverrideStatus.remainingMinutes} minutes`);
     
     // Read room temperature for status
-    const roomTemp = await getRoomTemperature();
+    const roomTempObj = await getRoomTemperature();
+    const roomTemp = roomTempObj ? roomTempObj.value : null;
+
     if (roomTemp === null) {
         log('❌ Could not read room temperature!');
         return;
@@ -3243,8 +3318,10 @@ if (targetChanged || slotNameChanged) {
 }
 
 // Read room temperature
-const roomTemp = await getRoomTemperature();
-if (roomTemp === null) {
+const roomTempObj = await getRoomTemperature();
+const roomTemp = roomTempObj?.value;
+
+if (roomTemp === null || roomTemp === undefined) {
     log('❌ Could not read room temperature!');
     return;
 }
@@ -3253,7 +3330,7 @@ if (roomTemp === null) {
 const windowOpen = await isWindowOpen();
 
 // Run heating control
-const action = await controlHeating(roomTemp, currentSlot, windowOpen);
+const action = await controlHeating(roomTempObj, currentSlot, windowOpen);
 
 // Log diagnostics
 await logDiagnostics(now, roomTemp, currentSlot, action);
