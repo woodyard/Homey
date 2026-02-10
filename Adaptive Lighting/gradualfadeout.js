@@ -7,6 +7,9 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 5.2  2026-02-10  Switch to setCapabilityValue with duration
+//                  - More direct control than Flow Card
+//                  - Fixes issue where duration was ignored on some devices
 // 5.1  2026-01-14  Parallel fade for group members
 //                  - All bulbs start fading simultaneously
 //                  - Uses Promise.all() for parallel execution
@@ -24,8 +27,10 @@
 
 const fadeDuration = 20; // seconds
 
-// Get device ID from argument
-const deviceId = args[0];
+// Get device ID from argument, or use default (Bathroom 9)
+const deviceId = args[0] || "b8591f4d-a493-4de7-9745-c13cd07e033c";
+
+log(`Device ID: ${deviceId} ${args[0] ? '(from argument)' : '(default)'}`);
 
 if (!deviceId) {
   return 'ERROR: No device ID provided. Pass device ID as argument.';
@@ -94,34 +99,37 @@ if (isGroup) {
   
   // Start fade on all members simultaneously
   const fadePromises = members.map(member =>
-    Homey.flow.runFlowCardAction({
-      uri: `homey:flowcardaction:homey:device:${member.id}:dim`,
-      id: `homey:device:${member.id}:dim`,
-      args: { dim: 0 },
-      duration: fadeDuration
-    }).catch(e => {
-      log(`Warning: Could not start fade on ${member.name}: ${e.message}`);
-      return { error: true };
-    })
+    member.setCapabilityValue('dim', 0, { duration: fadeDuration * 1000 })
+      .catch(e => {
+        log(`Warning: Could not start fade on ${member.name}: ${e.message}`);
+        return { error: true };
+      })
   );
   
   await Promise.all(fadePromises);
   
 } else {
   // Single device - apply fade directly
-  log(`Single device - applying hardware fade`);
+  log(`Single device - applying hardware fade (via capability)`);
   
   try {
-    await Homey.flow.runFlowCardAction({
-      uri: `homey:flowcardaction:homey:device:${deviceId}:dim`,
-      id: `homey:device:${deviceId}:dim`,
-      args: { dim: 0 },
-      duration: fadeDuration
-    });
+    // Use setCapabilityValue with duration (ms) - often more reliable than flow cards
+    await device.setCapabilityValue('dim', 0, { duration: fadeDuration * 1000 });
   } catch (e) {
-    // Fallback: try setting dim directly (no fade)
-    log(`Warning: Hardware fade failed, using instant: ${e.message}`);
-    await device.setCapabilityValue('dim', 0);
+    log(`Warning: Capability fade failed: ${e.message}`);
+    // Fallback: try Flow Card
+    try {
+      log(`Attempting Flow Card fallback...`);
+      await Homey.flow.runFlowCardAction({
+        uri: `homey:flowcardaction:homey:device:${deviceId}:dim`,
+        id: `homey:device:${deviceId}:dim`,
+        args: { dim: 0 },
+        duration: fadeDuration
+      });
+    } catch (e2) {
+      log(`Warning: Flow card fade also failed, using instant: ${e2.message}`);
+      await device.setCapabilityValue('dim', 0);
+    }
   }
 }
 

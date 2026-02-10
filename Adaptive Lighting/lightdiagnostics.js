@@ -30,18 +30,18 @@ log("");
 const keys = Object.keys(states);
 
 if (keys.length === 0) {
-  log("Ingen enheder registreret endnu.");
-  log("Kør scriptet på en enhed for at initialisere.");
+  log("No devices registered yet.");
+  log("Run the script on a device to initialize.");
 } else {
-  log(`Registrerede enheder: ${keys.length}`);
+  log(`Registered devices: ${keys.length}`);
   log("");
   
   for (const key of keys) {
     const state = states[key];
     const device = findDevice(key);
-    const deviceName = device ? device.name : `Ukendt (${key})`;
+    const deviceName = device ? device.name : `Unknown (${key})`;
     
-    const manualIcon = state.manual ? "🔴 MANUEL" : "🟢 AUTO";
+    const manualIcon = state.manual ? "🔴 MANUAL" : "🟢 AUTO";
     const lastProfile = state.lastProfile || "N/A";
     
     log(`${manualIcon}  ${deviceName}`);
@@ -54,7 +54,7 @@ if (keys.length === 0) {
       if (brightness !== undefined) {
         const bPct = Math.round(brightness * 100);
         const tPct = temp !== null ? Math.round(temp * 100) : 'N/A';
-        log(`         Aktuelle værdier: ${bPct}% / ${tPct}`);
+        log(`         Current values: ${bPct}% / ${tPct}`);
       }
 
       // Saved Settings
@@ -63,7 +63,7 @@ if (keys.length === 0) {
       if (savedDim !== null || savedTemp !== null) { // null or undefined check
         const sDim = savedDim !== null && savedDim !== undefined ? Math.round(savedDim * 100) + '%' : 'N/A';
         const sTemp = savedTemp !== null && savedTemp !== undefined ? Math.round(savedTemp * 100) + '%' : 'N/A';
-        log(`         Gemte indstillinger: Dim=${sDim}, Temp=${sTemp}`);
+        log(`         Saved settings: Dim=${sDim}, Temp=${sTemp}`);
       }
 
       // Fade Status
@@ -91,4 +91,4 @@ log("═════════════════════════
 const manualCount = keys.filter(k => states[k].manual).length;
 const autoCount = keys.length - manualCount;
 
-log(`Sammenfatning: ${autoCount} auto, ${manualCount} manuel`);
+log(`Summary: ${autoCount} auto, ${manualCount} manual`);

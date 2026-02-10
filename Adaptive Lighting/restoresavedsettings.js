@@ -30,9 +30,16 @@
 // 2.1  2024-12-22  Added detailed error handling and logging
 // -------------------------------------------------------------------------
 
+// ====== SCRIPT SETTINGS ======
+const SETTINGS = {
+  enableDetailedLogging: false
+};
+
 try {
-  // Get device ID from argument
-  const deviceId = args[0];
+  // Get device ID from argument, or use default (Bathroom 9)
+  const deviceId = args[0] || "b8591f4d-a493-4de7-9745-c13cd07e033c";
+  
+  log(`Device ID: ${deviceId} ${args[0] ? '(from argument)' : '(default)'}`);
 
   if (!deviceId) {
     log('ERROR: No device ID provided');
