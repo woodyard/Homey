@@ -1,11 +1,12 @@
 /**
  * Eve Device Monitor Script
- * Version: 4.1
+ * Version: 4.2
  *
  * Description:
  *   Checks if Eve devices are available (no exclamation mark).
  *   Directly updates the EveErrorCount Homey Logic variable.
  *   Tracks per-device error counts that persist between reboots.
+ *   Tracks timestamp of last error per device.
  *   Sends notifications for errors and recovery.
  *
  * Behavior:
@@ -39,6 +40,7 @@
  *   3.9 - 2026-01-03 - Migrated from Better Logic to HomeyScript global variables
  *   4.0 - 2026-01-03 - Migrated to Homey Logic variables (for flow triggers)
  *   4.1 - 2026-01-17 - Added per-device persistent error counters
+ *   4.2 - 2026-02-10 - Added per-device last error timestamp
  */
 
 const devices = await Homey.devices.getDevices();
@@ -47,19 +49,22 @@ let unavailableDeviceDetails = []; // Store both id and name
 
 // Eve device IDs - update this list if you add/remove devices
 const eveDeviceIds = [
-  "825d3d61-b4b8-49e5-854b-5126758808b6",
+  "825d3d61-b4b8-49e5-854b-5126758808b6", // O EVE Motion
   "e1e82d85-465a-413e-a20a-5577bce02730",
   "42685dd3-4cf3-4305-9a2f-f5af853e4a0c",
-  "5b3581b4-a525-4746-8307-b1a5e3b13f04",
+  //"5b3581b4-a525-4746-8307-b1a5e3b13f04", // O EVE Door and Window
   "90e264af-01ca-4c26-a189-93fc4ce5a326",
   "02561b2b-977f-41c2-a09a-da71ac2fe602",
-  "eb4218c2-ed7c-450d-9552-9c600a236756",
+  "eb4218c2-ed7c-450d-9552-9c600a236756",  // K Køleskab
   "eab575b2-86d9-4880-b6b7-b5e19dc1fbd7",
   "fd3cbe60-2d32-4384-93ab-adcbfa63798d",
   "39450196-823f-4816-9c3a-85a2436fa035",
   "18f57e55-ca0d-40e3-87f2-561bab945ae0",
   "e3906379-8e20-47e2-b569-c6d806875f61",
-  "5a27ff62-6e13-4902-aa6f-33c4eb988f0c"
+  "5a27ff62-6e13-4902-aa6f-33c4eb988f0c",
+  "8739bc8c-7058-461b-a7e4-7e6261c8d6dd", // K EVE Motion
+  "d78e0e15-5a6b-4908-be3c-4e5d3dc1a9d6", // B9 Bruser
+  "feb0af82-1133-4604-9579-c00a83178620" // A Weather
 ];
 
 // Helper function to send notification
@@ -131,18 +136,48 @@ async function incrementDeviceCounter(deviceId, deviceName) {
   return null;
 }
 
-// Helper function to get all device error counters
-async function getAllDeviceCounters() {
+// Helper function to update per-device error timestamp
+async function updateDeviceErrorTimestamp(deviceId, deviceName) {
+  const varName = `EveLastError_${deviceId}`;
+  let variable = await getLogicVariable(varName);
+  const now = Date.now();
+
+  if (!variable) {
+    try {
+      await Homey.logic.createVariable({
+        variable: {
+          name: varName,
+          type: 'number',
+          value: now,
+          title: `Eve Last Error: ${deviceName}`
+        }
+      });
+    } catch (error) {
+      log(`⚠️ Failed to create variable ${varName}: ${error.message}`);
+    }
+  } else {
+    await Homey.logic.updateVariable({ id: variable.id, variable: { value: now } });
+  }
+}
+
+// Helper function to get all device stats
+async function getAllDeviceStats() {
   const variables = await Homey.logic.getVariables();
-  const counters = {};
+  const stats = {};
   
   for (const [id, variable] of Object.entries(variables)) {
     if (variable.name.startsWith('EveError_')) {
-      counters[variable.name] = variable.value || 0;
+      const deviceId = variable.name.replace('EveError_', '');
+      if (!stats[deviceId]) stats[deviceId] = { count: 0, lastError: null };
+      stats[deviceId].count = variable.value || 0;
+    } else if (variable.name.startsWith('EveLastError_')) {
+      const deviceId = variable.name.replace('EveLastError_', '');
+      if (!stats[deviceId]) stats[deviceId] = { count: 0, lastError: null };
+      stats[deviceId].lastError = variable.value;
     }
   }
   
-  return counters;
+  return stats;
 }
 
 // Check each Eve device
@@ -184,6 +219,7 @@ if (unavailableDevices.length > 0) {
   log(`\nIncrementing per-device error counters:`);
   for (const deviceInfo of unavailableDeviceDetails) {
     const deviceCounter = await incrementDeviceCounter(deviceInfo.id, deviceInfo.name);
+    await updateDeviceErrorTimestamp(deviceInfo.id, deviceInfo.name);
     if (deviceCounter !== null) {
       log(`  ${deviceInfo.name}: ${deviceCounter} errors`);
     }
@@ -200,12 +236,15 @@ if (unavailableDevices.length > 0) {
   
   // Output all device counters before script ends
   log(`\n📊 Per-Device Error Counters (Total):`);
-  const allCounters = await getAllDeviceCounters();
-  for (const [varName, count] of Object.entries(allCounters)) {
-    const deviceId = varName.replace('EveError_', '');
+  const allStats = await getAllDeviceStats();
+  for (const [deviceId, stats] of Object.entries(allStats)) {
     const device = devices[deviceId];
     const deviceName = device ? device.name : deviceId;
-    log(`  ${deviceName}: ${count}`);
+    let msg = `  ${deviceName}: ${stats.count}`;
+    if (stats.lastError) {
+      msg += ` (Last: ${new Date(stats.lastError).toLocaleString()})`;
+    }
+    log(msg);
   }
   
   return unavailableDevices.length;
@@ -225,12 +264,15 @@ if (unavailableDevices.length > 0) {
     
     // Output all device counters before script ends
     log(`\n📊 Per-Device Error Counters (Total):`);
-    const allCounters = await getAllDeviceCounters();
-    for (const [varName, count] of Object.entries(allCounters)) {
-      const deviceId = varName.replace('EveError_', '');
+    const allStats = await getAllDeviceStats();
+    for (const [deviceId, stats] of Object.entries(allStats)) {
       const device = devices[deviceId];
       const deviceName = device ? device.name : deviceId;
-      log(`  ${deviceName}: ${count}`);
+      let msg = `  ${deviceName}: ${stats.count}`;
+      if (stats.lastError) {
+        msg += ` (Last: ${new Date(stats.lastError).toLocaleString()})`;
+      }
+      log(msg);
     }
     
     return -1; // Indicates recovery
@@ -241,12 +283,15 @@ if (unavailableDevices.length > 0) {
     
     // Output all device counters before script ends
     log(`\n📊 Per-Device Error Counters (Total):`);
-    const allCounters = await getAllDeviceCounters();
-    for (const [varName, count] of Object.entries(allCounters)) {
-      const deviceId = varName.replace('EveError_', '');
+    const allStats = await getAllDeviceStats();
+    for (const [deviceId, stats] of Object.entries(allStats)) {
       const device = devices[deviceId];
       const deviceName = device ? device.name : deviceId;
-      log(`  ${deviceName}: ${count}`);
+      let msg = `  ${deviceName}: ${stats.count}`;
+      if (stats.lastError) {
+        msg += ` (Last: ${new Date(stats.lastError).toLocaleString()})`;
+      }
+      log(msg);
     }
     
     return 0;
