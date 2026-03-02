@@ -7,7 +7,14 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
-// 5.2  2026-02-10  Switch to setCapabilityValue with duration
+// 6.0  2026-02-25  Fix: use Flow Card action for hardware fade
+//                  - setCapabilityValue ignores duration option in HomeyScript
+//                  - Group device has duration:false, members have duration:true
+//                  - Must target individual members via runFlowCardAction
+//                  - URI format: homey:device:ID, not homey:flowcardaction:...
+//                  - Zone-based fallback for groups with different member names
+//                    (e.g. "B9 Lys" → "B9 Wall 1/2/3")
+// 5.2  2026-02-10  Switch to setCapabilityValue with duration (BROKEN)
 //                  - More direct control than Flow Card
 //                  - Fixes issue where duration was ignored on some devices
 // 5.1  2026-01-14  Parallel fade for group members
@@ -22,7 +29,7 @@
 //                  - Timestamp auto-expires (no stale flags)
 //                  - Smooth, precise timing regardless of API latency
 // 4.1  2026-01-07  Fix race condition with RestoreSavedSettings
-// 4.0  2024-12-22  Reusable for any device, accepts device ID as argument
+// 4.0  2025-12-22  Reusable for any device, accepts device ID as argument
 // -------------------------------------------------------------------------
 
 const fadeDuration = 20; // seconds
@@ -76,60 +83,82 @@ if (currentBrightness <= 0.05) {
 }
 
 // Find group members
-async function findGroupMembers(groupName) {
+// Group devices lack button.migrate_v3; individual Zigbee bulbs have it.
+// Strategy 1: Name-based ("SV Loft" → "SV Loft 1/2/3")
+// Strategy 2: Zone-based fallback, only if target is a group ("B9 Lys" → "B9 Wall 1/2/3")
+async function findGroupMembers(groupDevice) {
+  const isGroup = !groupDevice.capabilities?.includes('button.migrate_v3');
   const devices = await Homey.devices.getDevices();
-  const members = [];
-  
-  for (const d of Object.values(devices)) {
-    // Match "GroupName X/Y" pattern
-    if (d.name.startsWith(groupName + ' ') && d.name !== groupName && d.class === 'light') {
-      members.push(d);
+  const allDevices = Object.values(devices);
+
+  // Try name-based first
+  const nameMembers = allDevices.filter(d =>
+    d.name.startsWith(groupDevice.name + ' ') && d.name !== groupDevice.name && d.class === 'light'
+  );
+  if (nameMembers.length > 0) {
+    log(`Group detected by name pattern (${nameMembers.length} members)`);
+    return nameMembers;
+  }
+
+  // Zone fallback — only if target device is a group (no button.migrate_v3)
+  if (isGroup) {
+    const zoneMembers = allDevices.filter(d =>
+      d.zone === groupDevice.zone && d.id !== groupDevice.id && d.class === 'light'
+    );
+    if (zoneMembers.length > 0) {
+      log(`Group detected by zone fallback (${zoneMembers.length} members in same zone)`);
+      return zoneMembers;
     }
   }
-  
-  return members;
+
+  return [];
 }
 
 // Check if it's a group
-const members = await findGroupMembers(device.name);
+const members = await findGroupMembers(device);
 const isGroup = members.length > 0;
+
+// Hardware fade via Flow Card action (duration:true on individual bulbs)
+// Note: Group devices have duration:false, so we always target members individually.
+// Single devices that support duration:true are also handled via flow card.
+
+async function fadeViaFlowCard(targetDevice) {
+  const cardId = `homey:device:${targetDevice.id}:dim`;
+  await Homey.flow.runFlowCardAction({
+    uri: `homey:device:${targetDevice.id}`,
+    id: cardId,
+    args: { dim: 0 },
+    duration: fadeDuration
+  });
+}
 
 if (isGroup) {
   log(`Group detected with ${members.length} members - applying hardware fade to each`);
-  
-  // Start fade on all members simultaneously
+
+  // Start fade on all members simultaneously via flow card
   const fadePromises = members.map(member =>
-    member.setCapabilityValue('dim', 0, { duration: fadeDuration * 1000 })
+    fadeViaFlowCard(member)
+      .then(() => {
+        log(`  ${member.name}: hardware fade started`);
+        return { name: member.name, ok: true };
+      })
       .catch(e => {
-        log(`Warning: Could not start fade on ${member.name}: ${e.message}`);
-        return { error: true };
+        log(`  Warning: ${member.name} failed: ${e.message}`);
+        return { name: member.name, ok: false };
       })
   );
-  
+
   await Promise.all(fadePromises);
-  
+
 } else {
-  // Single device - apply fade directly
-  log(`Single device - applying hardware fade (via capability)`);
-  
+  // Single device - apply fade via flow card
+  log(`Single device - applying hardware fade via flow card`);
+
   try {
-    // Use setCapabilityValue with duration (ms) - often more reliable than flow cards
-    await device.setCapabilityValue('dim', 0, { duration: fadeDuration * 1000 });
+    await fadeViaFlowCard(device);
   } catch (e) {
-    log(`Warning: Capability fade failed: ${e.message}`);
-    // Fallback: try Flow Card
-    try {
-      log(`Attempting Flow Card fallback...`);
-      await Homey.flow.runFlowCardAction({
-        uri: `homey:flowcardaction:homey:device:${deviceId}:dim`,
-        id: `homey:device:${deviceId}:dim`,
-        args: { dim: 0 },
-        duration: fadeDuration
-      });
-    } catch (e2) {
-      log(`Warning: Flow card fade also failed, using instant: ${e2.message}`);
-      await device.setCapabilityValue('dim', 0);
-    }
+    log(`Warning: Flow card fade failed: ${e.message}, using instant`);
+    await device.setCapabilityValue('dim', 0);
   }
 }
 
