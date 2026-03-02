@@ -7,6 +7,16 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 3.6  2026-03-02  Zone-based fallback for group member detection
+//                  - Name-based matching fails for B9 ("B9 Lys" vs "B9 Wall 1/2/3")
+//                  - Zone fallback finds members in same zone when names don't match
+//                  - Matches GradualFadeOut v6.0 group detection logic
+//                  - Ensures hardware fade is properly cancelled on all member bulbs
+// 3.5  2026-03-02  Preserve manual mode on restore
+//                  - Reads _SavedManualMode flag set by GradualFadeOut
+//                  - Sets short-lived _ManualRestoreUntil timestamp
+//                  - Signals AdaptiveLighting to skip profile application
+//                  - Ensures user's manual brightness adjustments survive fade/restore
 // 3.4  2026-02-04  Fix race condition with AdaptiveLighting
 //                  - Clear fade timestamp BEFORE restoring settings
 //                  - Ensures AdaptiveLighting sees cleared flag when triggered by turn-on
@@ -92,24 +102,48 @@ try {
 
   log(`Saved values: dim=${savedDim !== null ? Math.round(savedDim * 100) + '%' : 'N/A'}, temp=${savedTemp !== null ? Math.round(savedTemp * 100) + '%' : 'N/A'}`);
 
-  // Clear timestamp immediately - allows AdaptiveLighting to update to correct profile
-  // Clearing it BEFORE restore ensures that when the light turns on (triggering AL),
-  // AL sees the flag as cleared and applies the correct time-based profile.
+  // Clear fade timestamp - allows AdaptiveLighting to proceed
   global.set(fadeActiveUntilVar, 0);
-  log(`Fade timestamp cleared (allows AdaptiveLighting to update)`);
+  log(`Fade timestamp cleared`);
+
+  // If device was in manual mode before fade, signal AdaptiveLighting to preserve it
+  const wasManualMode = global.get(`${deviceId}_SavedManualMode`);
+  if (wasManualMode) {
+    global.set(`${deviceId}_ManualRestoreUntil`, Date.now() + 10000); // 10s window
+    global.set(`${deviceId}_SavedManualMode`, null); // Consumed
+    log(`Manual mode preserved - AdaptiveLighting will respect restored values`);
+  }
 
   // Find group members (to cancel hardware fade on each)
-  async function findGroupMembers(groupName) {
+  // Group devices lack button.migrate_v3; individual Zigbee bulbs have it.
+  // Strategy 1: Name-based ("SV Loft" → "SV Loft 1/2/3")
+  // Strategy 2: Zone-based fallback, only if target is a group ("B9 Lys" → "B9 Wall 1/2/3")
+  async function findGroupMembers(groupDevice) {
+    const isGroup = !groupDevice.capabilities?.includes('button.migrate_v3');
     const devices = await Homey.devices.getDevices();
-    const members = [];
-    
-    for (const d of Object.values(devices)) {
-      if (d.name.startsWith(groupName + ' ') && d.name !== groupName && d.class === 'light') {
-        members.push(d);
+    const allDevices = Object.values(devices);
+
+    // Try name-based first
+    const nameMembers = allDevices.filter(d =>
+      d.name.startsWith(groupDevice.name + ' ') && d.name !== groupDevice.name && d.class === 'light'
+    );
+    if (nameMembers.length > 0) {
+      log(`Group detected by name pattern (${nameMembers.length} members)`);
+      return nameMembers;
+    }
+
+    // Zone fallback — only if target device is a group (no button.migrate_v3)
+    if (isGroup) {
+      const zoneMembers = allDevices.filter(d =>
+        d.zone === groupDevice.zone && d.id !== groupDevice.id && d.class === 'light'
+      );
+      if (zoneMembers.length > 0) {
+        log(`Group detected by zone fallback (${zoneMembers.length} members in same zone)`);
+        return zoneMembers;
       }
     }
-    
-    return members;
+
+    return [];
   }
 
   // Restore function for a single device
@@ -127,7 +161,7 @@ try {
   }
 
   // Check if it's a group
-  const members = await findGroupMembers(device.name);
+  const members = await findGroupMembers(device);
   const isGroup = members.length > 0;
 
   if (isGroup) {

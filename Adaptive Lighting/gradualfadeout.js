@@ -7,6 +7,10 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.1  2026-03-02  Save manual mode state for restore coordination
+//                  - Reads AdaptiveLighting's manual mode flag before fade
+//                  - Stores as _SavedManualMode for restoresavedsettings.js
+//                  - Enables preserving user adjustments on motion re-detection
 // 6.0  2026-02-25  Fix: use Flow Card action for hardware fade
 //                  - setCapabilityValue ignores duration option in HomeyScript
 //                  - Group device has duration:false, members have duration:true
@@ -72,7 +76,13 @@ if (currentTemperature !== null) {
 const fadeActiveUntil = Date.now() + (fadeDuration * 1000) + 2000; // +2s buffer
 global.set(fadeActiveUntilVar, fadeActiveUntil);
 
-log(`Saved: dim=${Math.round(currentBrightness * 100)}%, temp=${currentTemperature !== null ? Math.round(currentTemperature * 100) + '%' : 'N/A'}`);
+// Save manual mode state from AdaptiveLighting (for restore coordination)
+const alStates = JSON.parse(global.get('AL_DeviceStates') || '{}');
+const alDeviceKey = deviceId.substring(0, 8);
+const wasManualMode = alStates[alDeviceKey]?.manual === true;
+global.set(`${deviceId}_SavedManualMode`, wasManualMode);
+
+log(`Saved: dim=${Math.round(currentBrightness * 100)}%, temp=${currentTemperature !== null ? Math.round(currentTemperature * 100) + '%' : 'N/A'}${wasManualMode ? ' (manual mode)' : ''}`);
 log(`Fade active until: ${new Date(fadeActiveUntil).toLocaleTimeString()}`);
 
 // If light is already off or very dim, just turn it off

@@ -2,12 +2,17 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.14.3
+// Version:     2.15.0
 // Date:        2026-01-14
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.15.0 2026-03-02  Preserve manual adjustments through fade/restore cycle
+//                    - Checks _ManualRestoreUntil flag from RestoreSavedSettings
+//                    - Skips profile application when manual settings were restored
+//                    - Keeps manual mode active so user's brightness persists
+//                    - Coordinated with GradualFadeOut v6.1 and RestoreSavedSettings v3.5
 // 2.14.3 2026-01-14  Prevent "flash of bright light" when turning on
 //                    - Set brightness/temperature WHILE light is off
 //                    - Add 100ms delay for command processing
@@ -1869,7 +1874,24 @@ try {
       reason: 'fade_in_progress'
     };
   }
-  
+
+  // Skip if manual settings were just restored from a fade (v2.15.0)
+  // RestoreSavedSettings sets this flag when restoring a manually-adjusted device.
+  // This prevents AdaptiveLighting from overwriting the user's brightness with the profile.
+  const manualRestoreUntil = global.get(`${DEVICE_ID}_ManualRestoreUntil`) || 0;
+  if (!FORCE_UPDATE && !CLEAR_MANUAL && Date.now() < manualRestoreUntil) {
+    global.set(`${DEVICE_ID}_ManualRestoreUntil`, 0); // Clear flag (one-time use)
+    if (SETTINGS.enableLogging) {
+      const currentBrightnessPct = Math.round((currentBrightness ?? 0) * 100);
+      log(`[${roomName}] ⸏ Manual settings restored from fade - preserving ${currentBrightnessPct}%`);
+    }
+    return {
+      room: roomName,
+      skipped: true,
+      reason: 'manual_restore_from_fade'
+    };
+  }
+
   // Check mode logic
   if (CHECK_MANUAL && !FORCE_UPDATE && currentBrightness !== null) {
     
