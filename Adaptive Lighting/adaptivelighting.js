@@ -345,10 +345,10 @@ const PROFILES = {
   
   // Kids room - earlier bedtime schedule
   kidsRoom: [
-    { name: "Morning",  startTime: "07:00", endTime: "08:00", brightness: 0.35, temperature: 0.7 },
+    { name: "Morning",  startTime: "06:00", endTime: "08:00", brightness: 0.35, temperature: 0.7 },
     { name: "Daytime",  startTime: "08:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
     { name: "Evening",  startTime: "18:00", endTime: "20:00", brightness: 0.35, temperature: 0.7 },
-    { name: "Night",    startTime: "20:00", endTime: "07:00", brightness: 0.05, temperature: 1.0 }
+    { name: "Night",    startTime: "20:00", endTime: "06:00", brightness: 0.05, temperature: 1.0 }
   ],
   
   // Kitchen - bright for cooking, dimmer late evening
@@ -429,11 +429,11 @@ const ROOM_CONFIG = {
   // STUE (Living Room) - Kertemindegade 9
   // =====================================================================
   "fd754abf-4397-45f5-9a68-98d7f079fd7b": {
-    name: "Stue Loft",
+    name: "ST Loft",
     profiles: PROFILES.filament  // Gruppe med 5 filament pærer
   },
   "3f4e2391-3be6-44ee-b340-fcc3219853b2": {
-    name: "Stue Standerlampe",
+    name: "ST Standerlampe",
     profiles: PROFILES.stue  // Gruppe med 2 pærer
   },
   // Stue Lyskæde fjernet - kun on/off, ingen dim
@@ -442,15 +442,15 @@ const ROOM_CONFIG = {
   // SPISESTUE (Dining Room) - Kertemindegade 9
   // =====================================================================
   "18b6f5bf-1666-4bf1-92be-d9cb7e6b74c5": {
-    name: "Spisestue Loft",
+    name: "SS Loft",
     profiles: PROFILES.dining
   },
   "5ccf5881-f665-40f5-bd89-f61e1f926d4c": {
-    name: "Spisestue Bordlampe",
+    name: "SS Bordlampe",
     profiles: PROFILES.dining
   },
   "cc30f76b-7634-489c-a721-541fdb49d46f": {
-    name: "Spisestue Perler",
+    name: "SS Light Perler",
     profiles: PROFILES.dining  // Twinkly
   },
 
@@ -458,7 +458,7 @@ const ROOM_CONFIG = {
   // SOVEVÆRELSE (Bedroom) - Kertemindegade 9
   // =====================================================================
   "cbbd7c60-dc84-43c7-8f0f-790556fc9b14": {
-    name: "Soveværelse Loft",
+    name: "SV Loft",
     profiles: PROFILES.bedroom,              // Weekdays
     weekendProfiles: PROFILES.bedroomWeekend // Weekends - later morning
   },
@@ -467,11 +467,11 @@ const ROOM_CONFIG = {
   // KØKKEN (Kitchen) - Kertemindegade 9
   // =====================================================================
   "f097b38c-cfb0-4b83-8124-59e35f82cd0f": {
-    name: "Køkken Loft",
+    name: "K Loft",
     profiles: PROFILES.kitchen  // Gruppe med 3 pærer
   },
   "0e5d845d-d8ea-4db6-8096-663b0a311e07": {
-    name: "Køkken Køkkenbord",
+    name: "K Bord",
     profiles: PROFILES.kitchen  // Gruppe med 3 pærer
   },
 
@@ -479,7 +479,7 @@ const ROOM_CONFIG = {
   // BADEVÆRELSE 9 (Bathroom) - Kertemindegade 9
   // =====================================================================
   "b8591f4d-a493-4de7-9745-c13cd07e033c": {
-    name: "Badeværelse 9",
+    name: "B9 Lys",
     profiles: PROFILES.bathroom,              // Weekdays
     weekendProfiles: PROFILES.bathroomWeekend // Weekends - gentler morning light
   },
@@ -488,7 +488,7 @@ const ROOM_CONFIG = {
   // BADEVÆRELSE 7 (Bathroom) - Kertemindegade 7
   // =====================================================================
   "1ab9ca1f-60ca-44f9-8221-a03e10f005bf": {
-    name: "Badeværelse 7",
+    name: "B7 Lys",
     profiles: PROFILES.bathroom  // Gruppe
   },
 
@@ -496,12 +496,12 @@ const ROOM_CONFIG = {
   // ENTRE 9 (Entrance) - Kertemindegade 9
   // =====================================================================
   "2656f184-8c87-4434-95a2-fdb3fc36bdd8": {
-    name: "Entre 9 Loft",
+    name: "E9 Loft",
     profiles: PROFILES.entrance,              // Weekdays
     weekendProfiles: PROFILES.entranceWeekend // Weekends - softer morning light
   },
   "e339c184-ea11-4413-bd90-dac726861fd0": {
-    name: "Entre 9 Garderobe",
+    name: "E9 Garderobe",
     profiles: PROFILES.entrance,              // Weekdays
     weekendProfiles: PROFILES.entranceWeekend // Weekends - softer morning light
   },
@@ -510,7 +510,7 @@ const ROOM_CONFIG = {
   // ENTRE 7 (Entrance) - Kertemindegade 7
   // =====================================================================
   "b135fbd5-dda4-4957-9cce-6184fa5c731a": {
-    name: "Entre 7",
+    name: "E7 Lys",
     profiles: PROFILES.entrance
   },
 
@@ -518,7 +518,7 @@ const ROOM_CONFIG = {
   // OLIVERS VÆRELSE (Oliver's Room) - Kertemindegade 9
   // =====================================================================
   "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0": {
-    name: "Olivers Værelse Loft",
+    name: "O Loft",
     profiles: PROFILES.kidsRoom,
     weekendProfiles: PROFILES.kidsRoomWeekend  // Later bedtime on weekends
   },
@@ -527,16 +527,16 @@ const ROOM_CONFIG = {
   // CLARAS VÆRELSE (Clara's Room) - Kertemindegade 7
   // =====================================================================
   "9b15cb64-bf61-494d-be49-f3dcd9dfd0bf": {
-    name: "Claras Værelse Loft",
+    name: "C Loft",
     profiles: PROFILES.kidsRoom,
     weekendProfiles: PROFILES.kidsRoomWeekend  // Later bedtime on weekends
   },
   "5acaab17-7864-4831-b6e2-72bd35588b21": {
-    name: "Claras Værelse LightStrip",
+    name: "C LightStrip",
     profiles: PROFILES.kidsRoom
   },
   "4c34d605-334b-4207-b9a3-1796829b0caf": {
-    name: "Claras Værelse Svampelampe",
+    name: "C Light Svampelampe",
     profiles: PROFILES.kidsRoom  // Kun dim, ingen temperatur
   },
 
@@ -544,7 +544,7 @@ const ROOM_CONFIG = {
   // ALTAN (Balcony)
   // =====================================================================
   "16a55a55-d67b-4b85-9562-cc4f11e12975": {
-    name: "Altan Lyskæde",
+    name: "A Light Lyskæde",
     profiles: PROFILES.standard  // Twinkly
   }
 };
@@ -1520,7 +1520,7 @@ async function applyLightingWithRetry(device, brightness, temperature, profileNa
 const argString = typeof args === 'string' ? args : 
                   (Array.isArray(args) ? args[0] : args?.[0]) || '';
 const argParts = argString.toString().trim().split(/\s+/);
-const DEVICE_ID = argParts[0] || "3f4e2391-3be6-44ee-b340-fcc3219853b2"; // Default: Stue Standerlampe
+const DEVICE_ID = argParts[0] || "3f4e2391-3be6-44ee-b340-fcc3219853b2"; // Default: ST Standerlampe
 const MODE_ARG = (argParts[1] || '').toLowerCase();
 
 const CHECK_MANUAL = MODE_ARG === 'check' || MODE_ARG === 'hourly';
