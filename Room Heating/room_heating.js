@@ -30,11 +30,13 @@
  * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.14.4
+ * Version: 10.14.6
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.14.6 (2026-03-02) - 🐛 Fix: Freeze LastRunTemp during settle delay to prevent false stability
+ * 10.14.5 (2026-02-25) - 🐛 Fix: Window settle delay survives sensor flaps (don't clear on brief open)
  * 10.14.4 (2026-02-04) - 🐛 Fix: Robustly handle object-wrapped sensor values in logging and logic
  * 10.14.3 (2026-02-04) - 🐛 Fix: [object Object] in notifications during override modes
  * 10.14.2 (2026-02-03) - ⏳ Increase minimum smart settling time to 10 minutes (was 2 min)
@@ -2507,8 +2509,9 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
     
     // Track LastRunTemp for stability checking (smart window settling)
     const lastRunTemp = global.get(`${ROOM.zoneName}.Heating.LastRunTemp`);
-    if (roomTemp !== null) {
+    if (roomTemp !== null && !global.get(`${ROOM.zoneName}.Heating.WindowClosedTime`)) {
         // Store current temp for next run's stability check
+        // Skip update during settle delay so stability compares against the temp when window closed
         global.set(`${ROOM.zoneName}.Heating.LastRunTemp`, roomTemp);
     }
 
@@ -2519,12 +2522,14 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
     // windowClosedDelay already defined at top of function using slot override pattern
     
     if (windowOpen) {
-        // Clear any window closed delay if window opens again
+        // Don't clear WindowClosedTime on window open - brief sensor flaps after
+        // physically closing a window would otherwise destroy the settle delay.
+        // WindowClosedTime will be overwritten with a fresh timestamp if the window
+        // truly opens and closes again past the timeout period (line 2581).
         if (windowClosedTime) {
-            global.set(`${ROOM.zoneName}.Heating.WindowClosedTime`, null);
-            log(`ℹ️  Window opened again - cleared settle delay`);
+            log(`ℹ️  Window opened during settle delay - settle preserved until confirmed open`);
         }
-        
+
         if (!windowOpenTime) {
             global.set(`${ROOM.zoneName}.Heating.WindowOpenTime`, Date.now());
             global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, false);
@@ -2667,17 +2672,6 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
                     log(`⚠️ Resume failed or no change - will retry on next run`);
                     return 'window_settle_retry';
                 }
-                
-                // For smart plugs, clear settle delay and continue to hysteresis logic
-                global.set(`${ROOM.zoneName}.Heating.WindowClosedTime`, null);
-                
-                // Suppress notifications when in away mode
-                if (!tadoAway) {
-                    addChange("Air settled");
-                    addChange("Heat resumed");
-                }
-                
-                log(`💡 Smart plugs: Continuing to hysteresis check to determine heating state`);
             }
         }
     }

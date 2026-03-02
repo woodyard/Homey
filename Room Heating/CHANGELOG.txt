@@ -6,6 +6,17 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.14.6 (2026-03-02)
+==============================================
+🐛 Fix: Freeze LastRunTemp during settle delay to prevent false stability
+- LastRunTemp was updated on every script run, including during the settle delay
+- This caused stability checks to compare against recent intermediate temps instead of the temp when the window closed
+- Result: air declared "settled" after just 10 minutes despite 0.3°C rise (19.4→19.7°C)
+- Fix: Skip LastRunTemp update while WindowClosedTime is set (settle delay active)
+- Now stability correctly compares against the temperature recorded when the window closed
+- Files modified: room_heating.js (v10.14.6)
+
+==============================================
 Version 10.14.4 (2026-02-04)
 ==============================================
 🐛 Fix: Robustly handle object-wrapped sensor values in logging and logic

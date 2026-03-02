@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude mcp add:*)",
+      "Bash(claude mcp list:*)",
+      "mcp__claude_ai_Homey__list_flow_condition_cards",
+      "mcp__claude_ai_Homey__list_flows",
+      "mcp__claude_ai_Homey__create_advanced_flow",
+      "mcp__claude_ai_Homey__list_flow_trigger_cards",
+      "mcp__claude_ai_Homey__list_devices"
+    ]
+  }
+}
