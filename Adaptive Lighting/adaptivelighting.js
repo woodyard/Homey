@@ -2,12 +2,21 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.15.0
-// Date:        2026-01-14
+// Version:     2.16.0
+// Date:        2026-03-14
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.16.0 2026-03-14  Fix mid-fade dim lights on motion detection
+//                    - Normal mode (light turn-on) no longer skips for active fade
+//                    - Only check mode (hourly updates) respects fade flag
+//                    - Fixes lights stuck at 5-30% when entering room during fade-out
+//                    - ManualRestoreUntil flag still protects manual brightness
+// 2.15.1 2026-03-04  Persistent diagnostic logging (AL_DiagnostikLog)
+//                    - Logs profile apply, fade-skip, and manual-restore-skip events
+//                    - Shared log variable with GradualFadeOut and RestoreSavedSettings
+//                    - Helps diagnose unexpected dim-light issues across profile transitions
 // 2.15.0 2026-03-02  Preserve manual adjustments through fade/restore cycle
 //                    - Checks _ManualRestoreUntil flag from RestoreSavedSettings
 //                    - Skips profile application when manual settings were restored
@@ -594,6 +603,20 @@ const SETTINGS = {
 // ====== SUN TIMES CACHE ======
 // Populated once per script run by fetchSunTimesFromHomey()
 let CACHED_SUN_TIMES = null;
+
+// ====== PERSISTENT DIAGNOSTIC LOG ======
+// Shared log across GradualFadeOut, RestoreSavedSettings, and AdaptiveLighting.
+// All three scripts append to the same global variable: AL_DiagnostikLog
+// See GradualFadeOut header comment for full format and action descriptions.
+// Max 500 lines retained. Read via: global.get('AL_DiagnostikLog')
+function diagLog(entry) {
+  const now = new Date().toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen', hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
+  const logText = global.get('AL_DiagnostikLog') || '';
+  const newEntry = `${now} | ${entry}\n`;
+  const lines = (logText + newEntry).split('\n').filter(l => l.length > 0);
+  const trimmed = lines.slice(-500).join('\n') + '\n';
+  global.set('AL_DiagnostikLog', trimmed);
+}
 
 // ====== HELPER FUNCTIONS ======
 
@@ -1862,12 +1885,15 @@ try {
   const currentBrightness = device.capabilitiesObj?.dim?.value ?? null;
   const currentTemperature = device.capabilitiesObj?.light_temperature?.value ?? null;
   
-  // Skip if device is in a fade/restore operation (applies to ALL modes, not just check)
-  // This prevents overriding brightness after RestoreSavedSettings runs
-  if (!FORCE_UPDATE && !CLEAR_MANUAL && isDeviceFading(DEVICE_ID)) {
+  // Skip if device is in a fade/restore operation (check mode only)
+  // In check mode: don't interfere with ongoing fades
+  // In normal mode (light turn-on): always apply profile - the user is there and wants light
+  // The _ManualRestoreUntil flag (checked below) handles preserving manual brightness
+  if (!FORCE_UPDATE && !CLEAR_MANUAL && CHECK_MANUAL && isDeviceFading(DEVICE_ID)) {
     if (SETTINGS.enableLogging) {
-      log(`[${roomName}] ⸏ Skipping - fade/restore in progress`);
+      log(`[${roomName}] ⸏ Skipping check - fade/restore in progress`);
     }
+    diagLog(`AL-SKIP-FADE | ${roomName} | currentDim=${Math.round((currentBrightness ?? 0) * 100)}% | mode=check`);
     return {
       room: roomName,
       skipped: true,
@@ -1881,10 +1907,11 @@ try {
   const manualRestoreUntil = global.get(`${DEVICE_ID}_ManualRestoreUntil`) || 0;
   if (!FORCE_UPDATE && !CLEAR_MANUAL && Date.now() < manualRestoreUntil) {
     global.set(`${DEVICE_ID}_ManualRestoreUntil`, 0); // Clear flag (one-time use)
+    const currentBrightnessPct = Math.round((currentBrightness ?? 0) * 100);
     if (SETTINGS.enableLogging) {
-      const currentBrightnessPct = Math.round((currentBrightness ?? 0) * 100);
       log(`[${roomName}] ⸏ Manual settings restored from fade - preserving ${currentBrightnessPct}%`);
     }
+    diagLog(`AL-SKIP-MANUAL | ${roomName} | preserving dim=${currentBrightnessPct}% | ManualRestoreUntil was ${Math.round((manualRestoreUntil - Date.now()) / 1000)}s from now | mode=${CHECK_MANUAL ? 'check' : 'normal'}`);
     return {
       room: roomName,
       skipped: true,
@@ -1895,18 +1922,8 @@ try {
   // Check mode logic
   if (CHECK_MANUAL && !FORCE_UPDATE && currentBrightness !== null) {
     
-    // Skip if device is currently fading
-    if (isDeviceFading(DEVICE_ID)) {
-      if (SETTINGS.enableDetailedLogging) {
-        log(`[${roomName}] ⸏ Skipping check - fade operation in progress`);
-      }
-      return {
-        room: roomName,
-        skipped: true,
-        reason: 'fade_in_progress'
-      };
-    }
-    
+    // Note: fade check for check mode is handled above (before check mode block)
+
     // Check if device has a forced profile active
     const forcedProfileIndex = getForcedProfile(DEVICE_ID);
     if (forcedProfileIndex !== null) {
@@ -2149,7 +2166,9 @@ try {
   }
   const weekendIndicator = roomConfig.usingWeekendProfile ? ' [Weekend]' : '';
   const message = `[${roomName}] ${activeProfile.name} → ${brightnessPercent}% / ${tempDesc}${weekendIndicator}${modeIndicator}`;
-  
+
+  diagLog(`AL-APPLY | ${roomName} | ${activeProfile.name} | dim=${brightnessPercent}% temp=${tempPercent}% | mode=${CHECK_MANUAL ? 'check' : FORCE_UPDATE ? 'force' : CLEAR_MANUAL ? 'clear' : 'normal'}${weekendIndicator}`);
+
   // Only log when in check mode (not when light turns on)
   if (SETTINGS.enableLogging && CHECK_MANUAL) {
     log(message);
