@@ -71,16 +71,16 @@ const ROOMS = {
         schedules: {
             weekday: [
                 { start: '00:00', end: '06:00', target: 20, inactivityOffset: 0, name: 'Night' },
-                { start: '06:00', end: '14:00', target: 22.5, inactivityOffset: 2.5, name: 'School' },
-                { start: '14:00', end: '20:00', target: 22.5, inactivityOffset: 2.0, name: 'Day' }
+                { start: '06:00', end: '14:00', target: 22.0, inactivityOffset: 2.5, name: 'School' },
+                { start: '14:00', end: '20:00', target: 22.0, inactivityOffset: 2.0, name: 'Day' }
             ],
             weekend: [
                 { start: '00:00', end: '08:00', target: 20, inactivityOffset: 0, name: 'Night' },
-                { start: '08:00', end: '21:00', target: 22.5, inactivityOffset: 2.0, name: 'Day' }
+                { start: '08:00', end: '21:00', target: 22.0, inactivityOffset: 2.0, name: 'Day' }
             ],
             holiday: [
                 { start: '00:00', end: '08:00', target: 20, inactivityOffset: 0, name: 'Night' },
-                { start: '08:00', end: '21:00', target: 22.5, inactivityOffset: 2.0, name: 'Day' }
+                { start: '08:00', end: '21:00', target: 22.0, inactivityOffset: 2.0, name: 'Day' }
             ],
             earlyEvening: { start: '20:00', end: '23:59', target: 20, inactivityOffset: 0, name: 'Evening' },
             lateEvening: { start: '21:00', end: '23:59', target: 20, inactivityOffset: 0, name: 'Evening' }

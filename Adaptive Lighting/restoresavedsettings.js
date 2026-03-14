@@ -7,6 +7,10 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 3.7  2026-03-04  Persistent diagnostic logging (AL_DiagnostikLog)
+//                  - Logs restore events with timestamp, device, brightness, manual mode
+//                  - Shared log variable with GradualFadeOut and AdaptiveLighting
+//                  - Helps diagnose unexpected dim-light issues across profile transitions
 // 3.6  2026-03-02  Zone-based fallback for group member detection
 //                  - Name-based matching fails for B9 ("B9 Lys" vs "B9 Wall 1/2/3")
 //                  - Zone fallback finds members in same zone when names don't match
@@ -44,6 +48,20 @@
 const SETTINGS = {
   enableDetailedLogging: false
 };
+
+// ====== PERSISTENT DIAGNOSTIC LOG ======
+// Shared log across GradualFadeOut, RestoreSavedSettings, and AdaptiveLighting.
+// All three scripts append to the same global variable: AL_DiagnostikLog
+// See GradualFadeOut header comment for full format and action descriptions.
+// Max 500 lines retained. Read via: global.get('AL_DiagnostikLog')
+function diagLog(entry) {
+  const now = new Date().toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen', hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
+  const logText = global.get('AL_DiagnostikLog') || '';
+  const newEntry = `${now} | ${entry}\n`;
+  const lines = (logText + newEntry).split('\n').filter(l => l.length > 0);
+  const trimmed = lines.slice(-500).join('\n') + '\n';
+  global.set('AL_DiagnostikLog', trimmed);
+}
 
 try {
   // Get device ID from argument, or use default (Bathroom 9)
@@ -93,6 +111,8 @@ try {
       log(`Fade expired ${Math.round((now - fadeActiveUntil) / 1000)}s ago - skipping restore`);
     }
     log('No active fade - skipping restore');
+    const staleVal = global.get(savedDimVar);
+    diagLog(`RESTORE-SKIP | ${device.name} | no active fade (expired ${Math.round((now - fadeActiveUntil) / 1000)}s ago) | stale saved dim=${staleVal !== null ? Math.round(staleVal * 100) + '%' : 'N/A'}`);
     return `${device.name}: No fade in progress, nothing to restore`;
   }
 
@@ -113,6 +133,8 @@ try {
     global.set(`${deviceId}_SavedManualMode`, null); // Consumed
     log(`Manual mode preserved - AdaptiveLighting will respect restored values`);
   }
+
+  diagLog(`RESTORE | ${device.name} | dim=${savedDim !== null ? Math.round(savedDim * 100) + '%' : 'N/A'} temp=${savedTemp !== null ? Math.round(savedTemp * 100) + '%' : 'N/A'} | manual=${!!wasManualMode} | fadeRemaining=${Math.round((fadeActiveUntil - now) / 1000)}s`);
 
   // Find group members (to cancel hardware fade on each)
   // Group devices lack button.migrate_v3; individual Zigbee bulbs have it.

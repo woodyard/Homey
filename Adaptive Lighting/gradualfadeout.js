@@ -7,6 +7,10 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.2  2026-03-04  Persistent diagnostic logging (AL_DiagnostikLog)
+//                  - Logs fade events with timestamp, device, brightness, manual mode
+//                  - Shared log variable with RestoreSavedSettings and AdaptiveLighting
+//                  - Helps diagnose unexpected dim-light issues across profile transitions
 // 6.1  2026-03-02  Save manual mode state for restore coordination
 //                  - Reads AdaptiveLighting's manual mode flag before fade
 //                  - Stores as _SavedManualMode for restoresavedsettings.js
@@ -37,6 +41,28 @@
 // -------------------------------------------------------------------------
 
 const fadeDuration = 20; // seconds
+
+// ====== PERSISTENT DIAGNOSTIC LOG ======
+// Shared log across GradualFadeOut, RestoreSavedSettings, and AdaptiveLighting.
+// All three scripts append to the same global variable: AL_DiagnostikLog
+// Format: "DD.MM HH:MM:SS | ACTION | DeviceName | details..."
+// Actions logged:
+//   FADE-SAVE  (GradualFadeOut)   - brightness/temp saved before fade, manual mode state
+//   FADE-SKIP  (GradualFadeOut)   - light already off, no fade needed
+//   RESTORE    (RestoreSavedSettings) - brightness/temp restored, manual mode preserved
+//   RESTORE-SKIP (RestoreSavedSettings) - fade expired, nothing to restore
+//   AL-SKIP-FADE (AdaptiveLighting) - skipped because fade/restore in progress
+//   AL-SKIP-MANUAL (AdaptiveLighting) - skipped because ManualRestoreUntil active
+//   AL-APPLY   (AdaptiveLighting) - profile applied (brightness/temp/profile name)
+// Max 500 lines retained (oldest trimmed). Read via: global.get('AL_DiagnostikLog')
+function diagLog(entry) {
+  const now = new Date().toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen', hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
+  const logText = global.get('AL_DiagnostikLog') || '';
+  const newEntry = `${now} | ${entry}\n`;
+  const lines = (logText + newEntry).split('\n').filter(l => l.length > 0);
+  const trimmed = lines.slice(-500).join('\n') + '\n';
+  global.set('AL_DiagnostikLog', trimmed);
+}
 
 // Get device ID from argument, or use default (Bathroom 9)
 const deviceId = args[0] || "b8591f4d-a493-4de7-9745-c13cd07e033c";
@@ -84,11 +110,13 @@ global.set(`${deviceId}_SavedManualMode`, wasManualMode);
 
 log(`Saved: dim=${Math.round(currentBrightness * 100)}%, temp=${currentTemperature !== null ? Math.round(currentTemperature * 100) + '%' : 'N/A'}${wasManualMode ? ' (manual mode)' : ''}`);
 log(`Fade active until: ${new Date(fadeActiveUntil).toLocaleTimeString()}`);
+diagLog(`FADE-SAVE | ${device.name} | dim=${Math.round(currentBrightness * 100)}% temp=${currentTemperature !== null ? Math.round(currentTemperature * 100) + '%' : 'N/A'} | manual=${wasManualMode} | fadeUntil=${new Date(fadeActiveUntil).toLocaleTimeString('da-DK', { timeZone: 'Europe/Copenhagen' })}`);
 
 // If light is already off or very dim, just turn it off
 if (currentBrightness <= 0.05) {
   await device.setCapabilityValue('onoff', false);
   global.set(fadeActiveUntilVar, 0); // Clear - no fade needed
+  diagLog(`FADE-SKIP | ${device.name} | already off/very dim (${Math.round(currentBrightness * 100)}%)`);
   return `${device.name}: Already off or very dim`;
 }
 
