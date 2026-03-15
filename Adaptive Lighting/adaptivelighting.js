@@ -426,7 +426,7 @@ const PROFILES = {
   
   // Entrance weekend - softer morning light, later start
   entranceWeekend: [
-    { name: "Morning",  startTime: "08:30", endTime: "10:00", brightness: 0.25, temperature: 0.8 },
+    { name: "Morning",  startTime: "08:30", endTime: "10:00", brightness: 0.35, temperature: 0.8 },
     { name: "Daytime",  startTime: "10:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
     { name: "Evening",  startTime: "18:00", endTime: "23:00", brightness: 0.4,  temperature: 0.7 },
     { name: "Night",    startTime: "23:00", endTime: "07:00", brightness: 0.10, temperature: 1.0 }
