@@ -6,6 +6,37 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 4.11.0 / Status (2026-03-15)
+==============================================
+🔧 Auto-discover heating devices in status script (matches heating v10.15.0)
+- getZoneDevices() now auto-discovers heating devices by zone instead of using hardcoded IDs
+- Smart plugs: discovered via virtualClass/class 'heater'
+- TADO valves: discovered via tado_heating_power capability
+- Removed heatingDeviceIds parameter from getZoneDevices()
+- Files modified: room_heating_status.js (v4.11.0)
+
+==============================================
+Version 10.15.0 (2026-03-15)
+==============================================
+🔧 Auto-discover heating devices by zone (no more hardcoded device IDs)
+- Smart plugs: discovers devices with virtualClass/class 'heater' (Plugged In = Heater)
+- TADO valves: discovers devices with tado_heating_power capability
+- Device IDs removed from room_heating_config.js — devices found dynamically at startup
+- Eliminates stale device ID issues when devices are re-paired or replaced
+- Files modified: room_heating.js (v10.15.0), room_heating_config.js
+
+==============================================
+Version 10.14.7 (2026-03-15)
+==============================================
+🔕 Suppress duplicate notifications (30 min cooldown for identical changes)
+- After a false motion trigger resets inactivity timer, the script would repeatedly
+  try to turn on heating and send "Heat on" notifications until the 30-min timeout
+- Now tracks last notification changes and timestamp per room via global state
+- Identical notifications are suppressed for 30 minutes (logged as suppressed)
+- Different changes (schedule, window, inactivity, etc.) still notify immediately
+- Files modified: room_heating.js (v10.14.7)
+
+==============================================
 Version 10.14.6 (2026-03-02)
 ==============================================
 🐛 Fix: Freeze LastRunTemp during settle delay to prevent false stability

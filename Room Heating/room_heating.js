@@ -30,11 +30,13 @@
  * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.14.6
+ * Version: 10.15.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.15.0 (2026-03-15) - 🔧 Auto-discover heating devices by zone (no more hardcoded device IDs)
+ * 10.14.7 (2026-03-15) - 🔕 Suppress duplicate notifications (30 min cooldown for identical changes)
  * 10.14.6 (2026-03-02) - 🐛 Fix: Freeze LastRunTemp during settle delay to prevent false stability
  * 10.14.5 (2026-02-25) - 🐛 Fix: Window settle delay survives sensor flaps (don't clear on brief open)
  * 10.14.4 (2026-02-04) - 🐛 Fix: Robustly handle object-wrapped sensor values in logging and logic
@@ -133,6 +135,44 @@ if (!roomArg) {
 
 const ROOM = ROOMS[roomArg];
 log(`🏠 Running heating control for: ${roomArg} (${ROOM.zoneName})`);
+
+// ============================================================================
+// Auto-discover heating devices in zone
+// ============================================================================
+
+async function discoverHeatingDevices() {
+    const zone = await getZoneByName(ROOM.zoneName);
+    if (!zone) {
+        throw new Error(`❌ Zone "${ROOM.zoneName}" not found - cannot discover heating devices`);
+    }
+
+    const allDevices = await Homey.devices.getDevices();
+    const zoneDevices = Object.values(allDevices).filter(d => d.zone === zone.id);
+
+    let discovered = [];
+
+    if (ROOM.heating.type === 'smart_plug') {
+        // Find smart plugs configured as heaters (Plugged In = Heater → virtualClass = 'heater')
+        discovered = zoneDevices
+            .filter(d => d.virtualClass === 'heater' || d.class === 'heater')
+            .map(d => d.id);
+        log(`🔌 Discovered ${discovered.length} heater(s): ${zoneDevices.filter(d => d.virtualClass === 'heater' || d.class === 'heater').map(d => d.name).join(', ')}`);
+    } else if (ROOM.heating.type === 'tado_valve') {
+        // Find TADO valves (devices with tado_heating_power capability)
+        discovered = zoneDevices
+            .filter(d => d.capabilitiesObj?.tado_heating_power !== undefined)
+            .map(d => d.id);
+        log(`🔥 Discovered ${discovered.length} TADO valve(s): ${zoneDevices.filter(d => d.capabilitiesObj?.tado_heating_power !== undefined).map(d => d.name).join(', ')}`);
+    }
+
+    if (discovered.length === 0) {
+        throw new Error(`❌ No ${ROOM.heating.type} heating devices found in zone "${ROOM.zoneName}"`);
+    }
+
+    return discovered;
+}
+
+ROOM.heating.devices = await discoverHeatingDevices();
 
 // Check for boost/pause/cancel request
 const requestBoost = boostArg === 'boost';
@@ -2368,7 +2408,22 @@ async function sendUnifiedNotification(status) {
     if (changes.length === 0) {
         return;
     }
-    
+
+    // Deduplicate: suppress notification if identical changes were sent recently (within 30 min)
+    const NOTIFICATION_COOLDOWN_MS = 30 * 60 * 1000;
+    const changesKey = [...changes].sort().join('|');
+    const lastNotifKey = global.get(`${ROOM.zoneName}.Heating.LastNotificationKey`);
+    const lastNotifTime = global.get(`${ROOM.zoneName}.Heating.LastNotificationTime`) || 0;
+    const timeSinceLast = Date.now() - lastNotifTime;
+
+    if (changesKey === lastNotifKey && timeSinceLast < NOTIFICATION_COOLDOWN_MS) {
+        log(`🔕 Notification suppressed (duplicate "${changesKey}" sent ${Math.floor(timeSinceLast / 60000)} min ago)`);
+        return;
+    }
+
+    global.set(`${ROOM.zoneName}.Heating.LastNotificationKey`, changesKey);
+    global.set(`${ROOM.zoneName}.Heating.LastNotificationTime`, Date.now());
+
     try {
         const lines = [];
         lines.push(`🏠 ${roomArg} - Heating Update`);

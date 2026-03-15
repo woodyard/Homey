@@ -11,10 +11,11 @@
  *   3. Heating and status scripts automatically use the saved config
  *
  * Author: Henrik Skovgaard
- * Version: 1.0.7
+ * Version: 1.1.0
  * Created: 2025-12-31
  *
  * Version History:
+ * 1.1.0 (2026-03-15) - 🔧 Remove hardcoded device IDs (now auto-discovered by zone)
  * 1.0.7 (2026-02-01) - 🌡️ Update default windowClosedDelay to 30 min (for smart settling logic)
  * 1.0.6 (2026-01-23) - 📚 Add schoolCalendarUrl for direct Skoleintra calendar access
  * 1.0.5 (2026-01-17) - 🎛️ Unified slot-override architecture
@@ -62,11 +63,7 @@ const ROOMS = {
         zoneName: 'Claras værelse',
         heating: {
             type: 'smart_plug',
-            hysteresis: 0.5,  // ±0.25°C margin around target
-            devices: [
-                '7a22bb22-f50d-44b7-8d24-63fac3aed878',  // C Radiator 1
-                '5908b040-b605-4711-936a-6a5f03be68de'   // C Radiator 2
-            ]
+            hysteresis: 0.5  // ±0.25°C margin around target
         },
         schedules: {
             weekday: [
@@ -98,8 +95,7 @@ const ROOMS = {
     'Oliver': {
         zoneName: 'Olivers værelse',
         heating: {
-            type: 'tado_valve',
-            devices: ['eee3d502-3cac-41b6-8c02-a55ad2380e77']   // Skovgaard / Oliver
+            type: 'tado_valve'
         },
         schedules: {
             weekday: [
@@ -130,8 +126,7 @@ const ROOMS = {
     'Soveværelse': {
         zoneName: 'Soveværelse',
         heating: {
-            type: 'tado_valve',
-            devices: ['439be454-0e4e-4835-b51c-a83a1d78e9f1']   // Skovgaard / Soveværelse
+            type: 'tado_valve'
         },
         schedules: {
             weekday: [
@@ -162,8 +157,7 @@ const ROOMS = {
      'Stue': {
         zoneName: 'Stue / Spisestue',
         heating: {
-            type: 'tado_valve',
-            devices: ['2ca14bef-8a28-43cc-af70-0d0611f5281f']   // Skovgaard / Stue
+            type: 'tado_valve'
         },
         schedules: {
             weekday: [
@@ -232,14 +226,13 @@ log(`✅ Saved GLOBAL configuration`);
 
 // Save metadata
 global.set('Config.LastUpdate', new Date().toISOString());
-global.set('Config.Version', '1.0.7');
+global.set('Config.Version', '1.1.0');
 
 log('\n══ CONFIGURED ROOMS ══');
 for (const [roomName, roomConfig] of Object.entries(ROOMS)) {
     log(`📍 ${roomName}:`);
     log(`   Zone: ${roomConfig.zoneName}`);
     log(`   Type: ${roomConfig.heating.type}`);
-    log(`   Devices: ${roomConfig.heating.devices.length}`);
     log(`   Weekday target: ${roomConfig.schedules.weekday.find(s => s.name === 'Day')?.target}°C`);
     log(`   Weekend target: ${roomConfig.schedules.weekend.find(s => s.name === 'Day')?.target}°C`);
     log(`   TADO away: ${roomConfig.settings.tadoAwayMinTemp}°C`);

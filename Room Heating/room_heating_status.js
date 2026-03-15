@@ -5,11 +5,16 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 4.10.1
+ * Version: 4.11.0
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
  * Version History:
+ * 4.11.0 (2026-03-15) - 🔧 Auto-discover heating devices by zone (matches heating v10.15.0)
+ *   - Removed dependency on hardcoded device IDs from config
+ *   - Smart plugs discovered via virtualClass='heater' in zone
+ *   - TADO valves discovered via tado_heating_power capability in zone
+ *   - getZoneDevices() no longer requires device ID parameter
  * 4.10.1 (2026-01-27) - 📊 Show school calendar cache info (matches heating v10.13.1)
  * 4.10.0 (2026-01-23) - 📚 Direct Skoleintra calendar fetch with caching (matches heating v10.13.0)
  * 4.9.0 (2026-01-18) - 📊 Show device queue status (matches heating v10.9.0)
@@ -163,48 +168,40 @@ async function getZoneAndChildDevices(zone) {
     return Object.values(devices).filter(d => zoneIds.includes(d.zone));
 }
 
-async function getZoneDevices(zoneName, heatingDeviceIds, roomConfig) {
+async function getZoneDevices(zoneName, roomConfig) {
     try {
         const zone = await getZoneByName(zoneName);
         if (!zone) {
             return { error: `Zone "${zoneName}" not found` };
         }
-        
+
         // Get devices from zone and all child zones
         const zoneDevices = await getZoneAndChildDevices(zone);
-        
+
+        // Auto-discover heating devices by type
+        let heatingDevices = [];
+        if (roomConfig.heating.type === 'smart_plug') {
+            heatingDevices = zoneDevices.filter(d => d.virtualClass === 'heater' || d.class === 'heater');
+        } else if (roomConfig.heating.type === 'tado_valve') {
+            heatingDevices = zoneDevices.filter(d => d.capabilitiesObj?.tado_heating_power !== undefined);
+        }
+
         // Find temperature sensor with priority logic
         let tempSensor = null;
-        
-        // PRIORITY 1: For TADO rooms, get TADO device directly by ID (may be in different zone)
-        if (roomConfig.heating.type === 'tado_valve') {
-            try {
-                const tadoDevice = await Homey.devices.getDevice({ id: heatingDeviceIds[0] });
-                
-                if (tadoDevice.capabilitiesObj?.measure_temperature) {
-                    tempSensor = tadoDevice;
-                }
-            } catch (tadoError) {
-                // TADO device not found or has no temp sensor, fall back to zone sensor
+
+        // PRIORITY 1: For TADO rooms, use the TADO device itself as temp sensor
+        if (roomConfig.heating.type === 'tado_valve' && heatingDevices.length > 0) {
+            const tadoDevice = heatingDevices[0];
+            if (tadoDevice.capabilitiesObj?.measure_temperature) {
+                tempSensor = tadoDevice;
             }
         }
-        
+
         // PRIORITY 2: Fall back to any temperature sensor in zone
         if (!tempSensor) {
             tempSensor = zoneDevices.find(d => d.capabilitiesObj?.measure_temperature);
         }
-        
-        // Get heating devices directly by ID (may not be in same zone)
-        const heatingDevices = [];
-        for (const deviceId of heatingDeviceIds) {
-            try {
-                const device = await Homey.devices.getDevice({ id: deviceId });
-                heatingDevices.push(device);
-            } catch (error) {
-                // Device not found, skip it
-            }
-        }
-        
+
         return {
             zone: zone,
             tempSensor: tempSensor,
@@ -518,7 +515,7 @@ async function showRoomStatus(roomName, roomConfig) {
     log(`║          ${roomName.toUpperCase()}'S HEATING SYSTEM - STATUS${' '.repeat(Math.max(0, 26 - roomName.length))}║`);
     log('╚═══════════════════════════════════════════════════════════════╝\n');
     // Get all devices for this zone
-    const devices = await getZoneDevices(ZONE_NAME, roomConfig.heating.devices, roomConfig);
+    const devices = await getZoneDevices(ZONE_NAME, roomConfig);
     
     if (devices.error) {
         log(`❌ Error: ${devices.error}\n`);
