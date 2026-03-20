@@ -7,6 +7,9 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 3.8  2026-03-20  Clear stale saved values when fade has expired
+//                  - On skip (no active fade), clears _SavedDim, _SavedTemp, _SavedManualMode
+//                  - Prevents stale values from being accidentally restored later
 // 3.7  2026-03-04  Persistent diagnostic logging (AL_DiagnostikLog)
 //                  - Logs restore events with timestamp, device, brightness, manual mode
 //                  - Shared log variable with GradualFadeOut and AdaptiveLighting
@@ -113,6 +116,16 @@ try {
     log('No active fade - skipping restore');
     const staleVal = global.get(savedDimVar);
     diagLog(`RESTORE-SKIP | ${device.name} | no active fade (expired ${Math.round((now - fadeActiveUntil) / 1000)}s ago) | stale saved dim=${staleVal !== null ? Math.round(staleVal * 100) + '%' : 'N/A'}`);
+
+    // Clean up stale saved values from completed fade (v3.8)
+    if (staleVal !== null) {
+      global.set(savedDimVar, null);
+      global.set(savedTempVar, null);
+      global.set(fadeActiveUntilVar, 0);
+      global.set(`${deviceId}_SavedManualMode`, null);
+      log('Cleared stale saved values from completed fade');
+    }
+
     return `${device.name}: No fade in progress, nothing to restore`;
   }
 
