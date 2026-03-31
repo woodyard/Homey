@@ -2,12 +2,17 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.16.1
-// Date:        2026-03-20
+// Version:     2.17.0
+// Date:        2026-03-30
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.17.0 2026-03-30  Simplify normal mode: OFF→ON always applies profile
+//                    - Removed 500ms wait + ManualRestoreUntil logic for normal mode
+//                    - Only skip if fade is actively in progress (let restore handle it)
+//                    - Once lights are off, any turn-on gets the profile. No exceptions.
+//                    - Check mode unchanged (still uses isDeviceFading + manual mode)
 // 2.16.1 2026-03-20  Fix lights snapping back to profile brightness during fade
 //                    - Normal mode checks only _FadeActiveUntil (external fades)
 //                    - Does NOT check AL_Fade_ (AL's own transitions would false-block)
@@ -1910,46 +1915,22 @@ try {
     };
   }
 
-  // Normal mode: check only external fade (GradualFadeOut / room_watchdog)
-  const externalFadeUntil = global.get(`${DEVICE_ID}_FadeActiveUntil`) || 0;
-  if (!FORCE_UPDATE && !CLEAR_MANUAL && !CHECK_MANUAL && Date.now() < externalFadeUntil) {
-    // Wait briefly for RestoreSavedSettings to clear the flag (it runs on motion)
-    await new Promise(resolve => setTimeout(resolve, 500));
-    const stillFading = Date.now() < (global.get(`${DEVICE_ID}_FadeActiveUntil`) || 0);
-    if (stillFading) {
-      // Fade still active after 500ms → no restore happened → spurious trigger
+  // Normal mode: only skip if a fade is actively in progress
+  // During a fade, RestoreSavedSettings handles the restore — AL stays out of the way.
+  // Once the fade completes and lights are off, any turn-on always applies the profile.
+  if (!FORCE_UPDATE && !CLEAR_MANUAL && !CHECK_MANUAL) {
+    const externalFadeUntil = global.get(`${DEVICE_ID}_FadeActiveUntil`) || 0;
+    if (Date.now() < externalFadeUntil) {
       if (SETTINGS.enableLogging) {
-        log(`[${roomName}] ⸏ Skipping - external fade in progress, no restore detected`);
+        log(`[${roomName}] ⸏ Skipping - fade in progress, restore will handle`);
       }
-      diagLog(`AL-SKIP-FADE | ${roomName} | currentDim=${Math.round((currentBrightness ?? 0) * 100)}% | mode=normal (no restore detected)`);
+      diagLog(`AL-SKIP-FADE | ${roomName} | currentDim=${Math.round((currentBrightness ?? 0) * 100)}% | mode=normal (fade active)`);
       return {
         room: roomName,
         skipped: true,
         reason: 'fade_in_progress'
       };
     }
-    // Fade flag was cleared → RestoreSavedSettings ran → proceed with profile
-    if (SETTINGS.enableLogging) {
-      log(`[${roomName}] Fade cleared by restore - proceeding with profile`);
-    }
-  }
-
-  // Skip if manual settings were just restored from a fade (v2.15.0)
-  // RestoreSavedSettings sets this flag when restoring a manually-adjusted device.
-  // This prevents AdaptiveLighting from overwriting the user's brightness with the profile.
-  const manualRestoreUntil = global.get(`${DEVICE_ID}_ManualRestoreUntil`) || 0;
-  if (!FORCE_UPDATE && !CLEAR_MANUAL && Date.now() < manualRestoreUntil) {
-    global.set(`${DEVICE_ID}_ManualRestoreUntil`, 0); // Clear flag (one-time use)
-    const currentBrightnessPct = Math.round((currentBrightness ?? 0) * 100);
-    if (SETTINGS.enableLogging) {
-      log(`[${roomName}] ⸏ Manual settings restored from fade - preserving ${currentBrightnessPct}%`);
-    }
-    diagLog(`AL-SKIP-MANUAL | ${roomName} | preserving dim=${currentBrightnessPct}% | ManualRestoreUntil was ${Math.round((manualRestoreUntil - Date.now()) / 1000)}s from now | mode=${CHECK_MANUAL ? 'check' : 'normal'}`);
-    return {
-      room: roomName,
-      skipped: true,
-      reason: 'manual_restore_from_fade'
-    };
   }
 
   // Check mode logic

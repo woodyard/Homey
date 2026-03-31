@@ -6,6 +6,58 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 10.16.0 (2026-03-31)
+==============================================
+🔄 Refactor: Unified room state object (replaces 20+ scattered global variables)
+- Root cause of recurring false manual detection bugs: mode and baseline state
+  was spread across 20+ individual global.get()/global.set() calls (ManualOverrideMode,
+  BoostMode, PauseMode, LastVerifiedOnOff, LastVerifiedTargetTemp, LastCommandedOnOff,
+  WindowOpenTime, etc.). Each mode transition required manually clearing 5+ variables,
+  and missing any single one caused false positives. The changelog has 15+ entries
+  fixing this same category of bug.
+- Solution: Single JSON state object per room stored as ${zoneName}.Heating.State:
+  { mode, modeExpires, modeDetails, away, awaySince, baseline: { verifiedOnOff,
+    verifiedTargetTemp, commandedOnOff, lastChangeTime }, window: { openSince,
+    closedSince, timeoutHandled }, inactive, lastRunTemp, notification: { lastKey,
+    lastTime } }
+- transitionMode(state, newMode, params) handles ALL mode transitions, automatically
+  clearing baselines — eliminates the entire class of "forgot to clear X" bugs
+- Mode is now mutually exclusive by construction (one 'mode' field instead of 3 flags)
+- Away mode transitions (both entering AND leaving) clear baselines in one place
+  (fixes the specific v10.15.3 bug that triggered this refactor)
+- Migration: First run auto-migrates from legacy individual variables to unified state
+- Per-device command states (DeviceState.*) and display-only variables kept separate
+- Files modified: room_heating.js (v10.16.0), CHANGELOG.txt
+
+==============================================
+Version 10.15.2 (2026-03-27)
+==============================================
+🐛 Fix: False manual detection from cross-run race condition (commanded state tracking)
+- Root cause: detectManualIntervention runs BEFORE controlHeating in each execution.
+  When a command (e.g., turn OFF) succeeds but verification times out, the baseline
+  stays stale (ON). The device physically turns OFF between runs. Next run:
+  detectManualIntervention sees OFF vs baseline ON → false manual override.
+- Fix: Store LastCommandedOnOff whenever automation sends a smart plug command.
+  In detectManualIntervention, if device state differs from baseline but matches
+  the last commanded state, treat as delayed verification (not manual intervention)
+  and update the baseline accordingly.
+- LastCommandedOnOff is set in: setHeating, resumeNormalHeating, controlHeatingBoost,
+  controlHeatingPause — all places that command smart plug state changes.
+- Files modified: room_heating.js (v10.15.2)
+
+==============================================
+Version 10.15.1 (2026-03-26)
+==============================================
+🐛 Fix: False manual detection when smart plug command sent but not verified
+- When setHeating() sent a command that succeeded but failed verification,
+  the baseline was never updated (anyChanged=true, anyVerified=false gap)
+- Next run would see actual device state != stale baseline → false manual override
+- Most likely trigger: inactivity offset causing ON→OFF transition with Zigbee timeout
+- Fix: Always check actual device states when baseline wasn't verified, not just when
+  no changes were made. Merged the !anyChanged and anyChanged&&!anyVerified paths.
+- Files modified: room_heating.js (v10.15.1)
+
+==============================================
 Version 4.11.0 / Status (2026-03-15)
 ==============================================
 🔧 Auto-discover heating devices in status script (matches heating v10.15.0)

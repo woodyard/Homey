@@ -7,6 +7,11 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 3.9  2026-03-20  Fast path: skip without API call when no fade active
+//                  - Checks _FadeActiveUntil BEFORE fetching device from Homey
+//                  - No-fade skip now avoids Homey.devices.getDevice() entirely
+//                  - Saves ~200-500ms per call in the common case (no active fade)
+//                  - Removed verbose logging from skip path
 // 3.8  2026-03-20  Clear stale saved values when fade has expired
 //                  - On skip (no active fade), clears _SavedDim, _SavedTemp, _SavedManualMode
 //                  - Prevents stale values from being accidentally restored later
@@ -69,24 +74,9 @@ function diagLog(entry) {
 try {
   // Get device ID from argument, or use default (Bathroom 9)
   const deviceId = args[0] || "b8591f4d-a493-4de7-9745-c13cd07e033c";
-  
-  log(`Device ID: ${deviceId} ${args[0] ? '(from argument)' : '(default)'}`);
 
   if (!deviceId) {
-    log('ERROR: No device ID provided');
     return 'ERROR: No device ID provided. Pass device ID as argument.';
-  }
-
-  log(`Checking restore for device: ${deviceId}`);
-
-  // Get the device
-  let device;
-  try {
-    device = await Homey.devices.getDevice({ id: deviceId });
-    log(`Device found: ${device.name}`);
-  } catch (error) {
-    log(`ERROR: Device not found - ${error.message}`);
-    return `ERROR: Device not found with ID: ${deviceId}`;
   }
 
   // Create unique variable names based on device ID
@@ -94,39 +84,31 @@ try {
   const savedTempVar = `${deviceId}_SavedTemp`;
   const fadeActiveUntilVar = `${deviceId}_FadeActiveUntil`;
 
-  // Check if fade is/was active (timestamp-based)
+  // FAST PATH: Check fade timestamp BEFORE fetching device (avoids API call on skip)
   const fadeActiveUntil = global.get(fadeActiveUntilVar) || 0;
   const now = Date.now();
   const fadeActive = now < fadeActiveUntil;
-  
-  if (fadeActiveUntil > 0) {
-    const diff = fadeActiveUntil - now;
-    if (fadeActive) {
-      log(`Fade still active (${Math.round(diff / 1000)}s remaining)`);
-    } else {
-      log(`Fade expired ${Math.round(-diff / 1000)}s ago`);
-    }
-  }
 
-  // Skip if no fade is active (regardless of old timestamps)
   if (!fadeActive) {
-    if (fadeActiveUntil > 0 && SETTINGS.enableDetailedLogging) {
-      log(`Fade expired ${Math.round((now - fadeActiveUntil) / 1000)}s ago - skipping restore`);
-    }
-    log('No active fade - skipping restore');
+    // No active fade — clean up stale values and exit immediately
     const staleVal = global.get(savedDimVar);
-    diagLog(`RESTORE-SKIP | ${device.name} | no active fade (expired ${Math.round((now - fadeActiveUntil) / 1000)}s ago) | stale saved dim=${staleVal !== null ? Math.round(staleVal * 100) + '%' : 'N/A'}`);
-
-    // Clean up stale saved values from completed fade (v3.8)
     if (staleVal !== null) {
       global.set(savedDimVar, null);
       global.set(savedTempVar, null);
       global.set(fadeActiveUntilVar, 0);
       global.set(`${deviceId}_SavedManualMode`, null);
-      log('Cleared stale saved values from completed fade');
     }
+    return `No active fade for ${deviceId.substring(0, 8)}, skipped`;
+  }
 
-    return `${device.name}: No fade in progress, nothing to restore`;
+  // ACTIVE FADE — fetch device and proceed with restore
+  log(`Fade active (${Math.round((fadeActiveUntil - now) / 1000)}s remaining) - restoring`);
+
+  let device;
+  try {
+    device = await Homey.devices.getDevice({ id: deviceId });
+  } catch (error) {
+    return `ERROR: Device not found with ID: ${deviceId}`;
   }
 
   // Get saved values from global variables

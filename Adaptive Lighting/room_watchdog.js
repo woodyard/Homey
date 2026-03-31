@@ -12,6 +12,13 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.3  2026-03-30  Skip turn-off if fade was cancelled by motion
+//                  - After fade wait, checks if _FadeActiveUntil was cleared
+//                  - RestoreSavedSettings clears flag on motion → watchdog skips turn-off
+//                  - Prevents turning off lights when someone walked in during fade
+// 2.2  2026-03-30  Explicitly turn off lights after fade completes
+//                  - Waits for fade duration, then sets onoff:false on all targets
+//                  - No longer relies on next watchdog cycle to clean up
 // 2.1  2026-03-20  Add 60s grace period on top of inactivity threshold
 //                  - Prevents watchdog from racing with the normal inactivity flow
 //                  - Watchdog now triggers at inactivitySeconds + 60s
@@ -169,7 +176,7 @@ const alDeviceKey = ROOM.primaryLight.substring(0, 8);
 const wasManualMode = alStates[alDeviceKey]?.manual === true;
 global.set(`${ROOM.primaryLight}_SavedManualMode`, wasManualMode);
 
-diagLog(`WATCHDOG-FADE | ${ROOM.name} | idle=${Math.round(idleDuration)}s threshold=${inactivitySeconds}s | dim=${Math.round(currentBrightness * 100)}% manual=${wasManualMode}`);
+diagLog(`WATCHDOG-FADE | ${ROOM.name} | idle=${Math.round(idleDuration)}s threshold=${watchdogThreshold}s | dim=${Math.round(currentBrightness * 100)}% manual=${wasManualMode}`);
 
 // If already very dim, just turn off
 if (currentBrightness <= 0.05) {
@@ -238,5 +245,22 @@ const results = await Promise.all(targets.map(t =>
 const ok = results.filter(r => r).length;
 log(`${PREFIX}: ${ok}/${targets.length} lights fading`);
 
-log(`${PREFIX}: fade started (${FADE_DURATION}s)`);
-return `${PREFIX}: fade triggered after ${Math.round(idleDuration)}s idle`;
+// Wait for fade to complete, then ensure lights are fully off
+await new Promise(resolve => setTimeout(resolve, FADE_DURATION * 1000));
+
+// Check if fade was cancelled (RestoreSavedSettings clears the flag on motion)
+const fadeCancelled = (global.get(`${ROOM.primaryLight}_FadeActiveUntil`) || 0) === 0;
+if (fadeCancelled) {
+  log(`${PREFIX}: fade was cancelled (motion detected) — skipping turn-off`);
+  return `${PREFIX}: fade cancelled by restore`;
+}
+
+await Promise.all(targets.map(t =>
+  t.setCapabilityValue('onoff', false)
+    .then(() => log(`  ${t.name}: turned off`))
+    .catch(e => log(`  ${t.name}: turn-off failed: ${e.message}`))
+));
+global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
+
+log(`${PREFIX}: fade complete, lights off`);
+return `${PREFIX}: fade + off after ${Math.round(idleDuration)}s idle`;

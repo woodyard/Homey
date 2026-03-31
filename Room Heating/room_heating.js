@@ -30,11 +30,14 @@
  * - Concurrent session coordination via command queues
  *
  * Author: Henrik Skovgaard
- * Version: 10.15.0
+ * Version: 10.16.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
  * Recent Changes (see CHANGELOG.txt for complete version history):
+ * 10.16.0 (2026-03-31) - 🔄 Unified room state object (replaces 20+ scattered global variables)
+ * 10.15.2 (2026-03-27) - 🐛 Fix: False manual detection from cross-run race condition (commanded state tracking)
+ * 10.15.1 (2026-03-26) - 🐛 Fix: False manual detection when smart plug command sent but not verified
  * 10.15.0 (2026-03-15) - 🔧 Auto-discover heating devices by zone (no more hardcoded device IDs)
  * 10.14.7 (2026-03-15) - 🔕 Suppress duplicate notifications (30 min cooldown for identical changes)
  * 10.14.6 (2026-03-02) - 🐛 Fix: Freeze LastRunTemp during settle delay to prevent false stability
@@ -232,6 +235,209 @@ async function debugNotify(message) {
         }
     }
 }
+
+// ============================================================================
+// Global Configuration (Shared) - from config script
+// ============================================================================
+
+// ============================================================================
+// Unified Room State Management
+// ============================================================================
+// All room-level state in a single object. Mode transitions go through
+// transitionMode() which ensures baselines are cleared and old modes
+// are properly exited — eliminating the class of bugs where individual
+// global variables fall out of sync.
+
+const STATE_KEY = `${ROOM.zoneName}.Heating.State`;
+
+const DEFAULT_STATE = {
+    mode: 'auto',            // 'auto' | 'manual' | 'boost' | 'pause'
+    modeExpires: null,        // timestamp when mode auto-expires
+    modeDetails: {},          // mode-specific: { type, originalValue } for manual
+
+    away: false,              // TADO away mode active
+    awaySince: null,          // timestamp when away mode started
+
+    baseline: {
+        verifiedOnOff: null,      // last verified smart plug state
+        verifiedTargetTemp: null, // last verified TADO target
+        commandedOnOff: null,     // last automation-commanded smart plug state
+        lastChangeTime: null      // timestamp of last automation change
+    },
+
+    window: {
+        openSince: null,          // timestamp when window opened
+        closedSince: null,        // timestamp when window closed (for settle delay)
+        timeoutHandled: false     // whether window-open timeout action was taken
+    },
+
+    inactive: false,              // room inactivity mode active
+    lastRunTemp: null,            // temperature from previous run (for stability check)
+
+    notification: {
+        lastKey: null,            // dedup key for last notification
+        lastTime: 0               // timestamp of last notification
+    }
+};
+
+function getRoomState() {
+    const raw = global.get(STATE_KEY);
+    if (raw) {
+        try {
+            const parsed = JSON.parse(raw);
+            // Merge with defaults to handle fields added in future versions
+            return {
+                ...DEFAULT_STATE,
+                ...parsed,
+                baseline: { ...DEFAULT_STATE.baseline, ...(parsed.baseline || {}) },
+                window: { ...DEFAULT_STATE.window, ...(parsed.window || {}) },
+                notification: { ...DEFAULT_STATE.notification, ...(parsed.notification || {}) }
+            };
+        } catch (e) {
+            log(`⚠️ Failed to parse room state, re-initializing: ${e.message}`);
+        }
+    }
+    return { ...DEFAULT_STATE, baseline: { ...DEFAULT_STATE.baseline }, window: { ...DEFAULT_STATE.window }, notification: { ...DEFAULT_STATE.notification } };
+}
+
+function saveRoomState(state) {
+    global.set(STATE_KEY, JSON.stringify(state));
+}
+
+/**
+ * Transition to a new mode. Handles all cleanup from the old mode
+ * and initialization of the new mode in one place.
+ *
+ * @param {object} state - Current room state (mutated in place)
+ * @param {string} newMode - 'auto' | 'manual' | 'boost' | 'pause'
+ * @param {object} params - Mode-specific params:
+ *   boost:  { duration? }
+ *   pause:  { duration? }
+ *   manual: { duration?, type, originalValue }
+ * @returns {object} The mutated state
+ */
+function transitionMode(state, newMode, params = {}) {
+    const oldMode = state.mode;
+
+    if (oldMode !== newMode) {
+        log(`🔄 MODE: ${oldMode} → ${newMode}`);
+        debugNotify(`🔄 ${oldMode} → ${newMode}`);
+    }
+
+    // Clear baselines on ANY mode transition to prevent false manual detection.
+    // The new mode's control function will establish fresh baselines.
+    if (oldMode !== newMode) {
+        state.baseline.verifiedOnOff = null;
+        state.baseline.verifiedTargetTemp = null;
+        state.baseline.lastChangeTime = Date.now();
+        // commandedOnOff intentionally kept — tracks what was last sent
+    }
+
+    // Enter new mode
+    state.mode = newMode;
+
+    if (newMode === 'auto') {
+        state.modeExpires = null;
+        state.modeDetails = {};
+    } else if (newMode === 'boost') {
+        const duration = params.duration || BOOST_DURATION_MINUTES;
+        state.modeExpires = Date.now() + duration * 60000;
+        state.modeDetails = {};
+    } else if (newMode === 'pause') {
+        const duration = params.duration || PAUSE_DURATION_MINUTES;
+        state.modeExpires = Date.now() + duration * 60000;
+        state.modeDetails = {};
+    } else if (newMode === 'manual') {
+        const duration = params.duration || (ROOM.settings.manualOverrideDuration || 90);
+        state.modeExpires = Date.now() + duration * 60000;
+        state.modeDetails = {
+            type: params.type,
+            originalValue: params.originalValue
+        };
+    }
+
+    return state;
+}
+
+/**
+ * Migrate from legacy individual global variables to unified state object.
+ * Only runs once — when STATE_KEY doesn't exist yet.
+ * @returns {object|null} Migrated state, or null if already migrated
+ */
+function migrateFromLegacyState() {
+    if (global.get(STATE_KEY)) return null;
+
+    const z = ROOM.zoneName;
+    const state = getRoomState(); // starts from DEFAULT_STATE
+
+    // Determine current mode from legacy flags
+    if (global.get(`${z}.Heating.ManualOverrideMode`)) {
+        state.mode = 'manual';
+        const startTime = global.get(`${z}.Heating.ManualOverrideStartTime`);
+        const duration = global.get(`${z}.Heating.ManualOverrideDuration`) || 90;
+        state.modeExpires = startTime ? startTime + duration * 60000 : null;
+        state.modeDetails = {
+            type: global.get(`${z}.Heating.ManualOverrideType`),
+            originalValue: global.get(`${z}.Heating.ManualOverrideOriginalValue`)
+        };
+    } else if (global.get(`${z}.Heating.BoostMode`)) {
+        state.mode = 'boost';
+        const startTime = global.get(`${z}.Heating.BoostStartTime`);
+        const duration = global.get(`${z}.Heating.BoostDuration`) || 60;
+        state.modeExpires = startTime ? startTime + duration * 60000 : null;
+    } else if (global.get(`${z}.Heating.PauseMode`)) {
+        state.mode = 'pause';
+        const startTime = global.get(`${z}.Heating.PauseStartTime`);
+        const duration = global.get(`${z}.Heating.PauseDuration`) || 60;
+        state.modeExpires = startTime ? startTime + duration * 60000 : null;
+    }
+
+    state.away = !!global.get(`${z}.Heating.TadoAwayActive`);
+
+    state.baseline = {
+        verifiedOnOff: global.get(`${z}.Heating.LastVerifiedOnOff`) ?? null,
+        verifiedTargetTemp: global.get(`${z}.Heating.LastVerifiedTargetTemp`) ?? null,
+        commandedOnOff: global.get(`${z}.Heating.LastCommandedOnOff`) ?? null,
+        lastChangeTime: global.get(`${z}.Heating.LastAutomationChangeTime`) ?? null
+    };
+
+    state.window = {
+        openSince: global.get(`${z}.Heating.WindowOpenTime`) ?? null,
+        closedSince: global.get(`${z}.Heating.WindowClosedTime`) ?? null,
+        timeoutHandled: !!global.get(`${z}.Heating.WindowTimeoutHandled`)
+    };
+
+    state.inactive = !!global.get(`${z}.Heating.InactivityMode`);
+    state.lastRunTemp = global.get(`${z}.Heating.LastRunTemp`) ?? null;
+
+    state.notification = {
+        lastKey: global.get(`${z}.Heating.LastNotificationKey`) ?? null,
+        lastTime: global.get(`${z}.Heating.LastNotificationTime`) || 0
+    };
+
+    log(`📦 Migrated from legacy state variables to unified state object`);
+    return state;
+}
+
+/**
+ * Format room state as a compact readable string for debug notifications.
+ */
+function formatStateForDebug(state) {
+    const mode = state.mode === 'auto' ? 'auto' : `${state.mode} (${state.modeExpires ? Math.ceil((state.modeExpires - Date.now()) / 60000) + 'min' : '?'})`;
+    const away = state.away ? `away ${state.awaySince ? Math.floor((Date.now() - state.awaySince) / 60000) + 'min' : ''}` : 'home';
+    const bl = [];
+    if (state.baseline.verifiedOnOff !== null) bl.push(`onoff=${state.baseline.verifiedOnOff ? 'ON' : 'OFF'}`);
+    if (state.baseline.verifiedTargetTemp !== null) bl.push(`temp=${state.baseline.verifiedTargetTemp}°C`);
+    if (state.baseline.commandedOnOff !== null) bl.push(`cmd=${state.baseline.commandedOnOff ? 'ON' : 'OFF'}`);
+    const baseline = bl.length ? bl.join(' ') : 'none';
+    const win = state.window.closedSince ? 'settling' : state.window.openSince ? 'open' : 'closed';
+    const inactive = state.inactive ? 'yes' : 'no';
+    return `mode=${mode} | ${away} | inactive=${inactive} | win=${win} | baseline: ${baseline}`;
+}
+
+// Initialize room state (migrate from legacy if needed)
+let roomState = migrateFromLegacyState() || getRoomState();
+saveRoomState(roomState);
 
 // ============================================================================
 // Global Configuration (Shared) - from config script
@@ -468,141 +674,109 @@ async function cleanupStaleDeviceStates() {
 const BOOST_DURATION_MINUTES = 60;
 const BOOST_TEMPERATURE_TADO = 25;
 const PAUSE_DURATION_MINUTES = 60;
-// Note: Grace period eliminated - using state-based detection instead (checking device status)
 
 function activateBoostMode() {
-    global.set(`${ROOM.zoneName}.Heating.BoostMode`, true);
-    global.set(`${ROOM.zoneName}.Heating.BoostStartTime`, Date.now());
-    global.set(`${ROOM.zoneName}.Heating.BoostDuration`, BOOST_DURATION_MINUTES);
-    
-    // Baseline will be set by sendCommandWithVerification when boost command is verified
-    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-    
+    transitionMode(roomState, 'boost');
+    saveRoomState(roomState);
+
     log(`\n🚀 BOOST MODE ACTIVATED`);
     log(`Duration: ${BOOST_DURATION_MINUTES} minutes`);
     log(`Room: ${roomArg} (${ROOM.zoneName})`);
-    
+
     addChange(`🚀 Boost activated`);
     addChange(`${BOOST_DURATION_MINUTES} min`);
 }
 
 async function cancelBoostMode(currentSlot = null) {
-    const wasActive = global.get(`${ROOM.zoneName}.Heating.BoostMode`);
-    
-    // Clear boost mode variables
-    global.set(`${ROOM.zoneName}.Heating.BoostMode`, false);
-    global.set(`${ROOM.zoneName}.Heating.BoostStartTime`, null);
-    global.set(`${ROOM.zoneName}.Heating.BoostDuration`, null);
-    
-    if (wasActive) {
-        log(`\n🛑 BOOST MODE CANCELLED`);
-        log(`Room: ${roomArg} (${ROOM.zoneName})`);
-        log(`Resuming normal schedule operation`);
-        
-        // CRITICAL: Clear baselines before resuming - they're stale from before boost
-        // Resume will establish fresh baselines based on new state
-        if (ROOM.heating.type === 'smart_plug') {
-            global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, null);
-            log(`📝 Cleared smart plug baseline (stale from before boost)`);
-        } else if (ROOM.heating.type === 'tado_valve') {
-            global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, null);
-            log(`📝 Cleared TADO baseline (stale from before boost)`);
-        }
-        
-        addChange(`🛑 Boost cancelled`);
-        addChange(`Resumed schedule`);
-        
-        // Explicitly resume heating with temperature verification
-        if (currentSlot) {
-            await resumeNormalHeating(currentSlot, false, 'boost');
-        }
-        
-        return true;
-    } else {
+    if (roomState.mode !== 'boost') {
         log(`\nℹ️ No active boost to cancel`);
-        log(`Room: ${roomArg} (${ROOM.zoneName})`);
         return false;
     }
+
+    transitionMode(roomState, 'auto');
+    saveRoomState(roomState);
+
+    log(`\n🛑 BOOST MODE CANCELLED`);
+    log(`Room: ${roomArg} (${ROOM.zoneName})`);
+
+    addChange(`🛑 Boost cancelled`);
+    addChange(`Resumed schedule`);
+
+    if (currentSlot) {
+        await resumeNormalHeating(currentSlot, false, 'boost');
+    }
+
+    return true;
 }
 
 async function cancelAllOverrideModes(currentSlot = null) {
-    const boostCancelled = await cancelBoostMode(currentSlot);
-    const pauseCancelled = await cancelPauseMode(currentSlot);
-    const manualCancelled = cancelManualOverrideMode();
-    
-    if (boostCancelled || pauseCancelled || manualCancelled) {
-        log(`\n✅ Override mode(s) cancelled - resuming normal schedule`);
-        return true;
-    } else {
+    if (roomState.mode === 'auto') {
         log(`\nℹ️ No active override modes to cancel`);
         return false;
     }
+
+    const oldMode = roomState.mode;
+    transitionMode(roomState, 'auto');
+    saveRoomState(roomState);
+
+    log(`\n✅ Override mode (${oldMode}) cancelled - resuming normal schedule`);
+
+    if (currentSlot) {
+        await resumeNormalHeating(currentSlot, false, oldMode);
+    }
+
+    return true;
 }
 
+/**
+ * Check if boost mode is active and handle expiry.
+ * @returns {{ active: boolean, expired: boolean, remainingMinutes: number }}
+ */
 function checkBoostMode() {
-    const boostActive = global.get(`${ROOM.zoneName}.Heating.BoostMode`);
-    
-    if (!boostActive) {
+    if (roomState.mode !== 'boost') {
         return { active: false, expired: false, remainingMinutes: 0 };
     }
-    
-    const boostStartTime = global.get(`${ROOM.zoneName}.Heating.BoostStartTime`);
-    const boostDuration = global.get(`${ROOM.zoneName}.Heating.BoostDuration`) || BOOST_DURATION_MINUTES;
-    
-    if (!boostStartTime) {
-        // Boost flag set but no start time - clear it
-        global.set(`${ROOM.zoneName}.Heating.BoostMode`, false);
+
+    if (!roomState.modeExpires) {
+        // Boost flag set but no expiry - clear it
+        transitionMode(roomState, 'auto');
+        saveRoomState(roomState);
         return { active: false, expired: false, remainingMinutes: 0 };
     }
-    
-    const minutesElapsed = (Date.now() - boostStartTime) / 1000 / 60;
-    const remainingMinutes = Math.max(0, boostDuration - minutesElapsed);
-    
-    if (minutesElapsed >= boostDuration) {
-        // Boost expired - clear it
+
+    const remainingMs = roomState.modeExpires - Date.now();
+
+    if (remainingMs <= 0) {
         log(`\n⏱️ BOOST MODE EXPIRED`);
-        log(`Duration: ${boostDuration} minutes elapsed`);
-        
-        global.set(`${ROOM.zoneName}.Heating.BoostMode`, false);
-        global.set(`${ROOM.zoneName}.Heating.BoostStartTime`, null);
-        global.set(`${ROOM.zoneName}.Heating.BoostDuration`, null);
-        
-        // Reset grace period to prevent false manual detection after boost expires
-        global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-        log(`📝 Grace period reset to prevent false manual detection after boost expiration`);
-        
+        transitionMode(roomState, 'auto');
+        saveRoomState(roomState);
+
         addChange(`⏱️ Boost ended`);
         addChange(`Resumed schedule`);
-        
         return { active: false, expired: true, remainingMinutes: 0 };
     }
-    
-    return { active: true, expired: false, remainingMinutes: Math.ceil(remainingMinutes) };
+
+    return { active: true, expired: false, remainingMinutes: Math.ceil(remainingMs / 60000) };
 }
 
 async function controlHeatingBoost() {
     log(`\n--- BOOST HEATING CONTROL ---`);
     log(`Boost mode: ACTIVE - overriding all normal logic`);
-    
+
     if (ROOM.heating.type === 'smart_plug') {
         log(`Smart plug mode: Turning ON all radiators`);
-        
+        roomState.baseline.commandedOnOff = true;
+
         let anyVerified = false;
-        
+
         for (const deviceId of ROOM.heating.devices) {
             try {
                 const device = await Homey.devices.getDevice({ id: deviceId });
                 const currentState = device.capabilitiesObj.onoff.value;
-                
+
                 if (!currentState) {
-                    const result = await sendCommandWithVerification(
-                        device,
-                        'onoff',
-                        true,
-                        ROOM.zoneName,
-                        SESSION_ID
-                    );
-                    
+                    const result = await sendCommandWithVerification(device, 'onoff', true, ROOM.zoneName, SESSION_ID);
+
                     if (result.success && result.verified) {
                         log(`🔌 ${device.name}: ON (verified)`);
                         anyVerified = true;
@@ -618,34 +792,26 @@ async function controlHeatingBoost() {
                 log(`❌ Error controlling ${deviceId}: ${error.message}`);
             }
         }
-        
-        // Only reset grace period if commands were verified
+
         if (anyVerified) {
-            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-            log(`📝 Grace period reset (boost commands verified)`);
+            roomState.baseline.lastChangeTime = Date.now();
         }
-        
+        saveRoomState(roomState);
+
         return 'boost_heating';
-        
+
     } else if (ROOM.heating.type === 'tado_valve') {
         log(`TADO mode: Setting to ${BOOST_TEMPERATURE_TADO}°C boost temperature`);
-        
+
         try {
             const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
             const currentOnOff = device.capabilitiesObj.onoff.value;
             const currentTarget = device.capabilitiesObj.target_temperature.value;
-            
+
             let verified = false;
-            
+
             if (currentOnOff !== true) {
-                const result = await sendCommandWithVerification(
-                    device,
-                    'onoff',
-                    true,
-                    ROOM.zoneName,
-                    SESSION_ID
-                );
-                
+                const result = await sendCommandWithVerification(device, 'onoff', true, ROOM.zoneName, SESSION_ID);
                 if (result.success && result.verified) {
                     log(`🔥 TADO turned ON (verified)`);
                     verified = true;
@@ -655,18 +821,12 @@ async function controlHeatingBoost() {
                     log(`❌ TADO turn ON failed`);
                 }
             }
-            
+
             if (currentTarget !== BOOST_TEMPERATURE_TADO) {
-                const result = await sendCommandWithVerification(
-                    device,
-                    'target_temperature',
-                    BOOST_TEMPERATURE_TADO,
-                    ROOM.zoneName,
-                    SESSION_ID
-                );
-                
+                const result = await sendCommandWithVerification(device, 'target_temperature', BOOST_TEMPERATURE_TADO, ROOM.zoneName, SESSION_ID);
                 if (result.success && result.verified) {
                     log(`🎯 TADO boost temperature set to ${BOOST_TEMPERATURE_TADO}°C (verified)`);
+                    roomState.baseline.verifiedTargetTemp = BOOST_TEMPERATURE_TADO;
                     verified = true;
                 } else if (result.success) {
                     log(`⚠️ TADO boost temperature set to ${BOOST_TEMPERATURE_TADO}°C (not verified)`);
@@ -676,25 +836,19 @@ async function controlHeatingBoost() {
             } else {
                 log(`✓ TADO already at boost temperature`);
             }
-            
-            // Update expected target to prevent false manual detection
-            global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, BOOST_TEMPERATURE_TADO);
-            
-            // Only reset grace period if commands were verified
+
             if (verified) {
-                global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-                log(`📝 Expected target updated to ${BOOST_TEMPERATURE_TADO}°C and grace period reset (verified)`);
-            } else {
-                log(`📝 Expected target updated to ${BOOST_TEMPERATURE_TADO}°C (boost mode - prevents false manual detection)`);
+                roomState.baseline.lastChangeTime = Date.now();
             }
-            
+            saveRoomState(roomState);
+
             return 'boost_tado';
         } catch (error) {
             log(`❌ Error controlling TADO: ${error.message}`);
             return 'boost_error';
         }
     }
-    
+
     return 'boost_unknown_type';
 }
 
@@ -703,127 +857,87 @@ async function controlHeatingBoost() {
 // ============================================================================
 
 function activatePauseMode() {
-    global.set(`${ROOM.zoneName}.Heating.PauseMode`, true);
-    global.set(`${ROOM.zoneName}.Heating.PauseStartTime`, Date.now());
-    global.set(`${ROOM.zoneName}.Heating.PauseDuration`, PAUSE_DURATION_MINUTES);
-    
-    // Clear baseline when activating pause mode
-    if (ROOM.heating.type === 'tado_valve') {
-        global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, null);
-    }
-    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-    
+    transitionMode(roomState, 'pause');
+    saveRoomState(roomState);
+
     log(`\n⏸️ PAUSE MODE ACTIVATED`);
     log(`Duration: ${PAUSE_DURATION_MINUTES} minutes`);
     log(`Room: ${roomArg} (${ROOM.zoneName})`);
-    
+
     addChange(`⏸️ Pause activated`);
     addChange(`${PAUSE_DURATION_MINUTES} min`);
 }
 
 async function cancelPauseMode(currentSlot = null) {
-    const wasActive = global.get(`${ROOM.zoneName}.Heating.PauseMode`);
-    
-    // Clear pause mode variables
-    global.set(`${ROOM.zoneName}.Heating.PauseMode`, false);
-    global.set(`${ROOM.zoneName}.Heating.PauseStartTime`, null);
-    global.set(`${ROOM.zoneName}.Heating.PauseDuration`, null);
-    
-    if (wasActive) {
-        log(`\n🔄 PAUSE MODE CANCELLED`);
-        log(`Room: ${roomArg} (${ROOM.zoneName})`);
-        log(`Resuming normal schedule operation`);
-        
-        // CRITICAL: Clear baselines before resuming - they're stale from before pause
-        // Resume will establish fresh baselines based on new state
-        if (ROOM.heating.type === 'smart_plug') {
-            global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, null);
-            log(`📝 Cleared smart plug baseline (stale from before pause)`);
-        } else if (ROOM.heating.type === 'tado_valve') {
-            global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, null);
-            log(`📝 Cleared TADO baseline (stale from before pause)`);
-        }
-        
-        addChange(`🔄 Pause cancelled`);
-        addChange(`Resumed schedule`);
-        
-        // Explicitly resume heating with temperature verification
-        if (currentSlot) {
-            await resumeNormalHeating(currentSlot, false, 'pause');
-        }
-        
-        return true;
-    } else {
+    if (roomState.mode !== 'pause') {
         log(`\nℹ️ No active pause to cancel`);
-        log(`Room: ${roomArg} (${ROOM.zoneName})`);
         return false;
     }
+
+    transitionMode(roomState, 'auto');
+    saveRoomState(roomState);
+
+    log(`\n🔄 PAUSE MODE CANCELLED`);
+    log(`Room: ${roomArg} (${ROOM.zoneName})`);
+
+    addChange(`🔄 Pause cancelled`);
+    addChange(`Resumed schedule`);
+
+    if (currentSlot) {
+        await resumeNormalHeating(currentSlot, false, 'pause');
+    }
+
+    return true;
 }
 
+/**
+ * Check if pause mode is active and handle expiry.
+ * @returns {{ active: boolean, expired: boolean, remainingMinutes: number }}
+ */
 function checkPauseMode() {
-    const pauseActive = global.get(`${ROOM.zoneName}.Heating.PauseMode`);
-    
-    if (!pauseActive) {
+    if (roomState.mode !== 'pause') {
         return { active: false, expired: false, remainingMinutes: 0 };
     }
-    
-    const pauseStartTime = global.get(`${ROOM.zoneName}.Heating.PauseStartTime`);
-    const pauseDuration = global.get(`${ROOM.zoneName}.Heating.PauseDuration`) || PAUSE_DURATION_MINUTES;
-    
-    if (!pauseStartTime) {
-        // Pause flag set but no start time - clear it
-        global.set(`${ROOM.zoneName}.Heating.PauseMode`, false);
+
+    if (!roomState.modeExpires) {
+        transitionMode(roomState, 'auto');
+        saveRoomState(roomState);
         return { active: false, expired: false, remainingMinutes: 0 };
     }
-    
-    const minutesElapsed = (Date.now() - pauseStartTime) / 1000 / 60;
-    const remainingMinutes = Math.max(0, pauseDuration - minutesElapsed);
-    
-    if (minutesElapsed >= pauseDuration) {
-        // Pause expired - clear it
+
+    const remainingMs = roomState.modeExpires - Date.now();
+
+    if (remainingMs <= 0) {
         log(`\n⏱️ PAUSE MODE EXPIRED`);
-        log(`Duration: ${pauseDuration} minutes elapsed`);
-        
-        global.set(`${ROOM.zoneName}.Heating.PauseMode`, false);
-        global.set(`${ROOM.zoneName}.Heating.PauseStartTime`, null);
-        global.set(`${ROOM.zoneName}.Heating.PauseDuration`, null);
-        
-        // Reset grace period to prevent false manual detection after pause expires
-        global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-        log(`📝 Grace period reset to prevent false manual detection after pause expiration`);
-        
+        transitionMode(roomState, 'auto');
+        saveRoomState(roomState);
+
         addChange(`⏱️ Pause ended`);
         addChange(`Resumed schedule`);
-        
         return { active: false, expired: true, remainingMinutes: 0 };
     }
-    
-    return { active: true, expired: false, remainingMinutes: Math.ceil(remainingMinutes) };
+
+    return { active: true, expired: false, remainingMinutes: Math.ceil(remainingMs / 60000) };
 }
 
 async function controlHeatingPause() {
     log(`\n--- PAUSE HEATING CONTROL ---`);
     log(`Pause mode: ACTIVE - turning off all heating`);
-    
+
     if (ROOM.heating.type === 'smart_plug') {
         log(`Smart plug mode: Turning OFF all radiators`);
-        
+        roomState.baseline.commandedOnOff = false;
+
         let anyVerified = false;
-        
+
         for (const deviceId of ROOM.heating.devices) {
             try {
                 const device = await Homey.devices.getDevice({ id: deviceId });
                 const currentState = device.capabilitiesObj.onoff.value;
-                
+
                 if (currentState) {
-                    const result = await sendCommandWithVerification(
-                        device,
-                        'onoff',
-                        false,
-                        ROOM.zoneName,
-                        SESSION_ID
-                    );
-                    
+                    const result = await sendCommandWithVerification(device, 'onoff', false, ROOM.zoneName, SESSION_ID);
+
                     if (result.success && result.verified) {
                         log(`🔌 ${device.name}: OFF (verified)`);
                         anyVerified = true;
@@ -839,33 +953,25 @@ async function controlHeatingPause() {
                 log(`❌ Error controlling ${deviceId}: ${error.message}`);
             }
         }
-        
-        // Only reset grace period if commands were verified
+
         if (anyVerified) {
-            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-            log(`📝 Grace period reset (pause commands verified)`);
+            roomState.baseline.lastChangeTime = Date.now();
         }
-        
+        saveRoomState(roomState);
+
         return 'pause_heating';
-        
+
     } else if (ROOM.heating.type === 'tado_valve') {
         log(`TADO mode: Turning OFF completely`);
-        
+
         try {
             const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
             const currentOnOff = device.capabilitiesObj.onoff.value;
-            
+
             let verified = false;
-            
+
             if (currentOnOff !== false) {
-                const result = await sendCommandWithVerification(
-                    device,
-                    'onoff',
-                    false,
-                    ROOM.zoneName,
-                    SESSION_ID
-                );
-                
+                const result = await sendCommandWithVerification(device, 'onoff', false, ROOM.zoneName, SESSION_ID);
                 if (result.success && result.verified) {
                     log(`🔥 TADO turned OFF (verified)`);
                     verified = true;
@@ -877,25 +983,19 @@ async function controlHeatingPause() {
             } else {
                 log(`✓ TADO already OFF`);
             }
-            
-            // Clear expected target to prevent false manual detection during pause
-            global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, null);
-            
-            // Only reset grace period if command was verified
+
             if (verified) {
-                global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-                log(`📝 Expected target cleared and grace period reset (verified)`);
-            } else {
-                log(`📝 Expected target cleared (pause mode - prevents false manual detection)`);
+                roomState.baseline.lastChangeTime = Date.now();
             }
-            
+            saveRoomState(roomState);
+
             return 'pause_tado';
         } catch (error) {
             log(`❌ Error controlling TADO: ${error.message}`);
             return 'pause_error';
         }
     }
-    
+
     return 'pause_unknown_type';
 }
 
@@ -953,27 +1053,19 @@ async function resumeNormalHeating(slot, fromExpiry, modeType) {
         
         log(`Room: ${roomTemp}°C, Target range: ${targetLow}-${targetHigh}°C`);
         log(`Resume state: ${shouldTurnOn ? 'ON' : 'OFF'}`);
-        
+
+        roomState.baseline.commandedOnOff = shouldTurnOn;
+
         let anyVerified = false;
-        let anyCommandSent = false;
-        
+
         for (const deviceId of ROOM.heating.devices) {
             try {
                 const device = await Homey.devices.getDevice({ id: deviceId });
                 const currentState = device.capabilitiesObj.onoff.value;
-                
-                // Only send command if state is different (like setHeating does)
+
                 if (currentState !== shouldTurnOn) {
-                    anyCommandSent = true;
-                    
-                    const result = await sendCommandWithVerification(
-                        device,
-                        'onoff',
-                        shouldTurnOn,
-                        ROOM.zoneName,
-                        SESSION_ID
-                    );
-                    
+                    const result = await sendCommandWithVerification(device, 'onoff', shouldTurnOn, ROOM.zoneName, SESSION_ID);
+
                     if (result.success && result.verified) {
                         log(`🔌 ${device.name}: ${shouldTurnOn ? 'ON' : 'OFF'} (verified)`);
                         anyVerified = true;
@@ -989,64 +1081,40 @@ async function resumeNormalHeating(slot, fromExpiry, modeType) {
                 log(`❌ Error resuming ${deviceId}: ${error.message}`);
             }
         }
-        
+
         if (anyVerified) {
-            // CRITICAL: Store baseline for smart plugs after resume
-            global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, shouldTurnOn);
-            global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-            log(`📝 Stored baseline: ${shouldTurnOn ? 'ON' : 'OFF'} and reset grace period (resume verified)`);
-        } else if (!anyCommandSent) {
-            // No commands were sent - all devices already in correct state
-            // Verify state and store baseline (safe since no state changes in progress)
+            roomState.baseline.verifiedOnOff = shouldTurnOn;
+            roomState.baseline.lastChangeTime = Date.now();
+            log(`📝 Stored baseline: ${shouldTurnOn ? 'ON' : 'OFF'} (resume verified)`);
+        } else {
+            // Check actual device states to update baseline
             let allMatch = true;
             for (const deviceId of ROOM.heating.devices) {
                 try {
                     const device = await Homey.devices.getDevice({ id: deviceId });
-                    const currentState = device.capabilitiesObj.onoff.value;
-                    if (currentState !== shouldTurnOn) {
-                        allMatch = false;
-                        log(`⚠️ Device ${device.name} is ${currentState ? 'ON' : 'OFF'} but expected ${shouldTurnOn ? 'ON' : 'OFF'}`);
-                        break;
-                    }
-                } catch (error) {
-                    allMatch = false;
-                    break;
-                }
+                    if (device.capabilitiesObj.onoff.value !== shouldTurnOn) { allMatch = false; break; }
+                } catch (error) { allMatch = false; break; }
             }
-            
             if (allMatch) {
-                // All devices match expected state - safe to store baseline
-                global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, shouldTurnOn);
-                global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-                log(`📝 Stored baseline: ${shouldTurnOn ? 'ON' : 'OFF'} (verified current state matches expected)`);
+                roomState.baseline.verifiedOnOff = shouldTurnOn;
+                roomState.baseline.lastChangeTime = Date.now();
+                log(`📝 Stored baseline: ${shouldTurnOn ? 'ON' : 'OFF'} (verified current state)`);
             } else {
-                // Mismatch detected - don't store baseline, let manual detection handle it
                 log(`⚠️ Device states don't match expected after resume - not storing baseline`);
             }
-        } else {
-            // Commands were sent but not verified - devices may still be changing
-            // Don't store baseline (unsafe - state in flux)
-            log(`⚠️ Resume commands sent but not verified - not storing baseline (will retry next run)`);
         }
-        
+        saveRoomState(roomState);
+
         return anyVerified;
-        
+
     } else if (ROOM.heating.type === 'tado_valve') {
         log(`TADO mode: Resuming with target ${resumeTarget}°C`);
-        
+
         try {
             const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
             let verified = false;
-            
-            // ALWAYS set onoff to ensure it's on
-            const onoffResult = await sendCommandWithVerification(
-                device,
-                'onoff',
-                true,
-                ROOM.zoneName,
-                SESSION_ID
-            );
-            
+
+            const onoffResult = await sendCommandWithVerification(device, 'onoff', true, ROOM.zoneName, SESSION_ID);
             if (onoffResult.success && onoffResult.verified) {
                 log(`🔥 TADO turned ON (verified)`);
                 verified = true;
@@ -1055,43 +1123,30 @@ async function resumeNormalHeating(slot, fromExpiry, modeType) {
             } else {
                 log(`❌ TADO turn ON failed`);
             }
-            
-            // ALWAYS set temperature even if already correct (for explicit verification)
-            // This ensures user sees temperature verification when resuming
-            const tempResult = await sendCommandWithVerification(
-                device,
-                'target_temperature',
-                resumeTarget,
-                ROOM.zoneName,
-                SESSION_ID
-            );
-            
+
+            const tempResult = await sendCommandWithVerification(device, 'target_temperature', resumeTarget, ROOM.zoneName, SESSION_ID);
             if (tempResult.success && tempResult.verified) {
                 log(`🎯 TADO target set to ${resumeTarget}°C (verified)`);
+                roomState.baseline.verifiedTargetTemp = resumeTarget;
                 verified = true;
             } else if (tempResult.success) {
                 log(`⚠️ TADO target set to ${resumeTarget}°C (not verified)`);
             } else {
                 log(`❌ TADO temperature change failed`);
             }
-            
-            // Update expected target to prevent false manual detection
-            global.set(`${ROOM.zoneName}.Heating.ExpectedTargetTemp`, resumeTarget);
-            
+
             if (verified) {
-                global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
-                log(`📝 Expected target updated to ${resumeTarget}°C and grace period reset (verified)`);
-            } else {
-                log(`📝 Expected target updated to ${resumeTarget}°C (resume mode)`);
+                roomState.baseline.lastChangeTime = Date.now();
             }
-            
+            saveRoomState(roomState);
+
             return verified;
         } catch (error) {
             log(`❌ Error resuming TADO: ${error.message}`);
             return false;
         }
     }
-    
+
     return false;
 }
 
@@ -1100,14 +1155,10 @@ async function resumeNormalHeating(slot, fromExpiry, modeType) {
 // ============================================================================
 
 function activateManualOverrideMode(overrideType, originalValue, currentValue) {
+    transitionMode(roomState, 'manual', { type: overrideType, originalValue: originalValue });
+    saveRoomState(roomState);
+
     const duration = ROOM.settings.manualOverrideDuration || 90;
-    
-    global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, true);
-    global.set(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`, Date.now());
-    global.set(`${ROOM.zoneName}.Heating.ManualOverrideDuration`, duration);
-    global.set(`${ROOM.zoneName}.Heating.ManualOverrideType`, overrideType);
-    global.set(`${ROOM.zoneName}.Heating.ManualOverrideOriginalValue`, originalValue);
-    
     log(`\n🤚 MANUAL OVERRIDE MODE ACTIVATED`);
     log(`Duration: ${duration} minutes`);
     log(`Room: ${roomArg} (${ROOM.zoneName})`);
@@ -1117,315 +1168,235 @@ function activateManualOverrideMode(overrideType, originalValue, currentValue) {
     } else {
         log(`Switch state changed manually`);
     }
-    
+
     addChange(`🤚 Manual override`);
     addChange(`${duration} min`);
 }
 
 async function cancelManualOverrideMode(currentSlot = null) {
-    const wasActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
-    
-    // Clear manual override mode variables
-    global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, false);
-    global.set(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`, null);
-    global.set(`${ROOM.zoneName}.Heating.ManualOverrideDuration`, null);
-    global.set(`${ROOM.zoneName}.Heating.ManualOverrideType`, null);
-    global.set(`${ROOM.zoneName}.Heating.ManualOverrideOriginalValue`, null);
-    
-    if (wasActive) {
-        log(`\n🔄 MANUAL OVERRIDE MODE CANCELLED`);
-        log(`Room: ${roomArg} (${ROOM.zoneName})`);
-        log(`Resuming normal schedule operation`);
-        
-        // CRITICAL: Clear baselines before resuming - they're stale from before manual override
-        // Resume will establish fresh baselines based on new state
-        if (ROOM.heating.type === 'smart_plug') {
-            global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, null);
-            log(`📝 Cleared smart plug baseline (stale from before manual override)`);
-        } else if (ROOM.heating.type === 'tado_valve') {
-            global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, null);
-            log(`📝 Cleared TADO baseline (stale from before manual override)`);
-        }
-        
-        addChange(`🔄 Override cancelled`);
-        addChange(`Resumed schedule`);
-        
-        // Explicitly resume heating with temperature verification
-        if (currentSlot) {
-            await resumeNormalHeating(currentSlot, false, 'manual');
-        }
-        
-        return true;
-    } else {
+    if (roomState.mode !== 'manual') {
         log(`\nℹ️ No active manual override to cancel`);
-        log(`Room: ${roomArg} (${ROOM.zoneName})`);
         return false;
     }
+
+    transitionMode(roomState, 'auto');
+    saveRoomState(roomState);
+
+    log(`\n🔄 MANUAL OVERRIDE MODE CANCELLED`);
+    log(`Room: ${roomArg} (${ROOM.zoneName})`);
+
+    addChange(`🔄 Override cancelled`);
+    addChange(`Resumed schedule`);
+
+    if (currentSlot) {
+        await resumeNormalHeating(currentSlot, false, 'manual');
+    }
+
+    return true;
 }
 
 async function checkManualOverrideMode() {
-    const overrideActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
-    
-    if (!overrideActive) {
+    if (roomState.mode !== 'manual') {
         return { active: false, expired: false, remainingMinutes: 0, reason: null };
     }
-    
-    const overrideStartTime = global.get(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`);
-    const overrideDuration = global.get(`${ROOM.zoneName}.Heating.ManualOverrideDuration`) || 90;
-    
-    if (!overrideStartTime) {
-        // Override flag set but no start time - clear it
-        global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, false);
+
+    if (!roomState.modeExpires) {
+        transitionMode(roomState, 'auto');
+        saveRoomState(roomState);
         return { active: false, expired: false, remainingMinutes: 0, reason: null };
     }
-    
-    const minutesElapsed = (Date.now() - overrideStartTime) / 1000 / 60;
-    const remainingMinutes = Math.max(0, overrideDuration - minutesElapsed);
-    
-    // Check if device has returned to automatic schedule mode (only for TADO)
-    // The device's onoff.smart_schedule property becomes true when manual control expires
-    // and the device returns to following its automatic schedule
-    // NOTE: "onoff.smart_schedule" is a separate capability, not a sub-property of onoff!
+
+    const remainingMs = roomState.modeExpires - Date.now();
+
+    // Check if TADO device has returned to automatic schedule
     if (ROOM.heating.type === 'tado_valve') {
         try {
             const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
-            
-            // Access onoff.smart_schedule as a separate capability (note the bracket notation due to dot in name)
             const smartScheduleCapability = device.capabilitiesObj['onoff.smart_schedule'];
-            
+
             if (smartScheduleCapability) {
                 const smartSchedule = smartScheduleCapability.value;
                 log(`🔍 Smart schedule status: ${smartSchedule} (${smartSchedule ? 'AUTO MODE' : 'MANUAL MODE'})`);
-                
+
                 if (smartSchedule === true) {
-                    // Device has returned to automatic schedule mode
-                    // User's manual control on the device has expired (shorter than our 90-min override)
                     log(`\n🔄 MANUAL OVERRIDE AUTO-CANCELLED`);
                     log(`Device returned to automatic schedule (smart_schedule = true)`);
-                    log(`Duration: ${Math.floor(minutesElapsed)} minutes elapsed of ${overrideDuration} planned`);
-                    log(`User's device manual control was shorter than system override period`);
-                    
-                    // Clear manual override mode variables
-                    global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, false);
-                    global.set(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`, null);
-                    global.set(`${ROOM.zoneName}.Heating.ManualOverrideDuration`, null);
-                    global.set(`${ROOM.zoneName}.Heating.ManualOverrideType`, null);
-                    global.set(`${ROOM.zoneName}.Heating.ManualOverrideOriginalValue`, null);
-                    
+
+                    transitionMode(roomState, 'auto');
+                    saveRoomState(roomState);
+
                     addChange(`🔄 Device → auto`);
                     addChange(`Override ended`);
-                    
                     return { active: false, expired: true, remainingMinutes: 0, reason: 'smart_schedule' };
                 } else {
                     log(`✓ Device still in manual mode (smart_schedule = false)`);
                 }
-            } else {
-                log(`⚠️ onoff.smart_schedule capability not found on device`);
             }
         } catch (error) {
-            log(`⚠️ Could not check smart_schedule property: ${error.message}`);
-            // Continue with normal expiration check
+            log(`⚠️ Could not check smart_schedule: ${error.message}`);
         }
     }
-    
-    if (minutesElapsed >= overrideDuration) {
-        // Override expired normally (90 minutes elapsed)
+
+    if (remainingMs <= 0) {
         log(`\n⏱️ MANUAL OVERRIDE MODE EXPIRED`);
-        log(`Duration: ${overrideDuration} minutes elapsed`);
-        
-        global.set(`${ROOM.zoneName}.Heating.ManualOverrideMode`, false);
-        global.set(`${ROOM.zoneName}.Heating.ManualOverrideStartTime`, null);
-        global.set(`${ROOM.zoneName}.Heating.ManualOverrideDuration`, null);
-        global.set(`${ROOM.zoneName}.Heating.ManualOverrideType`, null);
-        global.set(`${ROOM.zoneName}.Heating.ManualOverrideOriginalValue`, null);
-        
+        transitionMode(roomState, 'auto');
+        saveRoomState(roomState);
+
         addChange(`⏱️ Override ended`);
         addChange(`Resumed schedule`);
-        
         return { active: false, expired: true, remainingMinutes: 0, reason: 'timeout' };
     }
-    
-    return { active: true, expired: false, remainingMinutes: Math.ceil(remainingMinutes), reason: null };
+
+    return { active: true, expired: false, remainingMinutes: Math.ceil(remainingMs / 60000), reason: null };
 }
 
 async function detectManualIntervention() {
-    // CRITICAL: Check if any device is currently being controlled by automation
-    // If a device is 'sending' or 'verifying', skip manual detection entirely
-    // This eliminates the need for time-based grace periods - we check actual device state
+    // Skip if any device is mid-command
     for (const deviceId of ROOM.heating.devices) {
-        const state = initDeviceState(ROOM.zoneName, deviceId);
-        
-        if (state.status === 'sending' || state.status === 'verifying') {
-            log(`⏸️ Skipping manual detection - device ${deviceId.substr(0, 8)}... is ${state.status}`);
+        const devState = initDeviceState(ROOM.zoneName, deviceId);
+        if (devState.status === 'sending' || devState.status === 'verifying') {
+            log(`⏸️ Skipping manual detection - device ${deviceId.substr(0, 8)}... is ${devState.status}`);
             return { detected: false };
         }
     }
-    
-    // CRITICAL: Skip manual detection during window settle delay
-    // When window closes after timeout, TADO is in transitional state (baseline cleared)
-    // Detecting changes during this period leads to false positives
-    const windowClosedTime = global.get(`${ROOM.zoneName}.Heating.WindowClosedTime`);
-    if (windowClosedTime !== null) {
+
+    // Skip during window settle delay
+    if (roomState.window.closedSince !== null) {
         log(`⏸️ Skipping manual detection - window settle delay active`);
         return { detected: false };
     }
-    
-    // All devices idle - safe to check for manual intervention
+
     log(`✓ All devices idle - checking for manual intervention`);
-    
+
     if (ROOM.heating.type === 'tado_valve') {
-        // TADO: Detect temperature changes by comparing against LAST VERIFIED target
-        // Only compare against values we've actually verified on the device
-        const lastVerifiedTarget = global.get(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`);
-        
+        const lastVerifiedTarget = roomState.baseline.verifiedTargetTemp;
+
         if (lastVerifiedTarget === null || lastVerifiedTarget === undefined) {
-            // No verified baseline yet - establish initial baseline from current state
             log(`ℹ️ No verified baseline target yet - establishing initial baseline`);
-            
             try {
                 const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
                 const currentTarget = device.capabilitiesObj.target_temperature.value;
                 const currentOnOff = device.capabilitiesObj.onoff.value;
-                
-                // Check if TADO is in away mode (don't establish baseline during away mode)
-                const tadoAway = await isTadoAway();
-                if (tadoAway) {
+
+                if (await isTadoAway()) {
                     log(`⚠️ TADO in away mode - will establish baseline when returning home`);
                     return { detected: false };
                 }
-                
-                // Only establish baseline if TADO is ON (has a meaningful target temperature)
+
                 if (currentOnOff) {
-                    global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, currentTarget);
-                    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+                    roomState.baseline.verifiedTargetTemp = currentTarget;
+                    roomState.baseline.lastChangeTime = Date.now();
+                    saveRoomState(roomState);
                     log(`📝 Initial baseline established: ${currentTarget}°C (TADO on)`);
                 } else {
                     log(`⚠️ TADO is OFF - will establish baseline after next heating control`);
                 }
-                
-                // Don't detect manual intervention on first run - need baseline to compare against
                 return { detected: false };
-                
             } catch (error) {
                 log(`⚠️ Error establishing initial baseline: ${error.message}`);
                 return { detected: false };
             }
         }
-        
+
         try {
             const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
             const currentTarget = device.capabilitiesObj.target_temperature.value;
-            const currentOnOff = device.capabilitiesObj.onoff.value;
-            
-            // Check if TADO is in away mode (don't treat away mode changes as manual)
-            const tadoAway = await isTadoAway();
-            if (tadoAway) {
-                // In away mode, TADO may change temperature automatically
+
+            if (await isTadoAway()) {
                 return { detected: false };
             }
-            
-            // Check for intervention (0.3°C tolerance for TADO rounding)
+
             const tempDifference = Math.abs(currentTarget - lastVerifiedTarget);
-            
             if (tempDifference > 0.3) {
                 log(`\n🤚 MANUAL INTERVENTION DETECTED (TADO)`);
                 log(`Last verified: ${lastVerifiedTarget}°C, Current: ${currentTarget}°C`);
                 log(`Difference: ${tempDifference.toFixed(1)}°C`);
-                
-                return {
-                    detected: true,
-                    type: 'temperature',
-                    originalValue: lastVerifiedTarget,
-                    currentValue: currentTarget
-                };
+                return { detected: true, type: 'temperature', originalValue: lastVerifiedTarget, currentValue: currentTarget };
             }
-            
             return { detected: false };
-            
         } catch (error) {
             log(`⚠️ Error detecting manual intervention: ${error.message}`);
             return { detected: false };
         }
-        
+
     } else if (ROOM.heating.type === 'smart_plug') {
-        // Smart plugs: Detect switch changes by comparing against LAST VERIFIED state
-        const lastVerifiedOnOff = global.get(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`);
-        
+        const lastVerifiedOnOff = roomState.baseline.verifiedOnOff;
+
         if (lastVerifiedOnOff === null || lastVerifiedOnOff === undefined) {
-            // No verified baseline yet - establish initial baseline from current state
             log(`ℹ️ No verified baseline state yet - establishing initial baseline`);
-            
             try {
-                // Read all device states to establish consensus baseline
                 const deviceStates = [];
                 let allSame = true;
                 let firstState = null;
-                
+
                 for (const deviceId of ROOM.heating.devices) {
                     const device = await Homey.devices.getDevice({ id: deviceId });
                     const currentState = device.capabilitiesObj.onoff.value;
                     deviceStates.push({ id: deviceId, name: device.name, state: currentState });
-                    
-                    if (firstState === null) {
-                        firstState = currentState;
-                    } else if (currentState !== firstState) {
-                        allSame = false;
-                    }
+                    if (firstState === null) { firstState = currentState; }
+                    else if (currentState !== firstState) { allSame = false; }
                 }
-                
+
                 if (allSame && firstState !== null) {
-                    // All devices in same state - use as initial baseline
-                    global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, firstState);
-                    global.set(`${ROOM.zoneName}.Heating.LastAutomationChangeTime`, Date.now());
+                    roomState.baseline.verifiedOnOff = firstState;
+                    roomState.baseline.lastChangeTime = Date.now();
+                    saveRoomState(roomState);
                     log(`📝 Initial baseline established: ${firstState ? 'ON' : 'OFF'} (all ${deviceStates.length} devices match)`);
                 } else {
-                    // Devices in mixed state - can't establish reliable baseline yet
                     log(`⚠️ Devices in mixed state - will establish baseline after next heating control`);
                 }
-                
-                // Don't detect manual intervention on first run - need baseline to compare against
                 return { detected: false };
-                
             } catch (error) {
                 log(`⚠️ Error establishing initial baseline: ${error.message}`);
                 return { detected: false };
             }
         }
-        
+
         try {
             const currentStates = [];
             let anyDifferent = false;
-            
+
             for (const deviceId of ROOM.heating.devices) {
                 const device = await Homey.devices.getDevice({ id: deviceId });
                 const currentState = device.capabilitiesObj.onoff.value;
                 currentStates.push({ id: deviceId, name: device.name, state: currentState });
-                
-                if (currentState !== lastVerifiedOnOff) {
-                    anyDifferent = true;
-                    log(`\n🤚 MANUAL INTERVENTION DETECTED (SMART PLUG)`);
-                    log(`Device: ${device.name}`);
-                    log(`Last verified: ${lastVerifiedOnOff ? 'ON' : 'OFF'}, Current: ${currentState ? 'ON' : 'OFF'}`);
-                }
+                if (currentState !== lastVerifiedOnOff) { anyDifferent = true; }
             }
-            
+
             if (anyDifferent) {
-                return {
-                    detected: true,
-                    type: 'switch',
-                    originalValue: lastVerifiedOnOff,
-                    currentValue: currentStates
-                };
+                const lastCommanded = roomState.baseline.commandedOnOff;
+                const allMatchCommanded = currentStates.every(s => s.state === lastCommanded);
+
+                if (lastCommanded !== null && lastCommanded !== undefined && allMatchCommanded) {
+                    roomState.baseline.verifiedOnOff = lastCommanded;
+                    roomState.baseline.lastChangeTime = Date.now();
+                    saveRoomState(roomState);
+                    log(`✓ Device state matches last automation command (${lastCommanded ? 'ON' : 'OFF'}) - delayed verification, not manual`);
+                    log(`📝 Updated baseline to ${lastCommanded ? 'ON' : 'OFF'} (corrected stale baseline)`);
+                    return { detected: false };
+                }
+
+                for (const s of currentStates) {
+                    if (s.state !== lastVerifiedOnOff) {
+                        log(`\n🤚 MANUAL INTERVENTION DETECTED (SMART PLUG)`);
+                        log(`Device: ${s.name}`);
+                        log(`Last verified: ${lastVerifiedOnOff ? 'ON' : 'OFF'}, Current: ${s.state ? 'ON' : 'OFF'}`);
+                        if (lastCommanded !== null && lastCommanded !== undefined) {
+                            log(`Last commanded: ${lastCommanded ? 'ON' : 'OFF'} (does not match current state)`);
+                        }
+                    }
+                }
+
+                return { detected: true, type: 'switch', originalValue: lastVerifiedOnOff, currentValue: currentStates };
             }
-            
+
             return { detected: false };
-            
         } catch (error) {
             log(`⚠️ Error detecting manual intervention: ${error.message}`);
             return { detected: false };
         }
     }
-    
+
     return { detected: false };
 }
 
@@ -1855,16 +1826,8 @@ async function sendCommandWithVerification(device, capability, value, zoneName, 
                 state.lastError = null;
                 saveDeviceState(zoneName, deviceId, state);
                 
-                // CRITICAL: Store the verified value as baseline for manual detection
-                // Only compare against values we've actually confirmed on the device
-                // For TADO (target_temperature), store immediately since only one device
-                // For smart plugs (onoff), let setHeating() store after all devices verified
-                if (capability === 'target_temperature') {
-                    global.set(`${zoneName}.Heating.LastVerifiedTargetTemp`, value);
-                    log(`📝 Stored verified target: ${value}°C (baseline for manual detection)`);
-                    debugNotify(`📝 Baseline: ${value}°C`);
-                }
-                // Note: onoff baseline is stored by setHeating() after all devices verified
+                // Note: baseline storage is handled by the caller (setHeating, controlHeatingBoost, etc.)
+                // to keep command infrastructure decoupled from room state management
                 
                 // Process next queued command
                 await processNextQueuedCommand(zoneName, deviceId);
@@ -1946,26 +1909,20 @@ async function setHeating(turnOn, effectiveTarget) {
     if (ROOM.heating.type === 'smart_plug') {
         // Smart plugs: Binary on/off control with hysteresis
         // turnOn parameter determines action
+        roomState.baseline.commandedOnOff = turnOn;
+
         const results = [];
         let anyChanged = false;
         let anyVerified = false;
-        
+
         for (const deviceId of ROOM.heating.devices) {
             try {
                 const device = await Homey.devices.getDevice({ id: deviceId });
                 const currentState = device.capabilitiesObj.onoff.value;
-                
-                // Only set if different to avoid unnecessary commands
+
                 if (currentState !== turnOn) {
-                    // Use command verification system
-                    const result = await sendCommandWithVerification(
-                        device,
-                        'onoff',
-                        turnOn,
-                        ROOM.zoneName,
-                        SESSION_ID
-                    );
-                    
+                    const result = await sendCommandWithVerification(device, 'onoff', turnOn, ROOM.zoneName, SESSION_ID);
+
                     if (result.success) {
                         if (result.verified) {
                             log(`🔌 Smart plug ${device.name}: ${turnOn ? 'ON' : 'OFF'} (verified)`);
@@ -1993,41 +1950,29 @@ async function setHeating(turnOn, effectiveTarget) {
                 results.push(false);
             }
         }
-        
-        // Store baseline ONCE after all devices processed (not per-device)
+
+        // Store baseline ONCE after all devices processed
         if (anyVerified) {
-            // At least one device was verified - store baseline
-            global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, turnOn);
-            log(`📝 Stored verified state: ${turnOn ? 'ON' : 'OFF'} (baseline for manual detection)`);
+            roomState.baseline.verifiedOnOff = turnOn;
+            log(`📝 Stored verified state: ${turnOn ? 'ON' : 'OFF'} (baseline)`);
             debugNotify(`📝 Baseline: ${turnOn ? 'ON' : 'OFF'}`);
-        } else if (!anyChanged) {
-            // No changes were made - verify all devices match expected state
+        } else {
             let allMatch = true;
             for (const deviceId of ROOM.heating.devices) {
                 try {
                     const device = await Homey.devices.getDevice({ id: deviceId });
-                    const currentState = device.capabilitiesObj.onoff.value;
-                    if (currentState !== turnOn) {
-                        allMatch = false;
-                        log(`⚠️ Device ${device.name} is ${currentState ? 'ON' : 'OFF'} but expected ${turnOn ? 'ON' : 'OFF'}`);
-                        break;
-                    }
-                } catch (error) {
-                    allMatch = false;
-                    break;
-                }
+                    if (device.capabilitiesObj.onoff.value !== turnOn) { allMatch = false; break; }
+                } catch (error) { allMatch = false; break; }
             }
-            
             if (allMatch) {
-                // All devices match - safe to update baseline
-                global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, turnOn);
+                roomState.baseline.verifiedOnOff = turnOn;
                 log(`📝 Updated baseline state: ${turnOn ? 'ON' : 'OFF'} (verified current state)`);
             } else {
-                // Mismatch detected - don't update baseline, let manual detection handle it
                 log(`⚠️ Device states don't match expected - not updating baseline`);
             }
         }
-        
+        saveRoomState(roomState);
+
         return { success: results.every(r => r), changed: anyChanged };
         
     } else if (ROOM.heating.type === 'tado_valve') {
@@ -2088,21 +2033,19 @@ async function setHeating(turnOn, effectiveTarget) {
                     log(`✓ TADO already ON with target ${effectiveTarget}°C - no change needed`);
                 }
                 
-                // Note: LastVerifiedTargetTemp is now stored by sendCommandWithVerification when verified
-                // If no changes were made, verify the ACTUAL device state matches what we expect
-                if (!verified && !changed) {
-                    // Read actual current target from device
+                // Store baseline for verified commands
+                if (verified) {
+                    roomState.baseline.verifiedTargetTemp = effectiveTarget;
+                    roomState.baseline.lastChangeTime = Date.now();
+                } else if (!changed) {
+                    // No changes made — verify actual device state matches expectation
                     try {
                         const currentDevice = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
                         const actualTarget = currentDevice.capabilitiesObj.target_temperature.value;
-                        
-                        // Check if it matches what we expect (0.3°C tolerance)
                         if (Math.abs(actualTarget - effectiveTarget) <= 0.3) {
-                            // Device is at expected target - safe to update baseline
-                            global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, actualTarget);
+                            roomState.baseline.verifiedTargetTemp = actualTarget;
                             log(`📝 Updated baseline target: ${actualTarget}°C (verified current state)`);
                         } else {
-                            // Device is at different target - don't update baseline
                             log(`⚠️ Device target is ${actualTarget}°C but expected ${effectiveTarget}°C - not updating baseline`);
                         }
                     } catch (error) {
@@ -2136,11 +2079,12 @@ async function setHeating(turnOn, effectiveTarget) {
                     log(`✓ TADO already OFF - no change needed`);
                 }
                 
-                // CLEAR baseline when turning off - no target to compare against when off
-                global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, null);
-                log(`📝 Cleared baseline target (TADO off - no target to compare)`);
+                // Clear baseline when turning off - no target to compare when off
+                roomState.baseline.verifiedTargetTemp = null;
+                log(`📝 Cleared baseline target (TADO off)`);
             }
-            
+
+            saveRoomState(roomState);
             return { success: true, changed: changed };
         } catch (error) {
             log(`❌ Error controlling TADO: ${error.message}`);
@@ -2339,9 +2283,9 @@ async function checkInactivity(slot) {
         
         // If offset=0, clear flag and return inactive=false
         if (inactivityOffset === 0) {
-            const wasInactive = global.get(`${ROOM.zoneName}.Heating.InactivityMode`);
+            const wasInactive = roomState.inactive;
             if (wasInactive) {
-                global.set(`${ROOM.zoneName}.Heating.InactivityMode`, false);
+                roomState.inactive = false; saveRoomState(roomState);
                 log(`ℹ️  Inactivity mode cleared (offset = 0 in this period)`);
             }
             return { inactive: false, wasInactive: false, minutesSinceMotion: 0 };
@@ -2354,10 +2298,10 @@ async function checkInactivity(slot) {
         // Use zone.active and zone.activeLastUpdated for tracking!
         if (zone.active) {
             // Zone is active right now
-            const wasInactive = global.get(`${ROOM.zoneName}.Heating.InactivityMode`);
+            const wasInactive = roomState.inactive;
             
             if (wasInactive) {
-                global.set(`${ROOM.zoneName}.Heating.InactivityMode`, false);
+                roomState.inactive = false; saveRoomState(roomState);
                 log(`💤 Activity detected in zone - inactivity mode deactivated`);
                 return { inactive: false, wasInactive: true, minutesSinceMotion: 0 };
             }
@@ -2371,10 +2315,10 @@ async function checkInactivity(slot) {
         const minutesSinceActive = (now - lastActive) / (1000 * 60);
         
         if (minutesSinceActive >= inactivityTimeout) {
-            const wasInactive = global.get(`${ROOM.zoneName}.Heating.InactivityMode`);
+            const wasInactive = roomState.inactive;
             
             if (!wasInactive) {
-                global.set(`${ROOM.zoneName}.Heating.InactivityMode`, true);
+                roomState.inactive = true; saveRoomState(roomState);
                 const timeoutSource = getSettingSource(slot, 'inactivityTimeout');
                 const offsetSource = getSettingSource(slot, 'inactivityOffset');
                 log(`💤 Zone inactive for ${Math.floor(minutesSinceActive)} minutes`);
@@ -2412,8 +2356,8 @@ async function sendUnifiedNotification(status) {
     // Deduplicate: suppress notification if identical changes were sent recently (within 30 min)
     const NOTIFICATION_COOLDOWN_MS = 30 * 60 * 1000;
     const changesKey = [...changes].sort().join('|');
-    const lastNotifKey = global.get(`${ROOM.zoneName}.Heating.LastNotificationKey`);
-    const lastNotifTime = global.get(`${ROOM.zoneName}.Heating.LastNotificationTime`) || 0;
+    const lastNotifKey = roomState.notification.lastKey;
+    const lastNotifTime = roomState.notification.lastTime || 0;
     const timeSinceLast = Date.now() - lastNotifTime;
 
     if (changesKey === lastNotifKey && timeSinceLast < NOTIFICATION_COOLDOWN_MS) {
@@ -2421,8 +2365,9 @@ async function sendUnifiedNotification(status) {
         return;
     }
 
-    global.set(`${ROOM.zoneName}.Heating.LastNotificationKey`, changesKey);
-    global.set(`${ROOM.zoneName}.Heating.LastNotificationTime`, Date.now());
+    roomState.notification.lastKey = changesKey;
+    roomState.notification.lastTime = Date.now();
+    saveRoomState(roomState);
 
     try {
         const lines = [];
@@ -2495,7 +2440,7 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
     const heatingOn = await getHeatingStatus();
     const tadoAway = await isTadoAway();
     const inactivity = await checkInactivity(slot);
-    const wasInTadoAway = global.get(`${ROOM.zoneName}.Heating.TadoAwayActive`);
+    const wasInTadoAway = roomState.away;
     
     // Get effective settings using unified override pattern
     const inactivityOffset = inactivity.inactivityOffset || 0;
@@ -2529,11 +2474,11 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
                 }
                 addChange("Away");
                 addChange("Heat off");
-                global.set(`${ROOM.zoneName}.Heating.TadoAwayActive`, true);
+                roomState.away = true; roomState.awaySince = roomState.awaySince || Date.now(); saveRoomState(roomState);
                 return 'tado_away_off';
             } else {
                 log(`✓ Heating already off`);
-                global.set(`${ROOM.zoneName}.Heating.TadoAwayActive`, true);
+                roomState.away = true; roomState.awaySince = roomState.awaySince || Date.now(); saveRoomState(roomState);
                 return 'tado_away_skip';
             }
         } else {
@@ -2542,7 +2487,7 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
             if (!wasInTadoAway) {
                 addChange("Away");
                 addChange(`Min ${ROOM.settings.tadoAwayMinTemp}°C`);
-                global.set(`${ROOM.zoneName}.Heating.TadoAwayActive`, true);
+                roomState.away = true; roomState.awaySince = roomState.awaySince || Date.now(); saveRoomState(roomState);
             }
             
             effectiveTarget = ROOM.settings.tadoAwayMinTemp;
@@ -2550,7 +2495,7 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
         }
     } else {
         if (wasInTadoAway) {
-            global.set(`${ROOM.zoneName}.Heating.TadoAwayActive`, false);
+            roomState.away = false; roomState.awaySince = null; saveRoomState(roomState);
             log(`✅ TADO back to home mode - resuming normal schedule`);
             addChange("Home");
             
@@ -2563,17 +2508,16 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
     }
     
     // Track LastRunTemp for stability checking (smart window settling)
-    const lastRunTemp = global.get(`${ROOM.zoneName}.Heating.LastRunTemp`);
-    if (roomTemp !== null && !global.get(`${ROOM.zoneName}.Heating.WindowClosedTime`)) {
-        // Store current temp for next run's stability check
-        // Skip update during settle delay so stability compares against the temp when window closed
-        global.set(`${ROOM.zoneName}.Heating.LastRunTemp`, roomTemp);
+    const lastRunTemp = roomState.lastRunTemp;
+    if (roomTemp !== null && !roomState.window.closedSince) {
+        roomState.lastRunTemp = roomTemp;
+        saveRoomState(roomState);
     }
 
     // Window Timeout Check - CHECK THIS FIRST before sending any notifications!
-    const windowOpenTime = global.get(`${ROOM.zoneName}.Heating.WindowOpenTime`);
-    let windowTimeoutHandled = global.get(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`);
-    const windowClosedTime = global.get(`${ROOM.zoneName}.Heating.WindowClosedTime`);
+    const windowOpenTime = roomState.window.openSince;
+    let windowTimeoutHandled = roomState.window.timeoutHandled;
+    const windowClosedTime = roomState.window.closedSince;
     // windowClosedDelay already defined at top of function using slot override pattern
     
     if (windowOpen) {
@@ -2586,43 +2530,37 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
         }
 
         if (!windowOpenTime) {
-            global.set(`${ROOM.zoneName}.Heating.WindowOpenTime`, Date.now());
-            global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, false);
+            roomState.window.openSince = Date.now();
+            roomState.window.timeoutHandled = false;
+            saveRoomState(roomState);
             const timeoutSource = getSettingSource(slot, 'windowOpenTimeout');
             log(`⏱️  Window opened - starting ${windowOpenTimeout} sec timeout (${timeoutSource})`);
         } else {
             const secondsOpen = (Date.now() - windowOpenTime) / 1000;
             if (secondsOpen >= windowOpenTimeout) {
                 log(`⚠️  Window has been open for ${Math.floor(secondsOpen)} sec`);
-                
-                // Check if we need to turn off heating
-                // For TADO: Always ensure it's off when window open (even if not actively heating)
-                // For smart plugs: Only turn off if currently on
+
                 const shouldTurnOff = ROOM.heating.type === 'tado_valve' || heatingOn;
-                
+
                 if (!windowTimeoutHandled) {
                     if (shouldTurnOff) {
-                        // Turn off heating completely (both smart plugs and TADO)
                         await setHeating(false, effectiveTarget);
                         log(`🔥 Heating turned OFF (window open too long)`);
                         addChange(`Window (${Math.floor(secondsOpen)}s)`);
                         addChange(`Heat off`);
-                        global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, true);
+                        roomState.window.timeoutHandled = true;
+                        saveRoomState(roomState);
                         return 'window_timeout_off';
                     }
-                    global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, true);
+                    roomState.window.timeoutHandled = true;
+                    saveRoomState(roomState);
                 } else {
-                    // Timeout already handled
-                    // For TADO: Still call setHeating(false) to ensure onoff is false
-                    // (in case we upgraded from temp-based to onoff-based control)
                     if (ROOM.heating.type === 'tado_valve') {
                         await setHeating(false, effectiveTarget);
                         log(`🔥 TADO ensured OFF (window still open)`);
                     }
                 }
-                
-                // Window is open and timeout reached - don't run normal heating logic
-                // Don't send confusing notifications about activity/inactivity changes
+
                 return 'window_open_skip';
             } else {
                 log(`ℹ️  Window open for ${Math.floor(secondsOpen)} sec (timeout: ${windowOpenTimeout} sec)`);
@@ -2631,31 +2569,26 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
     } else {
         // Window is closed
         if (windowOpenTime) {
-            // Window just closed - check if it was open long enough to affect heating
             const secondsOpen = (Date.now() - windowOpenTime) / 1000;
-            
-            // Only start settle delay if window was open long enough to trigger timeout
-            // If window was only open briefly, no need to wait for air to settle
+
             if (secondsOpen >= windowOpenTimeout) {
-                // Window was open long enough to turn off heating - start settle delay
-                global.set(`${ROOM.zoneName}.Heating.WindowClosedTime`, Date.now());
-                global.set(`${ROOM.zoneName}.Heating.WindowOpenTime`, null);
-                global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, false);
-                
+                roomState.window.closedSince = Date.now();
+                roomState.window.openSince = null;
+                roomState.window.timeoutHandled = false;
+                saveRoomState(roomState);
+
                 const delayMinutes = Math.floor(windowClosedDelay / 60);
                 const delaySource = getSettingSource(slot, 'windowClosedDelay');
                 addChange("Window closed");
                 addChange(`Waiting ${delayMinutes}min`);
                 log(`✓ Window closed (was open ${Math.floor(secondsOpen)}s) - waiting ${delayMinutes} min for air to settle (${delaySource})`);
-                
+
                 return 'window_closed_waiting';
             } else {
-                // Window was only open briefly - no settle delay needed
-                global.set(`${ROOM.zoneName}.Heating.WindowOpenTime`, null);
-                global.set(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`, false);
+                roomState.window.openSince = null;
+                roomState.window.timeoutHandled = false;
+                saveRoomState(roomState);
                 log(`✓ Window closed (was only open ${Math.floor(secondsOpen)}s) - no settle delay needed`);
-                
-                // Continue with normal heating logic (no notification)
             }
         }
         
@@ -2713,7 +2646,8 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
                 
                 if (resumed) {
                     // Clear the settle delay flag
-                    global.set(`${ROOM.zoneName}.Heating.WindowClosedTime`, null);
+                    roomState.window.closedSince = null;
+                    saveRoomState(roomState);
                     
                     // Suppress notifications when in away mode (not relevant when nobody home)
                     if (!tadoAway) {
@@ -2939,6 +2873,9 @@ try {
 // Clean up any stale device states from timed-out or crashed previous executions
 await cleanupStaleDeviceStates();
 
+// Debug: dump current state to timeline
+debugNotify(`📋 ${formatStateForDebug(roomState)}`);
+
 // ============================================================================
 // Away Mode Transition Check (BEFORE Manual Intervention Detection)
 // ============================================================================
@@ -2946,16 +2883,21 @@ await cleanupStaleDeviceStates();
 // Check if we're returning from away mode and clear baseline BEFORE detecting manual intervention
 // This prevents false positive detection during TADO's automatic away→home temperature adjustment
 const currentTadoAway = await isTadoAway();
-const wasInTadoAway = global.get(`${ROOM.zoneName}.Heating.TadoAwayActive`);
+const wasInTadoAway = roomState.away;
 
-if (wasInTadoAway && !currentTadoAway) {
-    // Returning from away mode - CLEAR baseline to prevent false positive
-    // TADO automatically adjusts temperature when returning home, so we can't compare against old away value
-    global.set(`${ROOM.zoneName}.Heating.LastVerifiedTargetTemp`, null);
-    // ALSO clear smart plug baseline for same reason - plugs may change state when resuming
-    global.set(`${ROOM.zoneName}.Heating.LastVerifiedOnOff`, null);
-    log(`\n✅ TADO returning from away mode - cleared verified baselines to prevent false positive manual detection`);
-    log(`   Both TADO temperature and smart plug states will be re-established on first heating control`);
+if (wasInTadoAway !== currentTadoAway) {
+    // Away mode transition (entering OR leaving) - clear baselines to prevent false manual detection.
+    // External flows or TADO integration may change device states during transitions.
+    roomState.baseline.verifiedTargetTemp = null;
+    roomState.baseline.verifiedOnOff = null;
+    roomState.baseline.lastChangeTime = Date.now();
+    saveRoomState(roomState);
+
+    if (wasInTadoAway && !currentTadoAway) {
+        log(`\n✅ TADO returning from away mode - cleared baselines`);
+    } else {
+        log(`\n🏠 TADO entering away mode - cleared baselines`);
+    }
 }
 
 // ============================================================================
@@ -2964,9 +2906,7 @@ if (wasInTadoAway && !currentTadoAway) {
 
 // Check for manual interventions BEFORE boost/pause (unless explicitly canceling)
 if (!requestCancel && !requestBoost && !requestPause) {
-    const manualOverrideActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
-    
-    if (!manualOverrideActive) {
+    if (roomState.mode === 'auto') {
         const intervention = await detectManualIntervention();
         if (intervention.detected) {
             activateManualOverrideMode(
@@ -2974,19 +2914,9 @@ if (!requestCancel && !requestBoost && !requestPause) {
                 intervention.originalValue,
                 intervention.currentValue
             );
-            
-            // Manual override has highest priority - cancel any active boost/pause
-            const boostWasActive = global.get(`${ROOM.zoneName}.Heating.BoostMode`);
-            const pauseWasActive = global.get(`${ROOM.zoneName}.Heating.PauseMode`);
-            
-            if (boostWasActive) {
-                log(`\n🔄 Cancelling active boost due to manual intervention...`);
-                cancelBoostMode();
-            }
-            if (pauseWasActive) {
-                log(`\n🔄 Cancelling active pause due to manual intervention...`);
-                cancelPauseMode();
-            }
+
+            // Note: no need to cancel boost/pause since mode was already 'auto'
+            // transitionMode in activateManualOverrideMode handles everything
         }
     }
 }
@@ -3025,34 +2955,22 @@ if (requestCancel) {
     }
 }
 
-// Activate pause if requested (latest call wins - cancel any active boost/manual override)
+// Activate pause if requested (latest call wins - cancel any active mode)
 if (requestPause) {
-    const boostWasActive = global.get(`${ROOM.zoneName}.Heating.BoostMode`);
-    const manualWasActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
-    
-    if (boostWasActive) {
-        log(`\n🔄 Cancelling active boost to activate pause...`);
-        cancelBoostMode();
-    }
-    if (manualWasActive) {
-        log(`\n🔄 Cancelling active manual override to activate pause...`);
-        cancelManualOverrideMode();
+    if (roomState.mode !== 'auto' && roomState.mode !== 'pause') {
+        log(`\n🔄 Cancelling active ${roomState.mode} to activate pause...`);
+        transitionMode(roomState, 'auto');
+        saveRoomState(roomState);
     }
     activatePauseMode();
 }
 
-// Activate boost if requested (latest call wins - cancel any active pause/manual override)
+// Activate boost if requested (latest call wins - cancel any active mode)
 if (requestBoost) {
-    const pauseWasActive = global.get(`${ROOM.zoneName}.Heating.PauseMode`);
-    const manualWasActive = global.get(`${ROOM.zoneName}.Heating.ManualOverrideMode`);
-    
-    if (pauseWasActive) {
-        log(`\n🔄 Cancelling active pause to activate boost...`);
-        cancelPauseMode();
-    }
-    if (manualWasActive) {
-        log(`\n🔄 Cancelling active manual override to activate boost...`);
-        cancelManualOverrideMode();
+    if (roomState.mode !== 'auto' && roomState.mode !== 'boost') {
+        log(`\n🔄 Cancelling active ${roomState.mode} to activate boost...`);
+        transitionMode(roomState, 'auto');
+        saveRoomState(roomState);
     }
     activateBoostMode();
 }
@@ -3389,7 +3307,7 @@ const heatingOn = await getHeatingStatus();
 const tadoAway = await isTadoAway();
 
 // Use stored inactivity mode (don't check again - zone might have become active!)
-const wasInactivityMode = global.get(`${ROOM.zoneName}.Heating.InactivityMode`) || false;
+const wasInactivityMode = roomState.inactive || false;
 
 // Calculate effective target for display using stored inactivity state
 let displayTarget = currentSlot.target;
@@ -3404,10 +3322,10 @@ if (tadoAway && ROOM.settings.tadoAwayMinTemp) {
 // .EffectiveTemperature = actual target after inactivity/away adjustments (for status display)
 global.set(`${ROOM.zoneName}.EffectiveTemperature`, displayTarget);
 
-const windowTime = windowOpen ? Math.floor((Date.now() - (global.get(`${ROOM.zoneName}.Heating.WindowOpenTime`) || Date.now())) / 1000) : 0;
+const windowTime = windowOpen ? Math.floor((Date.now() - (roomState.window.openSince || Date.now())) / 1000) : 0;
 
 // Check if we're in window settle delay
-const windowClosedTime = global.get(`${ROOM.zoneName}.Heating.WindowClosedTime`);
+const windowClosedTime = roomState.window.closedSince;
 const inWindowSettleDelay = windowClosedTime !== null;
 
 // Get minutes since activity for display (if room is inactive)
@@ -3428,7 +3346,7 @@ if (wasInactivityMode) {
 
 // Determine actual heating status for notification
 let heatingStatus;
-const windowTimeoutHandled = global.get(`${ROOM.zoneName}.Heating.WindowTimeoutHandled`);
+const windowTimeoutHandled = roomState.window.timeoutHandled;
 if (windowOpen && windowTimeoutHandled) {
     // Window is open and timeout reached - heating is turned off
     heatingStatus = 'OFF';
