@@ -12,6 +12,9 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.4  2026-03-31  Read manual mode from per-device state variable
+//                  - Reads AL_Device_<key>.State instead of combined AL_DeviceStates
+//                  - Faster: only parses one device's state, not the entire blob
 // 2.3  2026-03-30  Skip turn-off if fade was cancelled by motion
 //                  - After fade wait, checks if _FadeActiveUntil was cleared
 //                  - RestoreSavedSettings clears flag on motion → watchdog skips turn-off
@@ -170,10 +173,13 @@ if (currentTemp !== null) {
 const fadeUntil = Date.now() + (FADE_DURATION * 1000) + 2000;
 global.set(`${ROOM.primaryLight}_FadeActiveUntil`, fadeUntil);
 
-// Save manual mode state (for RestoreSavedSettings coordination)
-const alStates = JSON.parse(global.get('AL_DeviceStates') || '{}');
+// Save manual mode state from AdaptiveLighting per-device state (for RestoreSavedSettings coordination)
 const alDeviceKey = ROOM.primaryLight.substring(0, 8);
-const wasManualMode = alStates[alDeviceKey]?.manual === true;
+let wasManualMode = false;
+try {
+  const alRaw = global.get(`AL_Device_${alDeviceKey}.State`);
+  if (alRaw) wasManualMode = JSON.parse(alRaw).manual === true;
+} catch (e) { /* parse error — treat as not manual */ }
 global.set(`${ROOM.primaryLight}_SavedManualMode`, wasManualMode);
 
 diagLog(`WATCHDOG-FADE | ${ROOM.name} | idle=${Math.round(idleDuration)}s threshold=${watchdogThreshold}s | dim=${Math.round(currentBrightness * 100)}% manual=${wasManualMode}`);
@@ -227,7 +233,11 @@ if (ROOM.extraLights) {
       global.set(`${extraId}_FadeActiveUntil`, fadeUntil);
 
       const extraAlKey = extraId.substring(0, 8);
-      const extraManual = alStates[extraAlKey]?.manual === true;
+      let extraManual = false;
+      try {
+        const extraAlRaw = global.get(`AL_Device_${extraAlKey}.State`);
+        if (extraAlRaw) extraManual = JSON.parse(extraAlRaw).manual === true;
+      } catch (e) { /* parse error — treat as not manual */ }
       global.set(`${extraId}_SavedManualMode`, extraManual);
 
       targets.push(extraDevice);

@@ -2,12 +2,32 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.17.0
-// Date:        2026-03-30
+// Version:     2.19.0
+// Date:        2026-03-31
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.19.0 2026-03-31  Parallel API calls + per-run caching for faster execution
+//                    - Device fetch, sun times, and device list run in parallel
+//                    - Cache getDevices() result to avoid duplicate API calls
+//                    - findGroupMembers() reuses cached device list
+//                    - Per-run device state cache: parse JSON once, reuse on repeat reads
+//                    - Per-run registerDeviceKey cache: skip index lookup for known keys
+//                    - Instant dim + temperature now run in parallel (like duration path)
+//                    - Saturation reset + mode switch run in parallel
+//                    - Button actions unchanged (single API call fast path)
+//                    - Removed legacy migration code and legacy cycle-profile path
+// 2.18.0 2026-03-31  Per-device state object (AL_Device_<key>.State)
+//                    - Consolidated AL_DeviceStates, AL_Fade_<key>, and forced
+//                      profile variables into one state object per device
+//                    - Each device has its own global variable — O(1) read/write
+//                      instead of parsing all devices on every state access
+//                    - DEFAULT_DEVICE_STATE with manual, lastProfile, fadeEndTime,
+//                      forcedProfile fields (deep-merged for forward compat)
+//                    - FORCED_PROFILE_VARIABLES → FORCED_PROFILE_DEVICES Set
+//                    - AL_DeviceKeys index for diagnostics enumeration
+//                    - Auto-migration from legacy combined blob on first run
 // 2.17.0 2026-03-30  Simplify normal mode: OFF→ON always applies profile
 //                    - Removed 500ms wait + ManualRestoreUntil logic for normal mode
 //                    - Only skip if fade is actively in progress (let restore handle it)
@@ -270,8 +290,8 @@
 // 3. Argument: "device-id cycle-profile"
 //
 // The "cycle-profile" mode cycles through forced profiles (Morning → Daytime → Evening → Night → Morning).
-// Configure device-to-variable mapping in FORCED_PROFILE_VARIABLES.
-// Uses HomeyScript global variables (automatically created, no manual setup required).
+// Configure device IDs in FORCED_PROFILE_DEVICES.
+// Uses unified device state (no manual variable setup required).
 //
 // BUTTON ACTIONS (for physical button controls):
 // "device-id brighten"  → Increase brightness by 20%
@@ -586,11 +606,11 @@ const ROOM_CONFIG = {
 // - Double-click top button: Run script with "deviceId cycle-profile"
 // - Double-click bottom button: Run script with "deviceId clear" (resets to -1)
 //
-const FORCED_PROFILE_VARIABLES = {
-  "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0": "OliverRoom_ForcedProfile",
-  // Add more devices here as needed:
-  // "8938b436-6c9b-4b88-89c4-656ca842b1c8": "ClaraRoom_ForcedProfile",
-};
+const FORCED_PROFILE_DEVICES = new Set([
+  "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0",  // Oliver's room
+  // Add more device IDs here as needed:
+  // "8938b436-6c9b-4b88-89c4-656ca842b1c8",  // Clara's room
+]);
 
 // ====== SCRIPT SETTINGS ======
 const SETTINGS = {
@@ -614,6 +634,7 @@ const SETTINGS = {
 // ====== SUN TIMES CACHE ======
 // Populated once per script run by fetchSunTimesFromHomey()
 let CACHED_SUN_TIMES = null;
+let CACHED_ALL_DEVICES = null;
 
 // ====== PERSISTENT DIAGNOSTIC LOG ======
 // Shared log across GradualFadeOut, RestoreSavedSettings, and AdaptiveLighting.
@@ -848,56 +869,129 @@ function getDeviceKey(deviceId) {
   return deviceId.substring(0, 8);
 }
 
-/**
- * Get all device states from global storage
- * Structure: { "deviceKey": { manual: boolean, lastProfile: string } }
- */
-function getDeviceStates() {
-  try {
-    const data = global.get('AL_DeviceStates');
-    return data ? JSON.parse(data) : {};
-  } catch (e) {
-    return {};
+// ====== UNIFIED DEVICE STATE ======
+// One state object per device, stored in its own global variable.
+// Key format: AL_Device_<deviceKey>.State (e.g. AL_Device_1e87af68.State)
+// Each call only parses/serializes one device — no wasted work on other devices.
+
+const AL_STATE_PREFIX = 'AL_Device_';
+const AL_STATE_SUFFIX = '.State';
+const AL_DEVICE_INDEX_KEY = 'AL_DeviceKeys';
+
+const DEFAULT_DEVICE_STATE = {
+  manual: false,          // Device in manual mode (user adjusted brightness/temp)
+  lastProfile: null,      // Name of last applied profile
+  fadeEndTime: 0,         // AL's own fade end timestamp (ms)
+  forcedProfile: {
+    index: -1,            // -1 = auto, 0-3 = forced profile
+    profiles: null        // Cached profile schedule (array of 4)
   }
+};
+
+/**
+ * Get the global variable key for a device's state
+ */
+function stateKey(deviceId) {
+  return `${AL_STATE_PREFIX}${getDeviceKey(deviceId)}${AL_STATE_SUFFIX}`;
+}
+
+// Per-run cache: avoids repeated global.get + JSON.parse for the same device
+const _stateRunCache = new Map();
+
+/**
+ * Get state for a single device (with default-merge for forward compat)
+ * Only parses this one device's JSON — O(1) regardless of total device count
+ * Cached per script run: subsequent reads for the same device return the cached object
+ */
+function getDeviceState(deviceId) {
+  const key = stateKey(deviceId);
+  if (_stateRunCache.has(key)) {
+    return _stateRunCache.get(key);
+  }
+
+  let state;
+  try {
+    const raw = global.get(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      state = {
+        ...DEFAULT_DEVICE_STATE,
+        ...parsed,
+        forcedProfile: { ...DEFAULT_DEVICE_STATE.forcedProfile, ...(parsed.forcedProfile || {}) }
+      };
+    }
+  } catch (e) {
+    // Parse error — return defaults
+  }
+
+  if (!state) {
+    state = { ...DEFAULT_DEVICE_STATE, forcedProfile: { ...DEFAULT_DEVICE_STATE.forcedProfile } };
+  }
+
+  _stateRunCache.set(key, state);
+  return state;
 }
 
 /**
- * Save all device states to global storage
+ * Save state for a single device
+ * Only serializes this one device's JSON — O(1)
  */
-function saveDeviceStates(states) {
-  global.set('AL_DeviceStates', JSON.stringify(states));
+function saveDeviceState(deviceId, state) {
+  global.set(stateKey(deviceId), JSON.stringify(state));
+  registerDeviceKey(deviceId);
+}
+
+// Per-run cache: avoids repeated index reads for already-registered devices
+const _registeredKeys = new Set();
+
+/**
+ * Register a device key in the device index (for diagnostics enumeration)
+ * Lightweight: only updates index when a new device is first seen
+ * Cached per run: skips global.get entirely for keys already confirmed
+ */
+function registerDeviceKey(deviceId) {
+  const key = getDeviceKey(deviceId);
+  if (_registeredKeys.has(key)) return;
+
+  const index = getDeviceIndex();
+  if (index.includes(key)) {
+    _registeredKeys.add(key);
+    return;
+  }
+  index.push(key);
+  global.set(AL_DEVICE_INDEX_KEY, JSON.stringify(index));
+  _registeredKeys.add(key);
+}
+
+/**
+ * Get list of all known device keys (for diagnostics)
+ */
+function getDeviceIndex() {
+  try {
+    const data = global.get(AL_DEVICE_INDEX_KEY);
+    return data ? JSON.parse(data) : [];
+  } catch (e) {
+    return [];
+  }
 }
 
 /**
  * Check if device is in manual mode
  */
 function isManualMode(deviceId) {
-  const key = getDeviceKey(deviceId);
-  const states = getDeviceStates();
-  return states[key]?.manual === true;
+  return getDeviceState(deviceId).manual === true;
 }
 
 /**
  * Set manual mode for a device
  */
 function setManualMode(deviceId, enabled) {
-  const key = getDeviceKey(deviceId);
-  const states = getDeviceStates();
-  
-  if (!states[key]) {
-    states[key] = {};
-  }
-  states[key].manual = enabled;
-  
-  // Clean up if not manual and no lastProfile
-  if (!enabled && !states[key].lastProfile) {
-    delete states[key];
-  }
-  
-  saveDeviceStates(states);
-  
+  const state = getDeviceState(deviceId);
+  state.manual = enabled;
+  saveDeviceState(deviceId, state);
+
   if (SETTINGS.enableDetailedLogging) {
-    log(`[AdaptiveLighting] Manual mode ${enabled ? 'enabled' : 'disabled'} for ${key}`);
+    log(`[AdaptiveLighting] Manual mode ${enabled ? 'enabled' : 'disabled'} for ${getDeviceKey(deviceId)}`);
   }
 }
 
@@ -905,28 +999,20 @@ function setManualMode(deviceId, enabled) {
  * Get last applied profile for a device
  */
 function getLastProfile(deviceId) {
-  const key = getDeviceKey(deviceId);
-  const states = getDeviceStates();
-  return states[key]?.lastProfile || null;
+  return getDeviceState(deviceId).lastProfile || null;
 }
 
 /**
  * Set last applied profile for a device
  */
 function setLastProfile(deviceId, profileName) {
-  const key = getDeviceKey(deviceId);
-  const states = getDeviceStates();
-  
-  if (!states[key]) {
-    states[key] = {};
-  }
-  states[key].lastProfile = profileName;
-  states[key].manual = false; // Clear manual mode when profile is applied
-  
-  saveDeviceStates(states);
-  
+  const state = getDeviceState(deviceId);
+  state.lastProfile = profileName;
+  state.manual = false; // Clear manual mode when profile is applied
+  saveDeviceState(deviceId, state);
+
   if (SETTINGS.enableDetailedLogging) {
-    log(`[AdaptiveLighting] Last profile set to ${profileName} for ${key}`);
+    log(`[AdaptiveLighting] Last profile set to ${profileName} for ${getDeviceKey(deviceId)}`);
   }
 }
 
@@ -936,89 +1022,79 @@ function setLastProfile(deviceId, profileName) {
  * @param {number} duration - Fade duration in seconds
  */
 function setDeviceFading(deviceId, duration) {
-  const deviceKey = getDeviceKey(deviceId);
-  const fadeEndTime = Date.now() + (duration * 1000) + 5000; // Add 5sec buffer
-  global.set(`AL_Fade_${deviceKey}`, fadeEndTime);
-  
+  const state = getDeviceState(deviceId);
+  state.fadeEndTime = Date.now() + (duration * 1000) + 5000; // Add 5sec buffer
+  saveDeviceState(deviceId, state);
+
   if (SETTINGS.enableDetailedLogging) {
-    log(`[AdaptiveLighting] Fade started for ${deviceKey} - ${duration}s + 5s buffer`);
+    log(`[AdaptiveLighting] Fade started for ${getDeviceKey(deviceId)} - ${duration}s + 5s buffer`);
   }
 }
 
 /**
  * Check if device is currently fading
- * Checks both:
- * 1. AdaptiveLighting's timestamp-based tracking (AL_Fade_<deviceKey>)
- * 2. Bathroom fade script's timestamp (${deviceId}_FadeActiveUntil)
- * 3. Bathroom fade script's legacy flag (${deviceId}_FadeActive) - for backwards compat
+ * Checks:
+ * 1. Unified state fadeEndTime (AL's own transition tracking)
+ * 2. External: GradualFadeOut timestamp (${deviceId}_FadeActiveUntil)
+ * 3. External: GradualFadeOut legacy flag (${deviceId}_FadeActive)
  * @param {string} deviceId - Device ID
  * @returns {boolean} True if fade is in progress
  */
 function isDeviceFading(deviceId) {
   const deviceKey = getDeviceKey(deviceId);
-  
-  // Check AdaptiveLighting's timestamp-based tracking
-  const fadeEndTime = global.get(`AL_Fade_${deviceKey}`) || 0;
-  const timestampFading = Date.now() < fadeEndTime;
-  
+
+  // Check unified state fadeEndTime
+  const state = getDeviceState(deviceId);
+  const timestampFading = Date.now() < state.fadeEndTime;
+
   if (timestampFading && SETTINGS.enableDetailedLogging) {
-    const remaining = Math.round((fadeEndTime - Date.now()) / 1000);
+    const remaining = Math.round((state.fadeEndTime - Date.now()) / 1000);
     log(`[AdaptiveLighting] Device ${deviceKey} still fading (${remaining}s remaining)`);
   }
-  
-  // Check bathroom fade script's timestamp-based tracking (v5.0+)
+
+  // Check external: GradualFadeOut timestamp-based tracking (v5.0+)
   const bathroomFadeUntil = global.get(`${deviceId}_FadeActiveUntil`) || 0;
   const bathroomFading = Date.now() < bathroomFadeUntil;
-  
+
   if (bathroomFading && SETTINGS.enableDetailedLogging) {
     const remaining = Math.round((bathroomFadeUntil - Date.now()) / 1000);
-    log(`[AdaptiveLighting] Device ${deviceKey} has bathroom fade active (${remaining}s remaining)`);
+    log(`[AdaptiveLighting] Device ${deviceKey} has external fade active (${remaining}s remaining)`);
   }
-  
-  // Check bathroom fade script's legacy flag-based tracking (backwards compat)
+
+  // Check external: GradualFadeOut legacy flag-based tracking (backwards compat)
   const fadeActiveVar = `${deviceId}_FadeActive`;
   const flagFading = global.get(fadeActiveVar) === true;
-  
+
   if (flagFading && SETTINGS.enableDetailedLogging) {
     log(`[AdaptiveLighting] Device ${deviceKey} has legacy FadeActive flag set`);
   }
-  
+
   // Return true if ANY system indicates fading
   return timestampFading || bathroomFading || flagFading;
 }
 
 /**
- * Get forced profile data for a device
- * Uses HomeyScript global variables (no manual setup required)
+ * Get forced profile data for a device from unified state
  * @param {string} deviceId - Device ID
- * @returns {object|null} Profile data {index, brightness, temperature, name} or null if auto mode
+ * @returns {object|null} Profile data {index, profiles} or null if auto mode / not configured
  */
 function getForcedProfileData(deviceId) {
-  const variableName = FORCED_PROFILE_VARIABLES[deviceId];
-  if (!variableName) {
-    return null; // No forced profile variable configured
+  if (!FORCED_PROFILE_DEVICES.has(deviceId)) {
+    return null; // Device not configured for forced profiles
   }
-  
-  try {
-    const data = global.get(variableName);
-    
-    // Parse stored JSON data
-    if (data && typeof data === 'string') {
-      const parsed = JSON.parse(data);
-      // Valid forced profile data has index 0-3
-      if (parsed && parsed.index >= 0 && parsed.index <= 3) {
-        return parsed;
-      }
-    }
-    return null; // Auto mode
-  } catch (e) {
-    // Variable doesn't exist or parse error - treat as auto mode
-    return null;
+
+  const state = getDeviceState(deviceId);
+  const fp = state.forcedProfile;
+
+  // Valid forced profile data has index 0-3
+  if (fp && fp.index >= 0 && fp.index <= 3) {
+    return fp;
   }
+  return null; // Auto mode
 }
 
 /**
- * Get just the forced profile index (for compatibility)
+ * Get just the forced profile index
  * @param {string} deviceId - Device ID
  * @returns {number|null} Profile index (0-3) or null if auto mode
  */
@@ -1029,58 +1105,37 @@ function getForcedProfile(deviceId) {
 
 /**
  * Set forced profile with optional pre-calculated profile schedule
- * Uses HomeyScript global variables (automatically created if needed)
  * @param {string} deviceId - Device ID
  * @param {number} profileIndex - Profile index (-1 for auto, 0-3 for forced)
  * @param {array|object} profileData - Optional: Array of all profiles OR single profile object
  */
 function setForcedProfile(deviceId, profileIndex, profileData = null) {
-  const variableName = FORCED_PROFILE_VARIABLES[deviceId];
-  if (!variableName) {
-    return; // No forced profile variable configured
+  if (!FORCED_PROFILE_DEVICES.has(deviceId)) {
+    return; // Device not configured for forced profiles
   }
-  
-  try {
-    if (profileIndex === -1) {
-      if (Array.isArray(profileData)) {
-        // Auto mode with pre-loaded full schedule
-        const data = {
-          index: -1,
-          profiles: profileData  // All 4 profiles pre-calculated
-        };
-        global.set(variableName, JSON.stringify(data));
-      } else {
-        // Auto mode - just store -1
-        global.set(variableName, '-1');
-      }
-    } else if (Array.isArray(profileData)) {
-      // Store index with full pre-calculated schedule
-      const data = {
-        index: profileIndex,
-        profiles: profileData
-      };
-      global.set(variableName, JSON.stringify(data));
-    } else if (profileData) {
-      // Legacy: Store index with single next profile
-      const data = {
-        index: profileIndex,
-        brightness: profileData.brightness,
-        temperature: profileData.temperature,
-        name: profileData.name
-      };
-      global.set(variableName, JSON.stringify(data));
-    } else {
-      // Legacy: just store the index
-      global.set(variableName, JSON.stringify({ index: profileIndex }));
-    }
-    
-    if (SETTINGS.enableDetailedLogging) {
-      const mode = profileIndex === -1 ? 'auto' : `forced profile ${profileIndex}`;
-      const scheduleInfo = Array.isArray(profileData) ? ` (full schedule pre-loaded)` : '';
-      log(`[AdaptiveLighting] Set ${variableName} to ${mode}${scheduleInfo}`);
-    }
-  } catch (e) {
-    log(`[AdaptiveLighting] Warning: Could not set forced profile variable ${variableName}: ${e.message}`);
+
+  const state = getDeviceState(deviceId);
+
+  if (profileIndex === -1) {
+    state.forcedProfile = {
+      index: -1,
+      profiles: Array.isArray(profileData) ? profileData : null
+    };
+  } else if (Array.isArray(profileData)) {
+    state.forcedProfile = {
+      index: profileIndex,
+      profiles: profileData
+    };
+  } else {
+    state.forcedProfile = { index: profileIndex, profiles: null };
+  }
+
+  saveDeviceState(deviceId, state);
+
+  if (SETTINGS.enableDetailedLogging) {
+    const mode = profileIndex === -1 ? 'auto' : `forced profile ${profileIndex}`;
+    const scheduleInfo = Array.isArray(profileData) ? ` (full schedule pre-loaded)` : '';
+    log(`[AdaptiveLighting] Set forced profile for ${getDeviceKey(deviceId)} to ${mode}${scheduleInfo}`);
   }
 }
 
@@ -1255,10 +1310,12 @@ function getRoomConfig(deviceId, deviceName) {
  * Find group members by name pattern (e.g., "SV Light Loft" → "SV Light Loft 1/3", "SV Light Loft 2/3")
  */
 async function findGroupMembers(groupName) {
-  const devices = await Homey.devices.getDevices();
+  if (!CACHED_ALL_DEVICES) {
+    CACHED_ALL_DEVICES = await Homey.devices.getDevices();
+  }
   const members = [];
-  
-  for (const d of Object.values(devices)) {
+
+  for (const d of Object.values(CACHED_ALL_DEVICES)) {
     // Match "GroupName X/Y" pattern
     if (d.name.startsWith(groupName + ' ') && d.name !== groupName && d.class === 'light') {
       members.push(d);
@@ -1270,21 +1327,26 @@ async function findGroupMembers(groupName) {
 
 /**
  * Clear manual mode for a device and all its group members (if it's a group)
+ * Per-device state: each write is O(1), no cross-device overhead
  */
 async function clearManualModeForGroup(deviceId, deviceName) {
-  // Clear for the main device
-  setManualMode(deviceId, false);
-  
-  // Find group members and clear them too
   const members = await findGroupMembers(deviceName);
-  
+
+  // Clear main device
+  const state = getDeviceState(deviceId);
+  state.manual = false;
+  saveDeviceState(deviceId, state);
+
+  // Clear group members
+  for (const member of members) {
+    const memberState = getDeviceState(member.id);
+    memberState.manual = false;
+    saveDeviceState(member.id, memberState);
+  }
+
   if (members.length > 0 && SETTINGS.enableDetailedLogging) {
     log(`[AdaptiveLighting] Clearing manual mode for group ${deviceName} and ${members.length} members`);
-  }
-  
-  for (const member of members) {
-    setManualMode(member.id, false);
-    if (SETTINGS.enableDetailedLogging) {
+    for (const member of members) {
       log(`[AdaptiveLighting] - Cleared ${member.name}`);
     }
   }
@@ -1303,21 +1365,22 @@ async function applyToDevice(deviceOrId, brightness, temperature, duration) {
   try {
     const currentMode = device.capabilitiesObj?.light_mode?.value;
     const currentSaturation = device.capabilitiesObj?.light_saturation?.value;
-    
-    // Always set saturation to 0 if it's high (ensures pure white light)
+
+    // Run saturation reset and mode switch in parallel (independent operations)
+    const preOps = [];
     if (currentSaturation !== undefined && currentSaturation > 0.1) {
-      await device.setCapabilityValue('light_saturation', 0);
+      preOps.push(device.setCapabilityValue('light_saturation', 0));
       if (SETTINGS.enableDetailedLogging) {
         log(`[AdaptiveLighting] Reset saturation on ${device.name} from ${Math.round(currentSaturation * 100)}% to 0%`);
       }
     }
-    
     if (currentMode === 'color') {
-      await device.setCapabilityValue('light_mode', 'temperature');
+      preOps.push(device.setCapabilityValue('light_mode', 'temperature'));
       if (SETTINGS.enableDetailedLogging) {
         log(`[AdaptiveLighting] Switched ${device.name} from color to temperature mode`);
       }
     }
+    if (preOps.length) await Promise.all(preOps);
   } catch (e) {
     // Device might not support light_mode or light_saturation - that's ok
   }
@@ -1343,19 +1406,12 @@ async function applyToDevice(deviceOrId, brightness, temperature, duration) {
     return { brightness: true, temperature: true };
   }
   
-  // Instant change (no duration)
-  try {
-    await device.setCapabilityValue('dim', brightness);
-  } catch (e) {
-    // Ignore
-  }
-  
-  try {
-    await device.setCapabilityValue('light_temperature', temperature);
-    return { brightness: true, temperature: true };
-  } catch (e) {
-    return { brightness: true, temperature: false };
-  }
+  // Instant change (no duration) - run in parallel like the duration path
+  const [dimOk, tempOk] = await Promise.all([
+    device.setCapabilityValue('dim', brightness).then(() => true).catch(() => false),
+    device.setCapabilityValue('light_temperature', temperature).then(() => true).catch(() => false)
+  ]);
+  return { brightness: dimOk, temperature: tempOk };
 }
 
 /**
@@ -1588,10 +1644,24 @@ if (!DEVICE_ID) {
 
 try {
   // Get the device from Homey
-  const device = await Homey.devices.getDevice({ id: DEVICE_ID });
-  
+  // For button actions: only fetch the device (fast path)
+  // For all other modes: fetch device, sun times, and device list in parallel
+  const isButtonMode = BUTTON_BRIGHTEN || BUTTON_DIM || BUTTON_MAX || BUTTON_TOGGLE;
+  let device;
+  if (isButtonMode) {
+    device = await Homey.devices.getDevice({ id: DEVICE_ID });
+  } else {
+    const [_device, , _allDevices] = await Promise.all([
+      Homey.devices.getDevice({ id: DEVICE_ID }),
+      fetchSunTimesFromHomey(),
+      Homey.devices.getDevices()
+    ]);
+    device = _device;
+    CACHED_ALL_DEVICES = _allDevices;
+  }
+
   // FAST PATH: Handle button actions immediately (no room config, no time calc, minimal overhead)
-  if (BUTTON_BRIGHTEN || BUTTON_DIM || BUTTON_MAX || BUTTON_TOGGLE) {
+  if (isButtonMode) {
     const isOn = device.capabilitiesObj?.onoff?.value ?? false;
     
     if (BUTTON_BRIGHTEN) {
@@ -1622,16 +1692,12 @@ try {
     }
   }
   
-  // Fetch sun times from Homey (for profile time calculations)
-  // This ensures consistency with Homey's own sunrise/sunset alerts
-  await fetchSunTimesFromHomey();
-  
   // Get room configuration (custom or default) - only needed for non-button actions
   const currentMinutes = getCurrentTimeInMinutes();
   const currentTimeStr = formatMinutesToTime(currentMinutes);
   const roomConfig = getRoomConfig(DEVICE_ID, device.name);
   const roomName = roomConfig.name;
-  
+
   // Find active profile for current time (needed by clear mode and other operations)
   const activeProfile = findActiveProfile(roomConfig.profiles, currentMinutes);
   
@@ -1689,55 +1755,7 @@ try {
       };
     }
     
-    // LEGACY PATH: Old format or first time - calculate and store full schedule
-    if (cachedData && cachedData.brightness !== undefined) {
-      // Old single-profile format - migrate to new format
-      const nextIndex = (cachedData.index + 1) % 4;
-      
-      // Apply the old cached profile
-      await device.setCapabilityValue('dim', cachedData.brightness);
-      try {
-        await device.setCapabilityValue('light_temperature', cachedData.temperature);
-      } catch (e) {
-        // Device might not support temperature
-      }
-      
-      // Now upgrade to full schedule
-      const profiles = roomConfig.profiles;
-      const profileSchedule = profiles.slice(0, 4).map(p => ({
-        brightness: p.brightness,
-        temperature: p.temperature,
-        name: p.name
-      }));
-      
-      setForcedProfile(DEVICE_ID, nextIndex, profileSchedule);
-      setLastProfile(DEVICE_ID, cachedData.name);
-      await clearManualModeForGroup(DEVICE_ID, device.name);
-      
-      const brightnessPercent = Math.round(cachedData.brightness * 100);
-      const tempDesc = cachedData.temperature >= 0.7 ? 'warm' : 
-                       cachedData.temperature <= 0.4 ? 'cool' : 'neutral';
-      const message = `[${roomName}] ${cachedData.name} mode activated → ${brightnessPercent}% / ${tempDesc} [Forced]`;
-      
-      if (SETTINGS.enableLogging) {
-        log(message + " (upgraded to full schedule)");
-      }
-      await notify(message);
-      
-      return {
-        room: roomName,
-        profile: cachedData.name,
-        profileIndex: nextIndex,
-        brightness: cachedData.brightness,
-        temperature: cachedData.temperature,
-        forced: true,
-        wasOff: !isOn,
-        upgraded: true,
-        message: message
-      };
-    }
-    
-    // SLOW PATH: No cache at all - calculate full schedule from room config
+    // No cache yet - calculate full schedule from room config
     const currentIndex = cachedData ? cachedData.index : null;
     const nextIndex = currentIndex === null ? 0 : (currentIndex + 1) % 4;
     
@@ -1796,7 +1814,7 @@ try {
     await clearManualModeForGroup(DEVICE_ID, device.name);
     
     // Clear forced profile (reset to auto mode) and pre-calculate all profiles
-    if (FORCED_PROFILE_VARIABLES[DEVICE_ID]) {
+    if (FORCED_PROFILE_DEVICES.has(DEVICE_ID)) {
       const profiles = roomConfig.profiles;
       
       // Extract brightness, temperature, and name for all 4 profiles
@@ -2050,7 +2068,7 @@ try {
     
     // Also reset forced profile to auto mode (light turning on = back to automatic)
     // BUT pre-calculate ALL profiles so cycling is instant
-    if (FORCED_PROFILE_VARIABLES[DEVICE_ID]) {
+    if (FORCED_PROFILE_DEVICES.has(DEVICE_ID)) {
       const profiles = roomConfig.profiles;
       
       // Extract brightness, temperature, and name for all 4 profiles
@@ -2074,10 +2092,10 @@ try {
       if (!isOn) {
         // Set brightness/temperature WHILE light is OFF (like Homey UI does)
         await applyLighting(device, activeProfile.brightness, activeProfile.temperature, false);
-        
+
         // Small delay to ensure the bulb has processed the brightness/temperature commands
         await new Promise(resolve => setTimeout(resolve, 100));
-        
+
         // NOW turn on the light - it should turn on at the correct level
         await device.setCapabilityValue('onoff', true);
         
@@ -2163,11 +2181,11 @@ try {
   } else {
     // Normal mode or check mode - use standard apply
     await applyLighting(device, activeProfile.brightness, activeProfile.temperature, useDuration);
-    
+
     // Remember which profile was applied (for check mode comparison)
     setLastProfile(DEVICE_ID, activeProfile.name);
   }
-  
+
   // Logging and notifications
   const brightnessPercent = Math.round(activeProfile.brightness * 100);
   const tempPercent = Math.round(activeProfile.temperature * 100);

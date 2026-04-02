@@ -6,6 +6,20 @@ Created: 2025-12-31
 Based on: Clara Heating v6.4.6
 
 ==============================================
+Version 4.12.0 - Status Script (2026-03-31)
+==============================================
+🔄 Refactor: Read from unified state object (matches heating v10.16.0)
+- Status script now reads mode/window/inactivity from ${zoneName}.Heating.State JSON
+- Legacy individual globals (ManualOverrideMode, PauseMode, BoostMode, WindowOpenTime,
+  WindowClosedTime, InactivityMode) are no longer written by heating script
+- Added getRoomState() helper with DEFAULT_STATE merge (same pattern as room_heating.js)
+- Remaining time for all modes now computed from roomState.modeExpires (simpler math)
+- Window settle delay reads from roomState.window.closedSince
+- Override mode check uses roomState.mode instead of separate boostActive/pauseActive vars
+- Schedule globals (ScheduleType, Temperature, etc.) are still individual globals — unchanged
+- Files modified: room_heating_status.js (v4.12.0), CHANGELOG.txt
+
+==============================================
 Version 10.16.0 (2026-03-31)
 ==============================================
 🔄 Refactor: Unified room state object (replaces 20+ scattered global variables)

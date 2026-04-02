@@ -5,11 +5,16 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 4.11.0
+ * Version: 4.12.0
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
  * Version History:
+ * 4.12.0 (2026-03-31) - 🔄 Read from unified state object (matches heating v10.16.0)
+ *   - Reads mode/window/inactivity from ${zoneName}.Heating.State JSON
+ *   - Legacy individual globals no longer written by heating script
+ *   - Added getRoomState() helper with DEFAULT_STATE merge
+ *   - Schedule globals (ScheduleType, Temperature, etc.) unchanged
  * 4.11.0 (2026-03-15) - 🔧 Auto-discover heating devices by zone (matches heating v10.15.0)
  *   - Removed dependency on hardcoded device IDs from config
  *   - Smart plugs discovered via virtualClass='heater' in zone
@@ -242,6 +247,54 @@ function getDeviceState(zoneName, deviceId) {
     }
     
     return null;
+}
+
+// ============================================================================
+// Unified Room State (matches room_heating.js v10.16.0)
+// ============================================================================
+
+const DEFAULT_STATE = {
+    mode: 'auto',
+    modeExpires: null,
+    modeDetails: {},
+    away: false,
+    awaySince: null,
+    baseline: {
+        verifiedOnOff: null,
+        verifiedTargetTemp: null,
+        commandedOnOff: null,
+        lastChangeTime: null
+    },
+    window: {
+        openSince: null,
+        closedSince: null,
+        timeoutHandled: false
+    },
+    inactive: false,
+    lastRunTemp: null,
+    notification: {
+        lastKey: null,
+        lastTime: 0
+    }
+};
+
+function getRoomState(zoneName) {
+    const raw = global.get(`${zoneName}.Heating.State`);
+    if (raw) {
+        try {
+            const parsed = JSON.parse(raw);
+            return {
+                ...DEFAULT_STATE,
+                ...parsed,
+                baseline: { ...DEFAULT_STATE.baseline, ...(parsed.baseline || {}) },
+                window: { ...DEFAULT_STATE.window, ...(parsed.window || {}) },
+                notification: { ...DEFAULT_STATE.notification, ...(parsed.notification || {}) }
+            };
+        } catch (e) {
+            // Fall through to defaults
+        }
+    }
+    return { ...DEFAULT_STATE, baseline: { ...DEFAULT_STATE.baseline }, window: { ...DEFAULT_STATE.window }, notification: { ...DEFAULT_STATE.notification } };
 }
 
 // ============================================================================
@@ -509,8 +562,8 @@ async function getNextScheduleChange(schedule, currentSlot, roomConfig) {
 
 async function showRoomStatus(roomName, roomConfig) {
     const ZONE_NAME = roomConfig.zoneName;
-    
-    
+    const roomState = getRoomState(ZONE_NAME);
+
     log('\n╔═══════════════════════════════════════════════════════════════╗');
     log(`║          ${roomName.toUpperCase()}'S HEATING SYSTEM - STATUS${' '.repeat(Math.max(0, 26 - roomName.length))}║`);
     log('╚═══════════════════════════════════════════════════════════════╝\n');
@@ -527,7 +580,7 @@ async function showRoomStatus(roomName, roomConfig) {
     const baseTarget = global.get(`${ZONE_NAME}.Temperature`);
     const effectiveTarget = global.get(`${ZONE_NAME}.EffectiveTemperature`);
     const inactivityOffset = global.get(`${ZONE_NAME}.Heating.InactivityOffset`) || 0;
-    const inactivityMode = global.get(`${ZONE_NAME}.Heating.InactivityMode`);
+    const inactivityMode = roomState.inactive;
     
     // Show both base and effective if they differ
     if (effectiveTarget && effectiveTarget !== baseTarget) {
@@ -548,17 +601,12 @@ async function showRoomStatus(roomName, roomConfig) {
     }
     
     // Manual Override Mode Status
-    const manualOverrideActive = global.get(`${ZONE_NAME}.Heating.ManualOverrideMode`);
-    if (manualOverrideActive) {
-        const overrideStartTime = global.get(`${ZONE_NAME}.Heating.ManualOverrideStartTime`);
-        const overrideDuration = global.get(`${ZONE_NAME}.Heating.ManualOverrideDuration`) || 90;
-        const overrideType = global.get(`${ZONE_NAME}.Heating.ManualOverrideType`);
-        const originalValue = global.get(`${ZONE_NAME}.Heating.ManualOverrideOriginalValue`);
-        
-        if (overrideStartTime) {
-            const minutesElapsed = (Date.now() - overrideStartTime) / 1000 / 60;
-            const remainingMinutes = Math.max(0, Math.ceil(overrideDuration - minutesElapsed));
-            
+    if (roomState.mode === 'manual') {
+        if (roomState.modeExpires) {
+            const remainingMinutes = Math.max(0, Math.ceil((roomState.modeExpires - Date.now()) / 60000));
+            const overrideType = roomState.modeDetails.type;
+            const originalValue = roomState.modeDetails.originalValue;
+
             log(`\n🤚 MANUAL OVERRIDE MODE ACTIVE 🤚`);
             log(`Remaining:      ${remainingMinutes} minutes`);
             log(`Type:           Manual ${overrideType} change detected`);
@@ -573,15 +621,10 @@ async function showRoomStatus(roomName, roomConfig) {
     }
     
     // Pause Mode Status
-    const pauseActive = global.get(`${ZONE_NAME}.Heating.PauseMode`);
-    if (pauseActive) {
-        const pauseStartTime = global.get(`${ZONE_NAME}.Heating.PauseStartTime`);
-        const pauseDuration = global.get(`${ZONE_NAME}.Heating.PauseDuration`) || 60;
-        
-        if (pauseStartTime) {
-            const minutesElapsed = (Date.now() - pauseStartTime) / 1000 / 60;
-            const remainingMinutes = Math.max(0, Math.ceil(pauseDuration - minutesElapsed));
-            
+    if (roomState.mode === 'pause') {
+        if (roomState.modeExpires) {
+            const remainingMinutes = Math.max(0, Math.ceil((roomState.modeExpires - Date.now()) / 60000));
+
             log(`\n⏸️ PAUSE MODE ACTIVE ⏸️`);
             log(`Remaining:      ${remainingMinutes} minutes`);
             log(`Override:       Heating forced OFF (all conditions ignored)`);
@@ -595,15 +638,10 @@ async function showRoomStatus(roomName, roomConfig) {
     }
     
     // Boost Mode Status
-    const boostActive = global.get(`${ZONE_NAME}.Heating.BoostMode`);
-    if (boostActive) {
-        const boostStartTime = global.get(`${ZONE_NAME}.Heating.BoostStartTime`);
-        const boostDuration = global.get(`${ZONE_NAME}.Heating.BoostDuration`) || 60;
-        
-        if (boostStartTime) {
-            const minutesElapsed = (Date.now() - boostStartTime) / 1000 / 60;
-            const remainingMinutes = Math.max(0, Math.ceil(boostDuration - minutesElapsed));
-            
+    if (roomState.mode === 'boost') {
+        if (roomState.modeExpires) {
+            const remainingMinutes = Math.max(0, Math.ceil((roomState.modeExpires - Date.now()) / 60000));
+
             log(`\n🚀 BOOST MODE ACTIVE 🚀`);
             log(`Remaining:      ${remainingMinutes} minutes`);
             log(`Override:       All schedules, windows, and rules ignored`);
@@ -706,19 +744,18 @@ async function showRoomStatus(roomName, roomConfig) {
             const anyWindowOpen = devices.windowSensors.some(w => w.capabilitiesObj.alarm_contact.value);
             
             if (anyWindowOpen) {
-                const windowOpenTime = global.get(`${ZONE_NAME}.Heating.WindowOpenTime`);
-                if (windowOpenTime) {
-                    const secondsOpen = Math.floor((Date.now() - windowOpenTime) / 1000);
+                if (roomState.window.openSince) {
+                    const secondsOpen = Math.floor((Date.now() - roomState.window.openSince) / 1000);
                     log(`Window:         🔴 OPEN (${secondsOpen}s)`);
                 } else {
                     log(`Window:         🔴 OPEN`);
                 }
             } else {
                 // Check if we're in the settle delay period (but not during boost/pause modes)
-                const windowClosedTime = global.get(`${ZONE_NAME}.Heating.WindowClosedTime`);
-                if (windowClosedTime && !boostActive && !pauseActive) {
+                const isOverrideMode = roomState.mode === 'boost' || roomState.mode === 'pause';
+                if (roomState.window.closedSince && !isOverrideMode) {
                     const windowClosedDelay = roomConfig.settings.windowClosedDelay || 600;
-                    const secondsSinceClosed = Math.floor((Date.now() - windowClosedTime) / 1000);
+                    const secondsSinceClosed = Math.floor((Date.now() - roomState.window.closedSince) / 1000);
                     const remainingSeconds = Math.max(0, windowClosedDelay - secondsSinceClosed);
                     const remainingMinutes = Math.floor(remainingSeconds / 60);
                     const remainingSecs = remainingSeconds % 60;

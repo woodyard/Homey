@@ -7,6 +7,9 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.3  2026-03-31  Read manual mode from per-device state variable
+//                  - Reads AL_Device_<key>.State instead of combined AL_DeviceStates
+//                  - Faster: only parses one device's state, not the entire blob
 // 6.2  2026-03-04  Persistent diagnostic logging (AL_DiagnostikLog)
 //                  - Logs fade events with timestamp, device, brightness, manual mode
 //                  - Shared log variable with RestoreSavedSettings and AdaptiveLighting
@@ -102,10 +105,13 @@ if (currentTemperature !== null) {
 const fadeActiveUntil = Date.now() + (fadeDuration * 1000) + 2000; // +2s buffer
 global.set(fadeActiveUntilVar, fadeActiveUntil);
 
-// Save manual mode state from AdaptiveLighting (for restore coordination)
-const alStates = JSON.parse(global.get('AL_DeviceStates') || '{}');
+// Save manual mode state from AdaptiveLighting per-device state (for restore coordination)
 const alDeviceKey = deviceId.substring(0, 8);
-const wasManualMode = alStates[alDeviceKey]?.manual === true;
+let wasManualMode = false;
+try {
+  const alRaw = global.get(`AL_Device_${alDeviceKey}.State`);
+  if (alRaw) wasManualMode = JSON.parse(alRaw).manual === true;
+} catch (e) { /* parse error — treat as not manual */ }
 global.set(`${deviceId}_SavedManualMode`, wasManualMode);
 
 log(`Saved: dim=${Math.round(currentBrightness * 100)}%, temp=${currentTemperature !== null ? Math.round(currentTemperature * 100) + '%' : 'N/A'}${wasManualMode ? ' (manual mode)' : ''}`);
