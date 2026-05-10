@@ -2,12 +2,18 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.19.0
-// Date:        2026-03-31
+// Version:     2.19.1
+// Date:        2026-05-10
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.19.1 2026-05-10  Align weekend Morning start to 07:30 + close coverage gap
+//                    - bathroomWeekend / entranceWeekend Morning: 08:30 → 07:30
+//                      and Night endTime extended 07:00 → 07:30 (closes 90-min
+//                      gap that fell back to Night: bathroom 8% / entrance 10%)
+//                    - kidsRoomWeekend Morning: 08:30 → 07:30 (Night 08:30 → 07:30)
+//                    - standardWeekend Morning: 08:00 → 07:30 (Night 08:00 → 07:30)
 // 2.19.0 2026-03-31  Parallel API calls + per-run caching for faster execution
 //                    - Device fetch, sun times, and device list run in parallel
 //                    - Cache getDevices() result to avoid duplicate API calls
@@ -433,34 +439,34 @@ const PROFILES = {
   
   // Kids room weekend - later morning and bedtime
   kidsRoomWeekend: [
-    { name: "Morning",  startTime: "08:30", endTime: "10:00", brightness: 0.35, temperature: 0.7 },
+    { name: "Morning",  startTime: "07:30", endTime: "10:00", brightness: 0.35, temperature: 0.7 },
     { name: "Daytime",  startTime: "10:00", endTime: "19:00", brightness: 0.8,  temperature: 0.5 },
     { name: "Evening",  startTime: "19:00", endTime: "21:00", brightness: 0.35, temperature: 0.7 },
-    { name: "Night",    startTime: "21:00", endTime: "08:30", brightness: 0.05, temperature: 1.0 }
+    { name: "Night",    startTime: "21:00", endTime: "07:30", brightness: 0.05, temperature: 1.0 }
   ],
   
   // Standard weekend - later morning
   standardWeekend: [
-    { name: "Morning",  startTime: "08:00", endTime: "10:00", brightness: 0.35, temperature: 0.7 },
+    { name: "Morning",  startTime: "07:30", endTime: "10:00", brightness: 0.35, temperature: 0.7 },
     { name: "Daytime",  startTime: "10:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
     { name: "Evening",  startTime: "18:00", endTime: "23:00", brightness: 0.30, temperature: 0.7 },
-    { name: "Night",    startTime: "23:00", endTime: "08:00", brightness: 0.15, temperature: 0.9 }
+    { name: "Night",    startTime: "23:00", endTime: "07:30", brightness: 0.15, temperature: 0.9 }
   ],
   
   // Bathroom weekend - gentler morning light, later start
   bathroomWeekend: [
-    { name: "Morning",  startTime: "08:30", endTime: "10:00", brightness: 0.6,  temperature: 0.5 },
+    { name: "Morning",  startTime: "07:30", endTime: "10:00", brightness: 0.6,  temperature: 0.5 },
     { name: "Daytime",  startTime: "10:00", endTime: "21:00", brightness: 0.9,  temperature: 0.4 },
     { name: "Evening",  startTime: "21:00", endTime: "23:00", brightness: 0.25, temperature: 0.8 },
-    { name: "Night",    startTime: "23:00", endTime: "07:00", brightness: 0.08, temperature: 1.0 }
+    { name: "Night",    startTime: "23:00", endTime: "07:30", brightness: 0.08, temperature: 1.0 }
   ],
-  
+
   // Entrance weekend - softer morning light, later start
   entranceWeekend: [
-    { name: "Morning",  startTime: "08:30", endTime: "10:00", brightness: 0.35, temperature: 0.8 },
+    { name: "Morning",  startTime: "07:30", endTime: "10:00", brightness: 0.35, temperature: 0.8 },
     { name: "Daytime",  startTime: "10:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
     { name: "Evening",  startTime: "18:00", endTime: "23:00", brightness: 0.4,  temperature: 0.7 },
-    { name: "Night",    startTime: "23:00", endTime: "07:00", brightness: 0.10, temperature: 1.0 }
+    { name: "Night",    startTime: "23:00", endTime: "07:30", brightness: 0.10, temperature: 1.0 }
   ]
 };
 
