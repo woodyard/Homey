@@ -7,6 +7,12 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 4.0  2026-04-19  Cancel hardware fade via flow card (not setCapabilityValue)
+//                  - Plain setCapabilityValue('dim', X) doesn't interrupt an
+//                    in-progress Zigbee move_to_level transition on many bulbs
+//                  - Now uses runFlowCardAction with duration: 0.5s to force a
+//                    new hardware transition that overrides the running fade
+//                  - Fixes lights continuing to fade when motion returns mid-fade
 // 3.9  2026-03-20  Fast path: skip without API call when no fade active
 //                  - Checks _FadeActiveUntil BEFORE fetching device from Homey
 //                  - No-fade skip now avoids Homey.devices.getDevice() entirely
@@ -164,9 +170,20 @@ try {
   }
 
   // Restore function for a single device
+  // Uses flow card with short duration to cancel any in-progress hardware fade.
+  // Plain setCapabilityValue doesn't interrupt a running move_to_level on many bulbs.
   async function restoreDevice(dev, dim, temp) {
     if (dim !== null && dim !== undefined && dim > 0) {
-      await dev.setCapabilityValue('dim', dim);
+      try {
+        await Homey.flow.runFlowCardAction({
+          uri: `homey:device:${dev.id}`,
+          id: `homey:device:${dev.id}:dim`,
+          args: { dim },
+          duration: 0.5
+        });
+      } catch (e) {
+        await dev.setCapabilityValue('dim', dim);
+      }
     }
     if (temp !== null && temp !== undefined) {
       try {

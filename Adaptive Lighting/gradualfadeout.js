@@ -7,6 +7,12 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.4  2026-04-19  Explicitly turn off lights after fade completes
+//                  - Waits for fade duration, then sets onoff:false on all targets
+//                  - Re-checks _FadeActiveUntil: if cleared by RestoreSavedSettings
+//                    (motion returned), skips turn-off
+//                  - Fixes watchdog firing as backup because normal flow never
+//                    actually turned lights off (only set dim=0, onoff stayed true)
 // 6.3  2026-03-31  Read manual mode from per-device state variable
 //                  - Reads AL_Device_<key>.State instead of combined AL_DeviceStates
 //                  - Faster: only parses one device's state, not the entire blob
@@ -176,23 +182,18 @@ async function fadeViaFlowCard(targetDevice) {
   });
 }
 
+// Determine turn-off targets (members for groups, device itself otherwise)
+const turnOffTargets = isGroup ? members : [device];
+
 if (isGroup) {
   log(`Group detected with ${members.length} members - applying hardware fade to each`);
 
   // Start fade on all members simultaneously via flow card
-  const fadePromises = members.map(member =>
+  await Promise.all(members.map(member =>
     fadeViaFlowCard(member)
-      .then(() => {
-        log(`  ${member.name}: hardware fade started`);
-        return { name: member.name, ok: true };
-      })
-      .catch(e => {
-        log(`  Warning: ${member.name} failed: ${e.message}`);
-        return { name: member.name, ok: false };
-      })
-  );
-
-  await Promise.all(fadePromises);
+      .then(() => log(`  ${member.name}: hardware fade started`))
+      .catch(e => log(`  Warning: ${member.name} failed: ${e.message}`))
+  ));
 
 } else {
   // Single device - apply fade via flow card
@@ -206,6 +207,22 @@ if (isGroup) {
   }
 }
 
-log(`Hardware fade started (${fadeDuration}s) - script exiting`);
+log(`Hardware fade started (${fadeDuration}s) - awaiting completion to turn off`);
 
-return `${device.name}: Fading to off over ${fadeDuration}s`;
+// Wait for fade to finish, then turn off lights (unless cancelled by restore)
+await new Promise(resolve => setTimeout(resolve, fadeDuration * 1000));
+
+// If RestoreSavedSettings cleared the flag (motion returned), skip turn-off
+if ((global.get(fadeActiveUntilVar) || 0) === 0) {
+  log(`Fade cancelled by restore — skipping turn-off`);
+  return `${device.name}: Fade cancelled by motion`;
+}
+
+await Promise.all(turnOffTargets.map(t =>
+  t.setCapabilityValue('onoff', false)
+    .then(() => log(`  ${t.name}: turned off`))
+    .catch(e => log(`  ${t.name}: turn-off failed: ${e.message}`))
+));
+global.set(fadeActiveUntilVar, 0);
+
+return `${device.name}: Faded and turned off`;
