@@ -7,11 +7,13 @@
 //        Each room's config (devices, sensors, variables) is defined below.
 //
 // Setup: Create a Homey flow per room:
-//        Trigger: "Every 2 minutes"
+//        Trigger: "Every 1 minute"
 //        Action:  Run HomeyScript "Room_Watchdog" with argument "B9"
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.6.1 2026-06-10 Docs: setup comment said "Every 2 minutes" — the actual
+//                  flows trigger every 1 minute
 // 2.6  2026-06-10  Restore wins: hold turn-off when room is active at fade end
 //                  - Motion or zone activity (door) at fade end now skips the
 //                    turn-off and LEAVES the fade window open, so the pending

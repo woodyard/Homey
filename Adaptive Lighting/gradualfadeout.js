@@ -7,6 +7,11 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.7  2026-06-10  Skip fade entirely when the light is already off
+//                  - An off light can still report dim>0, so the dim-to-0
+//                    flow card could briefly switch it on to "fade" it
+//                  - Also avoids saving state and opening a restore window
+//                    for a light that was never on
 // 6.6  2026-06-10  Restore wins: hold turn-off when zone is active at fade end
 //                  - If someone walks in (door/motion) during the fade, skip
 //                    the turn-off and LEAVE the fade window open so the
@@ -106,6 +111,14 @@ try {
   device = await Homey.devices.getDevice({ id: deviceId });
 } catch (error) {
   return `ERROR: Device not found with ID: ${deviceId}`;
+}
+
+// Light already off? Nothing to fade — don't save state or open a restore
+// window (an off light can still report dim>0, which would otherwise make
+// the dim-to-0 flow card briefly switch it on)
+if (device.capabilitiesObj?.onoff?.value !== true) {
+  diagLog(`FADE-SKIP | ${device.name} | already off`);
+  return `${device.name}: Already off`;
 }
 
 log(`Fading device: ${device.name}`);
