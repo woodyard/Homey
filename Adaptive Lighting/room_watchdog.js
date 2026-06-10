@@ -12,6 +12,11 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.7  2026-06-10  Turn-off completion logging + verify/resend
+//                  - Logs WATCHDOG-OFF when the turn-off actually executes
+//                  - 3s later re-checks the primary light: if Homey still
+//                    shows it on (lost command or late Zigbee report),
+//                    resends off — unless the room became active
 // 2.6.1 2026-06-10 Docs: setup comment said "Every 2 minutes" — the actual
 //                  flows trigger every 1 minute
 // 2.6  2026-06-10  Restore wins: hold turn-off when room is active at fade end
@@ -330,6 +335,32 @@ await Promise.all(targets.map(t =>
     })
 ));
 global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
+diagLog(`WATCHDOG-OFF | ${ROOM.name} | off sent to ${targets.length} light(s)`);
+
+// Verify: a lost command or a late Zigbee report can leave/flip Homey's
+// state back to on. Re-check once and resend the off if needed — unless the
+// room became active in the meantime (then the lights are wanted on).
+await new Promise(resolve => setTimeout(resolve, 3000));
+try {
+  const check = await Homey.devices.getDevice({ id: ROOM.primaryLight });
+  if (check.capabilitiesObj?.onoff?.value === true) {
+    const restoredLate = (global.get(`${ROOM.primaryLight}_RestoredAt`) || 0) >= fadeStartedAt;
+    let zoneActiveNow = false;
+    try {
+      const zone = await Homey.zones.getZone({ id: device.zone });
+      zoneActiveNow = zone?.active === true;
+    } catch (e) { /* zone lookup failed — treat as inactive */ }
+    if (restoredLate || zoneActiveNow) {
+      diagLog(`WATCHDOG-VERIFY | ${ROOM.name} | back on but room active — leaving on`);
+    } else {
+      diagLog(`WATCHDOG-VERIFY | ${ROOM.name} | still on 3s after off — resending`);
+      await Promise.all(targets.map(t =>
+        t.setCapabilityValue('onoff', false)
+          .catch(e => diagLog(`WATCHDOG-ERROR | ${ROOM.name} | resend off ${t.name}: ${e.message}`))
+      ));
+    }
+  }
+} catch (e) { /* verification is best-effort */ }
 
 log(`${PREFIX}: fade complete, lights off`);
 return `${PREFIX}: fade + off after ${Math.round(idleDuration)}s idle`;

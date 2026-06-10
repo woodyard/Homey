@@ -7,6 +7,13 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.8  2026-06-10  Turn-off completion logging + verify/resend
+//                  - Logs FADE-OFF when the turn-off actually executes, so a
+//                    dead script run (no FADE-OFF) is distinguishable from a
+//                    turn-off that got undone afterwards
+//                  - 3s later re-checks the device: if Homey still shows it on
+//                    (lost command or late Zigbee report flipping state back),
+//                    resends off — unless the zone is active or a restore ran
 // 6.7  2026-06-10  Skip fade entirely when the light is already off
 //                  - An off light can still report dim>0, so the dim-to-0
 //                    flow card could briefly switch it on to "fade" it
@@ -275,5 +282,31 @@ await Promise.all(turnOffTargets.map(t =>
     })
 ));
 global.set(fadeActiveUntilVar, 0);
+diagLog(`FADE-OFF | ${device.name} | off sent to ${turnOffTargets.length} light(s)`);
+
+// Verify: a lost command or a late Zigbee report can leave/flip Homey's
+// state back to on. Re-check once and resend the off if needed — unless the
+// room became active in the meantime (then the lights are wanted on).
+await new Promise(resolve => setTimeout(resolve, 3000));
+try {
+  const check = await Homey.devices.getDevice({ id: deviceId });
+  if (check.capabilitiesObj?.onoff?.value === true) {
+    const restoredLate = (global.get(`${deviceId}_RestoredAt`) || 0) >= fadeStartedAt;
+    let zoneActiveNow = false;
+    try {
+      const zone = await Homey.zones.getZone({ id: device.zone });
+      zoneActiveNow = zone?.active === true;
+    } catch (e) { /* zone lookup failed — treat as inactive */ }
+    if (restoredLate || zoneActiveNow) {
+      diagLog(`FADE-VERIFY | ${device.name} | back on but room active — leaving on`);
+    } else {
+      diagLog(`FADE-VERIFY | ${device.name} | still on 3s after off — resending`);
+      await Promise.all(turnOffTargets.map(t =>
+        t.setCapabilityValue('onoff', false)
+          .catch(e => diagLog(`FADE-ERROR | ${t.name} | resend off failed: ${e.message}`))
+      ));
+    }
+  }
+} catch (e) { /* verification is best-effort */ }
 
 return `${device.name}: Faded and turned off`;
