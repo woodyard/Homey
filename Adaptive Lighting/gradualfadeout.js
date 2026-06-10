@@ -7,6 +7,13 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.6  2026-06-10  Restore wins: hold turn-off when zone is active at fade end
+//                  - If someone walks in (door/motion) during the fade, skip
+//                    the turn-off and LEAVE the fade window open so the
+//                    pending RestoreSavedSettings restores brightness
+//                  - Restore window buffer extended 2s → 15s: restore often
+//                    executes ~10s after the zone-active trigger and used to
+//                    miss the window entirely (fast-path skip, no restore)
 // 6.5  2026-06-10  Reliable turn-off: check _RestoredAt instead of flag==0
 //                  - RestoreSavedSettings' stale-cleanup used to zero an
 //                    already-expired _FadeActiveUntil right around wake-up,
@@ -57,7 +64,10 @@
 // 4.0  2025-12-22  Reusable for any device, accepts device ID as argument
 // -------------------------------------------------------------------------
 
-const fadeDuration = 20; // seconds
+const fadeDuration = 20;     // seconds
+const restoreBuffer = 15;    // seconds the restore window stays open after the
+                             // fade ends — RestoreSavedSettings can run ~10s
+                             // after the zone-active trigger under load
 
 // ====== PERSISTENT DIAGNOSTIC LOG ======
 // Shared log across GradualFadeOut, RestoreSavedSettings, and AdaptiveLighting.
@@ -115,9 +125,9 @@ if (currentTemperature !== null) {
   global.set(savedTempVar, currentTemperature);
 }
 
-// Store timestamp when fade will complete (with small buffer for restore window)
+// Store timestamp when fade will complete (with buffer for restore window)
 const fadeStartedAt = Date.now();
-const fadeActiveUntil = fadeStartedAt + (fadeDuration * 1000) + 2000; // +2s buffer
+const fadeActiveUntil = fadeStartedAt + ((fadeDuration + restoreBuffer) * 1000);
 global.set(fadeActiveUntilVar, fadeActiveUntil);
 
 // Save manual mode state from AdaptiveLighting per-device state (for restore coordination)
@@ -229,6 +239,19 @@ if (restoredAt >= fadeStartedAt || (global.get(fadeActiveUntilVar) || 0) === 0) 
   log(`Fade cancelled by restore — skipping turn-off`);
   return `${device.name}: Fade cancelled by motion`;
 }
+
+// If the zone is active (someone walked in through the door / motion), skip
+// the turn-off and leave the restore window open — the zone-active flow has
+// already queued RestoreSavedSettings, which will restore brightness even if
+// it runs a few seconds from now.
+try {
+  const zone = await Homey.zones.getZone({ id: device.zone });
+  if (zone?.active === true) {
+    log(`Zone active at fade end — leaving restore window open, skipping turn-off`);
+    diagLog(`FADE-HOLD | ${device.name} | zone active at fade end — restore will handle`);
+    return `${device.name}: zone active, turn-off skipped`;
+  }
+} catch (e) { /* zone lookup failed — fall through to turn-off */ }
 
 await Promise.all(turnOffTargets.map(t =>
   t.setCapabilityValue('onoff', false)

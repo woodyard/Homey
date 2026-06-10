@@ -12,6 +12,13 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.6  2026-06-10  Restore wins: hold turn-off when room is active at fade end
+//                  - Motion or zone activity (door) at fade end now skips the
+//                    turn-off and LEAVES the fade window open, so the pending
+//                    RestoreSavedSettings restores brightness (previously the
+//                    flags were zeroed, making the late restore a no-op)
+//                  - Restore window buffer extended 2s → 15s (matches
+//                    GradualFadeOut v6.6)
 // 2.5  2026-06-10  Reliable turn-off + error visibility
 //                  - Skip turn-off via _RestoredAt marker instead of flag==0
 //                    (expired flags used to be zeroed by restore's stale
@@ -77,6 +84,9 @@ const ROOMS = {
 // ====== SETTINGS ======
 const DEFAULT_INACTIVITY = 300;
 const FADE_DURATION = 20;
+const RESTORE_BUFFER = 15; // Seconds the restore window stays open after the fade
+                           // ends — RestoreSavedSettings can run ~10s after the
+                           // zone-active trigger under load
 const WATCHDOG_GRACE = 60; // Extra seconds beyond inactivity threshold before watchdog acts
                            // Prevents racing with the normal inactivity flow
 
@@ -180,7 +190,7 @@ if (currentTemp !== null) {
 
 // Set fade-active timestamp (same as GradualFadeOut)
 const fadeStartedAt = Date.now();
-const fadeUntil = fadeStartedAt + (FADE_DURATION * 1000) + 2000;
+const fadeUntil = fadeStartedAt + ((FADE_DURATION + RESTORE_BUFFER) * 1000);
 global.set(`${ROOM.primaryLight}_FadeActiveUntil`, fadeUntil);
 
 // Save manual mode state from AdaptiveLighting per-device state (for RestoreSavedSettings coordination)
@@ -287,22 +297,26 @@ if (restoredAt >= fadeStartedAt || flagCleared) {
   return `${PREFIX}: fade cancelled by restore`;
 }
 
-// Re-check motion right before turn-off — if the zone never went inactive
-// (e.g. door activity kept it active), a returning person fires no restore
-let motionNow = false;
+// Re-check activity right before turn-off — someone may have walked in
+// (door/motion) during the fade. Skip the turn-off and LEAVE the restore
+// window open: the zone-active flow has already queued RestoreSavedSettings,
+// which will restore brightness even if it runs a few seconds from now.
+let activityNow = false;
 for (const sensorId of ROOM.motionSensors) {
   try {
     const sensor = await Homey.devices.getDevice({ id: sensorId });
-    if (sensor.capabilitiesObj?.alarm_motion?.value === true) { motionNow = true; break; }
+    if (sensor.capabilitiesObj?.alarm_motion?.value === true) { activityNow = true; break; }
   } catch (e) { /* sensor unreachable — ignore */ }
 }
-if (motionNow) {
-  global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
-  for (const extraId of (ROOM.extraLights || [])) {
-    global.set(`${extraId}_FadeActiveUntil`, 0);
-  }
-  diagLog(`WATCHDOG-CANCEL | ${ROOM.name} | motion returned during fade — turn-off skipped`);
-  return `${PREFIX}: motion returned during fade, turn-off skipped`;
+if (!activityNow) {
+  try {
+    const zone = await Homey.zones.getZone({ id: device.zone });
+    activityNow = zone?.active === true;
+  } catch (e) { /* zone lookup failed — fall through to turn-off */ }
+}
+if (activityNow) {
+  diagLog(`WATCHDOG-HOLD | ${ROOM.name} | activity at fade end — restore will handle`);
+  return `${PREFIX}: activity returned during fade, turn-off skipped`;
 }
 
 await Promise.all(targets.map(t =>
