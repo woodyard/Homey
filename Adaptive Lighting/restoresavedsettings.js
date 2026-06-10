@@ -7,6 +7,13 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 4.1  2026-06-10  Explicit restore marker; keep expired fade flag intact
+//                  - Real restore now sets ${deviceId}_RestoredAt timestamp
+//                  - Fast path no longer zeroes _FadeActiveUntil: the stale
+//                    cleanup raced GradualFadeOut/watchdog's post-fade check,
+//                    which read flag==0 as "restore happened" and skipped the
+//                    final turn-off (lights stuck at mid-fade dim until the
+//                    watchdog cleaned up minutes later)
 // 4.0  2026-04-19  Cancel hardware fade via flow card (not setCapabilityValue)
 //                  - Plain setCapabilityValue('dim', X) doesn't interrupt an
 //                    in-progress Zigbee move_to_level transition on many bulbs
@@ -101,8 +108,9 @@ try {
     if (staleVal !== null) {
       global.set(savedDimVar, null);
       global.set(savedTempVar, null);
-      global.set(fadeActiveUntilVar, 0);
       global.set(`${deviceId}_SavedManualMode`, null);
+      // NOTE: do NOT zero _FadeActiveUntil here — it is already expired, and
+      // zeroing it races GradualFadeOut/watchdog's post-fade turn-off check
     }
     return `No active fade for ${deviceId.substring(0, 8)}, skipped`;
   }
@@ -126,6 +134,10 @@ try {
   // Clear fade timestamp - allows AdaptiveLighting to proceed
   global.set(fadeActiveUntilVar, 0);
   log(`Fade timestamp cleared`);
+
+  // Mark that a real restore happened — GradualFadeOut/watchdog check this
+  // timestamp to decide whether to skip their final turn-off
+  global.set(`${deviceId}_RestoredAt`, Date.now());
 
   // If device was in manual mode before fade, signal AdaptiveLighting to preserve it
   const wasManualMode = global.get(`${deviceId}_SavedManualMode`);

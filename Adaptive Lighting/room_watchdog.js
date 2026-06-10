@@ -12,6 +12,15 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.5  2026-06-10  Reliable turn-off + error visibility
+//                  - Skip turn-off via _RestoredAt marker instead of flag==0
+//                    (expired flags used to be zeroed by restore's stale
+//                    cleanup, faking a "restore happened" signal)
+//                  - Re-checks motion sensors right before turn-off: a person
+//                    returning while the zone stayed active (e.g. door kept it
+//                    active) fires no restore, so don't turn off on them
+//                  - Fade/turn-off/target-collection failures now logged to
+//                    AL_DiagnostikLog (WATCHDOG-ERROR) instead of swallowed
 // 2.4  2026-03-31  Read manual mode from per-device state variable
 //                  - Reads AL_Device_<key>.State instead of combined AL_DeviceStates
 //                  - Faster: only parses one device's state, not the entire blob
@@ -170,7 +179,8 @@ if (currentTemp !== null) {
 }
 
 // Set fade-active timestamp (same as GradualFadeOut)
-const fadeUntil = Date.now() + (FADE_DURATION * 1000) + 2000;
+const fadeStartedAt = Date.now();
+const fadeUntil = fadeStartedAt + (FADE_DURATION * 1000) + 2000;
 global.set(`${ROOM.primaryLight}_FadeActiveUntil`, fadeUntil);
 
 // Save manual mode state from AdaptiveLighting per-device state (for RestoreSavedSettings coordination)
@@ -204,45 +214,50 @@ async function fadeDevice(targetDevice) {
 }
 
 // Collect all lights to fade
-const allDevices = Object.values(await Homey.devices.getDevices());
 let targets = [];
+try {
+  const allDevices = Object.values(await Homey.devices.getDevices());
 
-// Check if primary light is a group (find members)
-const isGroup = !device.capabilities?.includes('button.migrate_v3');
-let members = allDevices.filter(d =>
-  d.name.startsWith(device.name + ' ') && d.name !== device.name && d.class === 'light'
-);
-if (members.length === 0 && isGroup) {
-  members = allDevices.filter(d =>
-    d.zone === device.zone && d.id !== device.id && d.class === 'light'
-      && !(ROOM.extraLights || []).includes(d.id) // don't double-count extra lights
+  // Check if primary light is a group (find members)
+  const isGroup = !device.capabilities?.includes('button.migrate_v3');
+  let members = allDevices.filter(d =>
+    d.name.startsWith(device.name + ' ') && d.name !== device.name && d.class === 'light'
   );
-}
-targets = members.length > 0 ? members : [device];
+  if (members.length === 0 && isGroup) {
+    members = allDevices.filter(d =>
+      d.zone === device.zone && d.id !== device.id && d.class === 'light'
+        && !(ROOM.extraLights || []).includes(d.id) // don't double-count extra lights
+    );
+  }
+  targets = members.length > 0 ? members : [device];
 
-// Add extra lights (non-group lights in the same room)
-if (ROOM.extraLights) {
-  for (const extraId of ROOM.extraLights) {
-    const extraDevice = await Homey.devices.getDevice({ id: extraId });
-    if (extraDevice.capabilitiesObj?.onoff?.value === true) {
-      // Save state for extra lights too
-      const extraDim = extraDevice.capabilitiesObj?.dim?.value || 0;
-      const extraTemp = extraDevice.capabilitiesObj?.light_temperature?.value || null;
-      global.set(`${extraId}_SavedDim`, extraDim);
-      if (extraTemp !== null) global.set(`${extraId}_SavedTemp`, extraTemp);
-      global.set(`${extraId}_FadeActiveUntil`, fadeUntil);
+  // Add extra lights (non-group lights in the same room)
+  if (ROOM.extraLights) {
+    for (const extraId of ROOM.extraLights) {
+      const extraDevice = await Homey.devices.getDevice({ id: extraId });
+      if (extraDevice.capabilitiesObj?.onoff?.value === true) {
+        // Save state for extra lights too
+        const extraDim = extraDevice.capabilitiesObj?.dim?.value || 0;
+        const extraTemp = extraDevice.capabilitiesObj?.light_temperature?.value || null;
+        global.set(`${extraId}_SavedDim`, extraDim);
+        if (extraTemp !== null) global.set(`${extraId}_SavedTemp`, extraTemp);
+        global.set(`${extraId}_FadeActiveUntil`, fadeUntil);
 
-      const extraAlKey = extraId.substring(0, 8);
-      let extraManual = false;
-      try {
-        const extraAlRaw = global.get(`AL_Device_${extraAlKey}.State`);
-        if (extraAlRaw) extraManual = JSON.parse(extraAlRaw).manual === true;
-      } catch (e) { /* parse error — treat as not manual */ }
-      global.set(`${extraId}_SavedManualMode`, extraManual);
+        const extraAlKey = extraId.substring(0, 8);
+        let extraManual = false;
+        try {
+          const extraAlRaw = global.get(`AL_Device_${extraAlKey}.State`);
+          if (extraAlRaw) extraManual = JSON.parse(extraAlRaw).manual === true;
+        } catch (e) { /* parse error — treat as not manual */ }
+        global.set(`${extraId}_SavedManualMode`, extraManual);
 
-      targets.push(extraDevice);
+        targets.push(extraDevice);
+      }
     }
   }
+} catch (e) {
+  diagLog(`WATCHDOG-ERROR | ${ROOM.name} | target collection failed: ${e.message}`);
+  if (targets.length === 0) targets = [device]; // fall back to primary light only
 }
 
 // Fade all targets in parallel
@@ -250,7 +265,11 @@ log(`${PREFIX}: fading ${targets.length} lights`);
 const results = await Promise.all(targets.map(t =>
   fadeDevice(t)
     .then(() => { log(`  ${t.name}: fade started`); return true; })
-    .catch(e => { log(`  ${t.name}: failed: ${e.message}`); return false; })
+    .catch(e => {
+      log(`  ${t.name}: failed: ${e.message}`);
+      diagLog(`WATCHDOG-ERROR | ${ROOM.name} | fade ${t.name}: ${e.message}`);
+      return false;
+    })
 ));
 const ok = results.filter(r => r).length;
 log(`${PREFIX}: ${ok}/${targets.length} lights fading`);
@@ -258,17 +277,41 @@ log(`${PREFIX}: ${ok}/${targets.length} lights fading`);
 // Wait for fade to complete, then ensure lights are fully off
 await new Promise(resolve => setTimeout(resolve, FADE_DURATION * 1000));
 
-// Check if fade was cancelled (RestoreSavedSettings clears the flag on motion)
-const fadeCancelled = (global.get(`${ROOM.primaryLight}_FadeActiveUntil`) || 0) === 0;
-if (fadeCancelled) {
+// Skip turn-off only if a real restore happened (motion returned).
+// _RestoredAt is set by RestoreSavedSettings when it actually restores;
+// flag==0 alone was ambiguous (expired flags used to be zeroed as cleanup).
+const restoredAt = global.get(`${ROOM.primaryLight}_RestoredAt`) || 0;
+const flagCleared = (global.get(`${ROOM.primaryLight}_FadeActiveUntil`) || 0) === 0;
+if (restoredAt >= fadeStartedAt || flagCleared) {
   log(`${PREFIX}: fade was cancelled (motion detected) — skipping turn-off`);
   return `${PREFIX}: fade cancelled by restore`;
+}
+
+// Re-check motion right before turn-off — if the zone never went inactive
+// (e.g. door activity kept it active), a returning person fires no restore
+let motionNow = false;
+for (const sensorId of ROOM.motionSensors) {
+  try {
+    const sensor = await Homey.devices.getDevice({ id: sensorId });
+    if (sensor.capabilitiesObj?.alarm_motion?.value === true) { motionNow = true; break; }
+  } catch (e) { /* sensor unreachable — ignore */ }
+}
+if (motionNow) {
+  global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
+  for (const extraId of (ROOM.extraLights || [])) {
+    global.set(`${extraId}_FadeActiveUntil`, 0);
+  }
+  diagLog(`WATCHDOG-CANCEL | ${ROOM.name} | motion returned during fade — turn-off skipped`);
+  return `${PREFIX}: motion returned during fade, turn-off skipped`;
 }
 
 await Promise.all(targets.map(t =>
   t.setCapabilityValue('onoff', false)
     .then(() => log(`  ${t.name}: turned off`))
-    .catch(e => log(`  ${t.name}: turn-off failed: ${e.message}`))
+    .catch(e => {
+      log(`  ${t.name}: turn-off failed: ${e.message}`);
+      diagLog(`WATCHDOG-ERROR | ${ROOM.name} | turn-off ${t.name}: ${e.message}`);
+    })
 ));
 global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
 

@@ -7,6 +7,14 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.5  2026-06-10  Reliable turn-off: check _RestoredAt instead of flag==0
+//                  - RestoreSavedSettings' stale-cleanup used to zero an
+//                    already-expired _FadeActiveUntil right around wake-up,
+//                    mimicking the "restore cancelled me" signal — turn-off
+//                    was skipped and lights stuck at mid-fade dim
+//                  - Now skips turn-off only if a real restore happened
+//                    (_RestoredAt >= fade start) or flag was genuinely cleared
+//                  - Turn-off failures now logged to AL_DiagnostikLog
 // 6.4  2026-04-19  Explicitly turn off lights after fade completes
 //                  - Waits for fade duration, then sets onoff:false on all targets
 //                  - Re-checks _FadeActiveUntil: if cleared by RestoreSavedSettings
@@ -108,7 +116,8 @@ if (currentTemperature !== null) {
 }
 
 // Store timestamp when fade will complete (with small buffer for restore window)
-const fadeActiveUntil = Date.now() + (fadeDuration * 1000) + 2000; // +2s buffer
+const fadeStartedAt = Date.now();
+const fadeActiveUntil = fadeStartedAt + (fadeDuration * 1000) + 2000; // +2s buffer
 global.set(fadeActiveUntilVar, fadeActiveUntil);
 
 // Save manual mode state from AdaptiveLighting per-device state (for restore coordination)
@@ -212,8 +221,11 @@ log(`Hardware fade started (${fadeDuration}s) - awaiting completion to turn off`
 // Wait for fade to finish, then turn off lights (unless cancelled by restore)
 await new Promise(resolve => setTimeout(resolve, fadeDuration * 1000));
 
-// If RestoreSavedSettings cleared the flag (motion returned), skip turn-off
-if ((global.get(fadeActiveUntilVar) || 0) === 0) {
+// Skip turn-off only if a real restore happened (motion returned).
+// _RestoredAt is set by RestoreSavedSettings when it actually restores;
+// flag==0 alone was ambiguous (expired flags used to be zeroed as cleanup).
+const restoredAt = global.get(`${deviceId}_RestoredAt`) || 0;
+if (restoredAt >= fadeStartedAt || (global.get(fadeActiveUntilVar) || 0) === 0) {
   log(`Fade cancelled by restore — skipping turn-off`);
   return `${device.name}: Fade cancelled by motion`;
 }
@@ -221,7 +233,10 @@ if ((global.get(fadeActiveUntilVar) || 0) === 0) {
 await Promise.all(turnOffTargets.map(t =>
   t.setCapabilityValue('onoff', false)
     .then(() => log(`  ${t.name}: turned off`))
-    .catch(e => log(`  ${t.name}: turn-off failed: ${e.message}`))
+    .catch(e => {
+      log(`  ${t.name}: turn-off failed: ${e.message}`);
+      diagLog(`FADE-ERROR | ${t.name} | turn-off failed: ${e.message}`);
+    })
 ));
 global.set(fadeActiveUntilVar, 0);
 
