@@ -12,6 +12,19 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.9  2026-07-06  Fix: setTimeout is not defined in HomeyScript
+//                  - The post-fade wait and 3s verify wait used
+//                    `new Promise(r => setTimeout(r, ...))`; HomeyScript has
+//                    no setTimeout, so the watchdog threw right after starting
+//                    the fade and never reached the turn-off — leaving the
+//                    backup path as dead as the primary fade
+//                  - Switched both waits to the built-in async wait(ms)
+// 2.8  2026-07-05  Log the silent "cancelled by restore" exit
+//                  - That branch only called log() before, invisible in
+//                    AL_DiagnostikLog - now also diagLogs whether the exit
+//                    was a real _RestoredAt restore or a bare cleared flag,
+//                    so a stalled/raced fade can be told apart from a
+//                    genuine motion-triggered cancel
 // 2.7  2026-06-10  Turn-off completion logging + verify/resend
 //                  - Logs WATCHDOG-OFF when the turn-off actually executes
 //                  - 3s later re-checks the primary light: if Homey still
@@ -292,7 +305,8 @@ const ok = results.filter(r => r).length;
 log(`${PREFIX}: ${ok}/${targets.length} lights fading`);
 
 // Wait for fade to complete, then ensure lights are fully off
-await new Promise(resolve => setTimeout(resolve, FADE_DURATION * 1000));
+// NOTE: HomeyScript has no setTimeout — use the built-in async wait(ms)
+await wait(FADE_DURATION * 1000);
 
 // Skip turn-off only if a real restore happened (motion returned).
 // _RestoredAt is set by RestoreSavedSettings when it actually restores;
@@ -301,6 +315,7 @@ const restoredAt = global.get(`${ROOM.primaryLight}_RestoredAt`) || 0;
 const flagCleared = (global.get(`${ROOM.primaryLight}_FadeActiveUntil`) || 0) === 0;
 if (restoredAt >= fadeStartedAt || flagCleared) {
   log(`${PREFIX}: fade was cancelled (motion detected) — skipping turn-off`);
+  diagLog(`WATCHDOG-CANCELLED | ${ROOM.name} | realRestore=${restoredAt >= fadeStartedAt} flagCleared=${flagCleared}`);
   return `${PREFIX}: fade cancelled by restore`;
 }
 
@@ -340,7 +355,7 @@ diagLog(`WATCHDOG-OFF | ${ROOM.name} | off sent to ${targets.length} light(s)`);
 // Verify: a lost command or a late Zigbee report can leave/flip Homey's
 // state back to on. Re-check once and resend the off if needed — unless the
 // room became active in the meantime (then the lights are wanted on).
-await new Promise(resolve => setTimeout(resolve, 3000));
+await wait(3000);
 try {
   const check = await Homey.devices.getDevice({ id: ROOM.primaryLight });
   if (check.capabilitiesObj?.onoff?.value === true) {

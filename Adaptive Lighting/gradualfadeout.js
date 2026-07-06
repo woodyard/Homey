@@ -4,15 +4,44 @@
 //
 // Usage: Call with device ID as argument
 // Example: Run HomeyScript with argument "1847a2b3-9261-4cb4-882c-14c219e4a4a3"
+// Multi-device: Pass a comma-separated list to fade several lights from ONE
+//               script run, e.g. "id1,id2" - useful for rooms with more than
+//               one independent light (avoids running two long-lived scripts
+//               in parallel, which increases the odds of them stepping on
+//               each other's hardware fade commands)
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.10 2026-07-06  Fix: setTimeout is not defined in HomeyScript
+//                  - The post-fade wait and 3s verify wait used
+//                    `new Promise(r => setTimeout(r, ...))`; HomeyScript has
+//                    no setTimeout, so every run threw ("setTimeout is not
+//                    defined") right after starting the hardware fade — the
+//                    light dimmed to 0 but onoff was never set false and
+//                    _FadeActiveUntil was left stale (seen as FADE-ERROR in
+//                    AL_DiagnostikLog for E9 Loft/Garderobe + B9 Lys)
+//                  - Switched both waits to the built-in async wait(ms)
+// 6.9  2026-07-05  Multi-device argument + log silent cancel path
+//                  - args[0] can now be a comma-separated device ID list;
+//                    each device is faded/turned off in parallel within the
+//                    SAME script invocation (Promise.all), instead of one
+//                    script per device
+//                  - Reduces concurrent long-running scripts touching the
+//                    same room (e.g. E9 Loft + E9 Garderobe), which lowers
+//                    the chance of two independent fade/restore cycles
+//                    racing on the same device's hardware transition
+//                  - "Cancelled by restore" early-exit now also calls
+//                    diagLog() (was log()-only, invisible in
+//                    AL_DiagnostikLog) - records whether the exit was a
+//                    real _RestoredAt restore or a bare cleared flag, so a
+//                    stalled/raced fade can be told apart from a genuine
+//                    motion-triggered cancel
 // 6.8  2026-06-10  Turn-off completion logging + verify/resend
 //                  - Logs FADE-OFF when the turn-off actually executes, so a
 //                    dead script run (no FADE-OFF) is distinguishable from a
 //                    turn-off that got undone afterwards
 //                  - 3s later re-checks the device: if Homey still shows it on
-//                    (lost command or late Zigbee report flipping state back),
+//                    (lost command or late Zigbee report flipping state back)
 //                    resends off — unless the zone is active or a restore ran
 // 6.7  2026-06-10  Skip fade entirely when the light is already off
 //                  - An off light can still report dim>0, so the dim-to-0
@@ -88,6 +117,7 @@ const restoreBuffer = 15;    // seconds the restore window stays open after the
 // Actions logged:
 //   FADE-SAVE  (GradualFadeOut)   - brightness/temp saved before fade, manual mode state
 //   FADE-SKIP  (GradualFadeOut)   - light already off, no fade needed
+//   FADE-CANCELLED (GradualFadeOut) - fade aborted early because of a restore/cleared flag
 //   RESTORE    (RestoreSavedSettings) - brightness/temp restored, manual mode preserved
 //   RESTORE-SKIP (RestoreSavedSettings) - fade expired, nothing to restore
 //   AL-SKIP-FADE (AdaptiveLighting) - skipped because fade/restore in progress
@@ -101,74 +131,6 @@ function diagLog(entry) {
   const lines = (logText + newEntry).split('\n').filter(l => l.length > 0);
   const trimmed = lines.slice(-500).join('\n') + '\n';
   global.set('AL_DiagnostikLog', trimmed);
-}
-
-// Get device ID from argument, or use default (Bathroom 9)
-const deviceId = args[0] || "b8591f4d-a493-4de7-9745-c13cd07e033c";
-
-log(`Device ID: ${deviceId} ${args[0] ? '(from argument)' : '(default)'}`);
-
-if (!deviceId) {
-  return 'ERROR: No device ID provided. Pass device ID as argument.';
-}
-
-// Get the device
-let device;
-try {
-  device = await Homey.devices.getDevice({ id: deviceId });
-} catch (error) {
-  return `ERROR: Device not found with ID: ${deviceId}`;
-}
-
-// Light already off? Nothing to fade — don't save state or open a restore
-// window (an off light can still report dim>0, which would otherwise make
-// the dim-to-0 flow card briefly switch it on)
-if (device.capabilitiesObj?.onoff?.value !== true) {
-  diagLog(`FADE-SKIP | ${device.name} | already off`);
-  return `${device.name}: Already off`;
-}
-
-log(`Fading device: ${device.name}`);
-
-// Get current brightness and temperature
-const currentBrightness = device.capabilitiesObj?.dim?.value || 0;
-const currentTemperature = device.capabilitiesObj?.light_temperature?.value || null;
-
-// Create unique variable names based on device ID
-const savedDimVar = `${deviceId}_SavedDim`;
-const savedTempVar = `${deviceId}_SavedTemp`;
-const fadeActiveUntilVar = `${deviceId}_FadeActiveUntil`;
-
-// Save current settings to global variables
-global.set(savedDimVar, currentBrightness);
-if (currentTemperature !== null) {
-  global.set(savedTempVar, currentTemperature);
-}
-
-// Store timestamp when fade will complete (with buffer for restore window)
-const fadeStartedAt = Date.now();
-const fadeActiveUntil = fadeStartedAt + ((fadeDuration + restoreBuffer) * 1000);
-global.set(fadeActiveUntilVar, fadeActiveUntil);
-
-// Save manual mode state from AdaptiveLighting per-device state (for restore coordination)
-const alDeviceKey = deviceId.substring(0, 8);
-let wasManualMode = false;
-try {
-  const alRaw = global.get(`AL_Device_${alDeviceKey}.State`);
-  if (alRaw) wasManualMode = JSON.parse(alRaw).manual === true;
-} catch (e) { /* parse error — treat as not manual */ }
-global.set(`${deviceId}_SavedManualMode`, wasManualMode);
-
-log(`Saved: dim=${Math.round(currentBrightness * 100)}%, temp=${currentTemperature !== null ? Math.round(currentTemperature * 100) + '%' : 'N/A'}${wasManualMode ? ' (manual mode)' : ''}`);
-log(`Fade active until: ${new Date(fadeActiveUntil).toLocaleTimeString()}`);
-diagLog(`FADE-SAVE | ${device.name} | dim=${Math.round(currentBrightness * 100)}% temp=${currentTemperature !== null ? Math.round(currentTemperature * 100) + '%' : 'N/A'} | manual=${wasManualMode} | fadeUntil=${new Date(fadeActiveUntil).toLocaleTimeString('da-DK', { timeZone: 'Europe/Copenhagen' })}`);
-
-// If light is already off or very dim, just turn it off
-if (currentBrightness <= 0.05) {
-  await device.setCapabilityValue('onoff', false);
-  global.set(fadeActiveUntilVar, 0); // Clear - no fade needed
-  diagLog(`FADE-SKIP | ${device.name} | already off/very dim (${Math.round(currentBrightness * 100)}%)`);
-  return `${device.name}: Already off or very dim`;
 }
 
 // Find group members
@@ -203,14 +165,9 @@ async function findGroupMembers(groupDevice) {
   return [];
 }
 
-// Check if it's a group
-const members = await findGroupMembers(device);
-const isGroup = members.length > 0;
-
 // Hardware fade via Flow Card action (duration:true on individual bulbs)
 // Note: Group devices have duration:false, so we always target members individually.
 // Single devices that support duration:true are also handled via flow card.
-
 async function fadeViaFlowCard(targetDevice) {
   const cardId = `homey:device:${targetDevice.id}:dim`;
   await Homey.flow.runFlowCardAction({
@@ -221,92 +178,183 @@ async function fadeViaFlowCard(targetDevice) {
   });
 }
 
-// Determine turn-off targets (members for groups, device itself otherwise)
-const turnOffTargets = isGroup ? members : [device];
-
-if (isGroup) {
-  log(`Group detected with ${members.length} members - applying hardware fade to each`);
-
-  // Start fade on all members simultaneously via flow card
-  await Promise.all(members.map(member =>
-    fadeViaFlowCard(member)
-      .then(() => log(`  ${member.name}: hardware fade started`))
-      .catch(e => log(`  Warning: ${member.name} failed: ${e.message}`))
-  ));
-
-} else {
-  // Single device - apply fade via flow card
-  log(`Single device - applying hardware fade via flow card`);
-
+// Fades and turns off a single device. Returns a result string; never throws
+// (errors are caught and returned as part of the message so Promise.all over
+// multiple devices doesn't abort early on one failure).
+async function processDevice(deviceId) {
   try {
-    await fadeViaFlowCard(device);
-  } catch (e) {
-    log(`Warning: Flow card fade failed: ${e.message}, using instant`);
-    await device.setCapabilityValue('dim', 0);
-  }
-}
+    // Get the device
+    let device;
+    try {
+      device = await Homey.devices.getDevice({ id: deviceId });
+    } catch (error) {
+      return `ERROR: Device not found with ID: ${deviceId}`;
+    }
 
-log(`Hardware fade started (${fadeDuration}s) - awaiting completion to turn off`);
+    // Light already off? Nothing to fade — don't save state or open a restore
+    // window (an off light can still report dim>0, which would otherwise make
+    // the dim-to-0 flow card briefly switch it on)
+    if (device.capabilitiesObj?.onoff?.value !== true) {
+      diagLog(`FADE-SKIP | ${device.name} | already off`);
+      return `${device.name}: Already off`;
+    }
 
-// Wait for fade to finish, then turn off lights (unless cancelled by restore)
-await new Promise(resolve => setTimeout(resolve, fadeDuration * 1000));
+    log(`Fading device: ${device.name}`);
 
-// Skip turn-off only if a real restore happened (motion returned).
-// _RestoredAt is set by RestoreSavedSettings when it actually restores;
-// flag==0 alone was ambiguous (expired flags used to be zeroed as cleanup).
-const restoredAt = global.get(`${deviceId}_RestoredAt`) || 0;
-if (restoredAt >= fadeStartedAt || (global.get(fadeActiveUntilVar) || 0) === 0) {
-  log(`Fade cancelled by restore — skipping turn-off`);
-  return `${device.name}: Fade cancelled by motion`;
-}
+    // Get current brightness and temperature
+    const currentBrightness = device.capabilitiesObj?.dim?.value || 0;
+    const currentTemperature = device.capabilitiesObj?.light_temperature?.value || null;
 
-// If the zone is active (someone walked in through the door / motion), skip
-// the turn-off and leave the restore window open — the zone-active flow has
-// already queued RestoreSavedSettings, which will restore brightness even if
-// it runs a few seconds from now.
-try {
-  const zone = await Homey.zones.getZone({ id: device.zone });
-  if (zone?.active === true) {
-    log(`Zone active at fade end — leaving restore window open, skipping turn-off`);
-    diagLog(`FADE-HOLD | ${device.name} | zone active at fade end — restore will handle`);
-    return `${device.name}: zone active, turn-off skipped`;
-  }
-} catch (e) { /* zone lookup failed — fall through to turn-off */ }
+    // Create unique variable names based on device ID
+    const savedDimVar = `${deviceId}_SavedDim`;
+    const savedTempVar = `${deviceId}_SavedTemp`;
+    const fadeActiveUntilVar = `${deviceId}_FadeActiveUntil`;
 
-await Promise.all(turnOffTargets.map(t =>
-  t.setCapabilityValue('onoff', false)
-    .then(() => log(`  ${t.name}: turned off`))
-    .catch(e => {
-      log(`  ${t.name}: turn-off failed: ${e.message}`);
-      diagLog(`FADE-ERROR | ${t.name} | turn-off failed: ${e.message}`);
-    })
-));
-global.set(fadeActiveUntilVar, 0);
-diagLog(`FADE-OFF | ${device.name} | off sent to ${turnOffTargets.length} light(s)`);
+    // Save current settings to global variables
+    global.set(savedDimVar, currentBrightness);
+    if (currentTemperature !== null) {
+      global.set(savedTempVar, currentTemperature);
+    }
 
-// Verify: a lost command or a late Zigbee report can leave/flip Homey's
-// state back to on. Re-check once and resend the off if needed — unless the
-// room became active in the meantime (then the lights are wanted on).
-await new Promise(resolve => setTimeout(resolve, 3000));
-try {
-  const check = await Homey.devices.getDevice({ id: deviceId });
-  if (check.capabilitiesObj?.onoff?.value === true) {
-    const restoredLate = (global.get(`${deviceId}_RestoredAt`) || 0) >= fadeStartedAt;
-    let zoneActiveNow = false;
+    // Store timestamp when fade will complete (with buffer for restore window)
+    const fadeStartedAt = Date.now();
+    const fadeActiveUntil = fadeStartedAt + ((fadeDuration + restoreBuffer) * 1000);
+    global.set(fadeActiveUntilVar, fadeActiveUntil);
+
+    // Save manual mode state from AdaptiveLighting per-device state (for restore coordination)
+    const alDeviceKey = deviceId.substring(0, 8);
+    let wasManualMode = false;
+    try {
+      const alRaw = global.get(`AL_Device_${alDeviceKey}.State`);
+      if (alRaw) wasManualMode = JSON.parse(alRaw).manual === true;
+    } catch (e) { /* parse error — treat as not manual */ }
+    global.set(`${deviceId}_SavedManualMode`, wasManualMode);
+
+    log(`Saved: dim=${Math.round(currentBrightness * 100)}%, temp=${currentTemperature !== null ? Math.round(currentTemperature * 100) + '%' : 'N/A'}${wasManualMode ? ' (manual mode)' : ''}`);
+    log(`Fade active until: ${new Date(fadeActiveUntil).toLocaleTimeString()}`);
+    diagLog(`FADE-SAVE | ${device.name} | dim=${Math.round(currentBrightness * 100)}% temp=${currentTemperature !== null ? Math.round(currentTemperature * 100) + '%' : 'N/A'} | manual=${wasManualMode} | fadeUntil=${new Date(fadeActiveUntil).toLocaleTimeString('da-DK', { timeZone: 'Europe/Copenhagen' })}`);
+
+    // If light is already off or very dim, just turn it off
+    if (currentBrightness <= 0.05) {
+      await device.setCapabilityValue('onoff', false);
+      global.set(fadeActiveUntilVar, 0); // Clear - no fade needed
+      diagLog(`FADE-SKIP | ${device.name} | already off/very dim (${Math.round(currentBrightness * 100)}%)`);
+      return `${device.name}: Already off or very dim`;
+    }
+
+    // Check if it's a group
+    const members = await findGroupMembers(device);
+    const isGroup = members.length > 0;
+
+    // Determine turn-off targets (members for groups, device itself otherwise)
+    const turnOffTargets = isGroup ? members : [device];
+
+    if (isGroup) {
+      log(`Group detected with ${members.length} members - applying hardware fade to each`);
+
+      // Start fade on all members simultaneously via flow card
+      await Promise.all(members.map(member =>
+        fadeViaFlowCard(member)
+          .then(() => log(`  ${member.name}: hardware fade started`))
+          .catch(e => log(`  Warning: ${member.name} failed: ${e.message}`))
+      ));
+
+    } else {
+      // Single device - apply fade via flow card
+      log(`Single device - applying hardware fade via flow card`);
+
+      try {
+        await fadeViaFlowCard(device);
+      } catch (e) {
+        log(`Warning: Flow card fade failed: ${e.message}, using instant`);
+        await device.setCapabilityValue('dim', 0);
+      }
+    }
+
+    log(`Hardware fade started (${fadeDuration}s) - awaiting completion to turn off`);
+
+    // Wait for fade to finish, then turn off lights (unless cancelled by restore)
+    // NOTE: HomeyScript has no setTimeout — use the built-in async wait(ms)
+    await wait(fadeDuration * 1000);
+
+    // Skip turn-off only if a real restore happened (motion returned).
+    // _RestoredAt is set by RestoreSavedSettings when it actually restores;
+    // flag==0 alone was ambiguous (expired flags used to be zeroed as cleanup).
+    const restoredAt = global.get(`${deviceId}_RestoredAt`) || 0;
+    const flagCleared = (global.get(fadeActiveUntilVar) || 0) === 0;
+    if (restoredAt >= fadeStartedAt || flagCleared) {
+      log(`Fade cancelled by restore — skipping turn-off`);
+      diagLog(`FADE-CANCELLED | ${device.name} | realRestore=${restoredAt >= fadeStartedAt} flagCleared=${flagCleared}`);
+      return `${device.name}: Fade cancelled by motion`;
+    }
+
+    // If the zone is active (someone walked in through the door / motion), skip
+    // the turn-off and leave the restore window open — the zone-active flow has
+    // already queued RestoreSavedSettings, which will restore brightness even if
+    // it runs a few seconds from now.
     try {
       const zone = await Homey.zones.getZone({ id: device.zone });
-      zoneActiveNow = zone?.active === true;
-    } catch (e) { /* zone lookup failed — treat as inactive */ }
-    if (restoredLate || zoneActiveNow) {
-      diagLog(`FADE-VERIFY | ${device.name} | back on but room active — leaving on`);
-    } else {
-      diagLog(`FADE-VERIFY | ${device.name} | still on 3s after off — resending`);
-      await Promise.all(turnOffTargets.map(t =>
-        t.setCapabilityValue('onoff', false)
-          .catch(e => diagLog(`FADE-ERROR | ${t.name} | resend off failed: ${e.message}`))
-      ));
-    }
-  }
-} catch (e) { /* verification is best-effort */ }
+      if (zone?.active === true) {
+        log(`Zone active at fade end — leaving restore window open, skipping turn-off`);
+        diagLog(`FADE-HOLD | ${device.name} | zone active at fade end — restore will handle`);
+        return `${device.name}: zone active, turn-off skipped`;
+      }
+    } catch (e) { /* zone lookup failed — fall through to turn-off */ }
 
-return `${device.name}: Faded and turned off`;
+    await Promise.all(turnOffTargets.map(t =>
+      t.setCapabilityValue('onoff', false)
+        .then(() => log(`  ${t.name}: turned off`))
+        .catch(e => {
+          log(`  ${t.name}: turn-off failed: ${e.message}`);
+          diagLog(`FADE-ERROR | ${t.name} | turn-off failed: ${e.message}`);
+        })
+    ));
+    global.set(fadeActiveUntilVar, 0);
+    diagLog(`FADE-OFF | ${device.name} | off sent to ${turnOffTargets.length} light(s)`);
+
+    // Verify: a lost command or a late Zigbee report can leave/flip Homey's
+    // state back to on. Re-check once and resend the off if needed — unless the
+    // room became active in the meantime (then the lights are wanted on).
+    await wait(3000);
+    try {
+      const check = await Homey.devices.getDevice({ id: deviceId });
+      if (check.capabilitiesObj?.onoff?.value === true) {
+        const restoredLate = (global.get(`${deviceId}_RestoredAt`) || 0) >= fadeStartedAt;
+        let zoneActiveNow = false;
+        try {
+          const zone = await Homey.zones.getZone({ id: device.zone });
+          zoneActiveNow = zone?.active === true;
+        } catch (e) { /* zone lookup failed — treat as inactive */ }
+        if (restoredLate || zoneActiveNow) {
+          diagLog(`FADE-VERIFY | ${device.name} | back on but room active — leaving on`);
+        } else {
+          diagLog(`FADE-VERIFY | ${device.name} | still on 3s after off — resending`);
+          await Promise.all(turnOffTargets.map(t =>
+            t.setCapabilityValue('onoff', false)
+              .catch(e => diagLog(`FADE-ERROR | ${t.name} | resend off failed: ${e.message}`))
+          ));
+        }
+      }
+    } catch (e) { /* verification is best-effort */ }
+
+    return `${device.name}: Faded and turned off`;
+  } catch (error) {
+    diagLog(`FADE-ERROR | ${deviceId.substring(0, 8)} | unexpected: ${error.message}`);
+    return `ERROR (${deviceId}): ${error.message}`;
+  }
+}
+
+// ====== ENTRY POINT ======
+// args[0]: single device ID, or a comma-separated list of device IDs to fade
+// in parallel within this one script run (default: Bathroom 9)
+const rawArg = args[0] || "b8591f4d-a493-4de7-9745-c13cd07e033c";
+const deviceIds = rawArg.split(',').map(s => s.trim()).filter(s => s.length > 0);
+
+if (deviceIds.length === 0) {
+  return 'ERROR: No device ID provided. Pass device ID as argument.';
+}
+
+log(`Device ID(s): ${deviceIds.join(', ')} ${args[0] ? '(from argument)' : '(default)'}`);
+
+const results = await Promise.all(deviceIds.map(id => processDevice(id)));
+return results.join(' | ');
