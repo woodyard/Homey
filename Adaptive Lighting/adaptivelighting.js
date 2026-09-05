@@ -2,12 +2,140 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.19.1
-// Date:        2026-05-10
+// Version:     2.25.0
+// Date:        2026-09-05
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.25.0 2026-09-05  Soveværelse: daylight brightness + sun temperature
+//                    - SV Loft gets a luminance block on SV Motion and the
+//                      same sun-temperature block as Stue
+//                    - Thresholds from a week of Insights: the bedroom sensor
+//                      reads 15–170 lx with curtains open (peaks in morning
+//                      sun), 1–6 lx with them drawn, lamps add ~14 lx at 56%.
+//                      darkBelow 15 / brightAbove 100 / minFactor 0.4
+//                    - Bedroom colour slides 0.50 (Daytime) → 0.80 (Evening)
+//                      with sun elevation, same 35° ceiling as Stue
+//                    - SV flow gained the "luminance changed" → lux trigger
+// 2.24.1 2026-09-05  Arm the sun-drift gate even when nothing needs applying
+//                    - First live run: ST Loft was within the 0.05 step of its
+//                      sun temperature, so the full check applied nothing and
+//                      never stored the cool/warm ends → the 5-minute drift
+//                      gate stayed disarmed and the light depended on the
+//                      15-minute resync alone
+//                    - "Already correct" runs for sun/daylight-managed profiles
+//                      now record the CURRENT values plus the sun ends in
+//                      lastApplied (no light command), so the gate can predict
+//                      drift from what the light actually shows
+// 2.24.0 2026-09-04  Sun-based colour temperature (seasonal daylight colour)
+//                    - Opt-in per room: ROOM_CONFIG[...].sunTemperature =
+//                      { highElevation, lowElevation, profiles, warmProfile,
+//                        step }. Global switch SETTINGS.enableSunTemperature.
+//                      Off / absent = profile temperatures exactly as before.
+//                    - For the listed profiles (default Daytime) the colour
+//                      temperature follows solar elevation: the profile's own
+//                      (cool) temperature at/above highElevation, the
+//                      warmProfile's (Evening) temperature at/below
+//                      lowElevation, linear in between. Season falls out of
+//                      the elevation: a Copenhagen December noon peaks near
+//                      11°, June near 58°, so winter days stay warmer.
+//                    - Elevation from the NOAA solar-position formulas
+//                      (pure math, no API); brightness scaling untouched
+//                    - Check mode uses sunTemperature.step as the temperature
+//                      tolerance for sun-managed profiles; the 5-minute gate
+//                      also wakes a full run when the predicted temperature
+//                      has drifted >= step from what was last applied
+//                    - lastApplied stores the cool/warm ends so the gate can
+//                      predict without the profile table
+//                    - Enabled for Stue (ST Loft + ST Standerlampe)
+//                    - Diag: AL-APPLY lines gain "sun=12.3°" when active
+// 2.23.1 2026-09-04  Finer daylight steps + wider Stue range
+//                    - First live test: curtains up/down moved the sensor
+//                      28↔156 lx but the resulting brightness changes (±7-8%)
+//                      fell inside the 10% manual-detection tolerance and
+//                      were skipped, so the light sat still at 47%
+//                    - New luminance.step (default 0.04): minimum brightness
+//                      change worth acting on for daylight-managed profiles.
+//                      Used by the lux gate AND as the "already correct"
+//                      tolerance in check mode for those profiles. Manual
+//                      detection still uses SETTINGS.tolerance (10%) against
+//                      the last applied value.
+//                    - Stue thresholds: darkBelow 60→40, brightAbove 250→200
+//                      so dull/rainy days still produce a visible swing
+// 2.23.0 2026-09-04  "lux" mode: react to luminance changes immediately
+//                    - New argument "device-id lux <value>" for a flow
+//                      triggered by the sensor's "luminance changed" card
+//                      (pass the new value as the tag). Behaves like check
+//                      mode but replaces the time gate with a lux gate.
+//                    - Lux gate (no API call): recomputes the daylight factor
+//                      from the passed value and only does a full run when
+//                      the resulting brightness differs from what was last
+//                      applied by more than SETTINGS.tolerance. Skips
+//                      silently when the room has no luminance block, is in
+//                      manual mode, or AL's own fade is still running.
+//                    - lastApplied now also stores factor, scheduledBrightness
+//                      and lux so the gate can compare without the profile table
+//                    - Without a value ("device-id lux") it falls back to a
+//                      full check run
+// 2.22.0 2026-09-04  Daylight-aware brightness from a room luminance sensor
+//                    - Opt-in per room: ROOM_CONFIG[...].luminance = { sensorId,
+//                      darkBelow, brightAbove, minFactor, profiles, ... }
+//                    - Global kill switch SETTINGS.enableLuminance — set false
+//                      (or remove a room's luminance block) and behaviour is
+//                      exactly the pre-2.22 logic
+//                    - Brightness of the listed profiles (default: Daytime) is
+//                      multiplied by a factor that falls linearly from 1.0 at
+//                      darkBelow lux to minFactor at brightAbove lux;
+//                      temperature is never touched
+//                    - Sensor read from the already-fetched device list (no
+//                      extra API call); stale readings (> maxAgeMinutes) or a
+//                      missing sensor fall back to factor 1.0
+//                    - The room's own lamp is subtracted from the reading
+//                      (lampLuxAtFull × current dim) to damp the feedback loop
+//                    - Device state now stores lastApplied {brightness,
+//                      temperature}; check mode compares against that instead
+//                      of the profile table, so a daylight-scaled light is not
+//                      mistaken for a manual adjustment. Re-scaling happens on
+//                      the periodic full check when the factor drifts > 10%
+//                    - Enabled for Stue: ST Loft + ST Standerlampe via ST Motion
+//                    - Diag: AL-APPLY lines gain "lux=… factor=…" when active
+// 2.21.0 2026-09-04  Schedule-aware check mode (flows now poll every 5 min)
+//                    - Check mode used to run every minute per light from the
+//                      ST/K/SV/O/SS flows (9 script runs + 3 full device dumps
+//                      per minute). Flows now trigger every 5 minutes.
+//                    - Cheap gate before ANY API call: a check run exits at
+//                      once unless the next profile boundary is inside the
+//                      coming poll window, or checkResyncMinutes have passed
+//                      since the last full run (manual-mode detection)
+//                    - Early transition: when the next boundary falls before
+//                      the next poll, the new profile is started NOW with a
+//                      hardware fade that ends transitionDuration after the
+//                      boundary — so the change still lands on schedule
+//                      (Zigbee bulbs handle multi-minute transitions natively)
+//                    - Early transition only for Hue devices (bulb or group of
+//                      Hue bulbs, detected via button.migrate_v3); other lights
+//                      (e.g. Twinkly SS Light Perler) keep the old catch-up
+//                      behaviour at the poll after the boundary
+//                    - Per-device state gains nextBoundaryAt + lastFullCheckAt
+//                    - New settings: checkPollMinutes (5), checkResyncMinutes (15)
+//                    - Diag: AL-APPLY "(early)" marks a pre-boundary transition
+// 2.20.0 2026-09-04  Respect a just-completed restore + fix setTimeout crash
+//                    - Normal mode (light turned on) now also skips when
+//                      RestoreSavedSettings restored the light within the
+//                      last restoreGraceSeconds (30s), not only while
+//                      _FadeActiveUntil is still in the future
+//                    - Closes the race seen in E9: on re-entry mid-fade the
+//                      zone flow runs RestoreSavedSettings and a "turn on"
+//                      in parallel; restore cleared the fade flag first, the
+//                      resulting "turned on" trigger then found no fade and
+//                      applied the profile over the restored values
+//                    - Logged as AL-SKIP-RESTORE in AL_DiagnostikLog
+//                    - Replaced setTimeout (not defined in HomeyScript) with
+//                      wait(): verifyDeviceState + retry backoff threw on
+//                      every clear/force run, and the normal-mode "set level
+//                      while off, then turn on" path threw before turning
+//                      the light on
 // 2.19.1 2026-05-10  Align weekend Morning start to 07:30 + close coverage gap
 //                    - bathroomWeekend / entranceWeekend Morning: 08:30 → 07:30
 //                      and Night endTime extended 07:00 → 07:30 (closes 90-min
@@ -271,8 +399,8 @@
 // 3. Select script: "AdaptiveLighting"
 // 4. Argument: Device ID (e.g., "f4bf99d6-ed4a-43e8-b305-9866d7ef5341")
 //
-// HOURLY UPDATE (to adjust lights that are already on):
-// 1. Trigger: "Every hour"
+// PERIODIC UPDATE (to adjust lights that are already on):
+// 1. Trigger: "Every 5 minutes" (must match SETTINGS.checkPollMinutes)
 // 2. Condition: "[Light]" → "is on"
 // 3. Action: HomeyScript → "Run script with argument"
 // 4. Argument: "device-id check"  ← Note the "check" mode!
@@ -307,7 +435,8 @@
 //
 // ARGUMENT MODES:
 //   "device-id"              Always apply profile, clear manual mode (for "turned on" triggers)
-//   "device-id check"        Check first, skip if in manual/forced mode (for hourly updates)
+//   "device-id check"        Check first, skip if in manual/forced mode (for periodic updates)
+//   "device-id lux <value>"  Luminance changed: re-scale if the daylight factor moved enough
 //   "device-id force"        Always apply, clear manual mode (explicit reset)
 //   "device-id reset"        Same as force
 //   "device-id clear"        Clear manual mode and forced profile, apply time-based profile
@@ -470,6 +599,70 @@ const PROFILES = {
   ]
 };
 
+// ====== DAYLIGHT (LUMINANCE) SCALING ======
+// Per-room opt-in: add a `luminance` block to a ROOM_CONFIG entry. Missing
+// fields take these defaults. Only `sensorId` is required.
+//   factor = 1.0            when adjusted lux <= darkBelow
+//   factor = minFactor      when adjusted lux >= brightAbove
+//   linear in between;      brightness = profile.brightness * factor
+// Adjusted lux = sensor lux - lampLuxAtFull * (this light's current dim), so the
+// lamp seeing itself in the sensor does not pull its own brightness down.
+const DAYLIGHT_DEFAULTS = {
+  enabled: true,
+  darkBelow: 60,          // lux — below this the room needs the full profile
+  brightAbove: 250,       // lux — above this daylight dominates
+  minFactor: 0.4,         // never dim below 40% of the profile brightness
+  minBrightness: 0.05,    // absolute floor after scaling
+  step: 0.04,             // smallest brightness change (absolute) worth acting on
+  profiles: ['Daytime'],  // profile names that are scaled (Evening/Night never)
+  lampLuxAtFull: 25,      // sensor reading caused by this room's lights at 100%
+  maxAgeMinutes: 60       // ignore a sensor reading older than this
+};
+
+// ====== SUN-BASED COLOUR TEMPERATURE ======
+// Per-room opt-in: add a `sunTemperature` block to a ROOM_CONFIG entry.
+//   elevation >= highElevation → the profile's own temperature (cool daylight)
+//   elevation <= lowElevation  → the warmProfile's temperature (e.g. Evening)
+//   linear in between. Only the listed profiles are affected.
+// Seasons come for free: the sun's maximum elevation is ~58° in June and ~11°
+// in December at 55.7°N, so winter daylight stays warm all day.
+const SUN_TEMPERATURE_DEFAULTS = {
+  enabled: true,
+  highElevation: 35,      // degrees — full "cool" daytime colour from here up
+  lowElevation: 0,        // degrees — full "warm" colour at the horizon
+  profiles: ['Daytime'],  // profiles whose temperature follows the sun
+  warmProfile: 'Evening', // whose temperature is the warm end (per room)
+  step: 0.05              // smallest temperature change (0–1 scale) worth acting on
+};
+
+const STUE_SUN_TEMPERATURE = {
+  highElevation: 35,
+  lowElevation: 0,
+  profiles: ['Daytime'],
+  warmProfile: 'Evening'
+};
+
+// Stue: ST Motion sits in the living room and sees 30–400 lx of daylight while
+// the lamps add ~10 lx at evening levels (Insights, Sep 2026)
+const STUE_LUMINANCE = {
+  sensorId: 'b88fc1cd-cd4f-447e-960b-03fb51951ca4', // ST Motion
+  darkBelow: 40,
+  brightAbove: 200,
+  minFactor: 0.4,
+  profiles: ['Daytime']
+};
+
+// Soveværelse: SV Motion sees 15–170 lx with the curtains open, 1–6 lx drawn;
+// SV Loft adds ~14 lx at 56% (Insights, Aug/Sep 2026). Dimmer room, lower bands.
+const SV_LUMINANCE = {
+  sensorId: '47172014-0488-43a7-93c6-920ad01113b3', // SV Motion
+  darkBelow: 15,
+  brightAbove: 100,
+  minFactor: 0.4,
+  profiles: ['Daytime']
+};
+const SV_SUN_TEMPERATURE = STUE_SUN_TEMPERATURE; // same elevation curve; ends come from the bedroom profiles
+
 // ====== ROOM CONFIGURATION ======
 // Only groups and standalone devices - individual bulbs in groups are excluded
 // Groups are identified by NOT having "button.migrate_v3" in their state
@@ -481,11 +674,15 @@ const ROOM_CONFIG = {
   // =====================================================================
   "fd754abf-4397-45f5-9a68-98d7f079fd7b": {
     name: "ST Loft",
-    profiles: PROFILES.filament  // Gruppe med 5 filament pærer
+    profiles: PROFILES.filament,  // Gruppe med 5 filament pærer
+    luminance: STUE_LUMINANCE,    // Daytime brightness follows daylight (ST Motion)
+    sunTemperature: STUE_SUN_TEMPERATURE // Daytime colour follows sun elevation
   },
   "3f4e2391-3be6-44ee-b340-fcc3219853b2": {
     name: "ST Standerlampe",
-    profiles: PROFILES.stue  // Gruppe med 2 pærer
+    profiles: PROFILES.stue,      // Gruppe med 2 pærer
+    luminance: STUE_LUMINANCE,    // Daytime brightness follows daylight (ST Motion)
+    sunTemperature: STUE_SUN_TEMPERATURE // Daytime colour follows sun elevation
   },
   // Stue Lyskæde fjernet - kun on/off, ingen dim
 
@@ -511,7 +708,9 @@ const ROOM_CONFIG = {
   "cbbd7c60-dc84-43c7-8f0f-790556fc9b14": {
     name: "SV Loft",
     profiles: PROFILES.bedroom,              // Weekdays
-    weekendProfiles: PROFILES.bedroomWeekend // Weekends - later morning
+    weekendProfiles: PROFILES.bedroomWeekend, // Weekends - later morning
+    luminance: SV_LUMINANCE,                 // Daytime brightness follows daylight (SV Motion)
+    sunTemperature: SV_SUN_TEMPERATURE       // Daytime colour follows sun elevation
   },
 
   // =====================================================================
@@ -634,7 +833,22 @@ const SETTINGS = {
   verificationRetries: 3,        // Max retry attempts for verification
   verificationDelay: 1500,       // Wait time before verification (ms)
   verificationTolerance: 0.10,   // Tolerance for verification (10%)
-  failedVerificationBuffer: 60   // Fade buffer duration if verification fails (seconds)
+  failedVerificationBuffer: 60,  // Fade buffer duration if verification fails (seconds)
+  restoreGraceSeconds: 30,       // Normal mode skips profile apply this long after
+                                 // RestoreSavedSettings restored the light (the
+                                 // "turned on" trigger can arrive several seconds late)
+  checkPollMinutes: 5,           // How often the flows run "check" (every_nth minute)
+                                 // Must match the flow trigger — used for the
+                                 // boundary look-ahead and the cheap gate
+  checkResyncMinutes: 15,        // Force a full check run at least this often even
+                                 // when no boundary is near (manual-mode detection,
+                                 // recovery after restarts / config changes)
+  enableLuminance: true,         // Master switch for luminance-based daylight scaling.
+                                 // false = ignore every room's luminance block and
+                                 // behave exactly like v2.21 (pure schedule)
+  enableSunTemperature: true     // Master switch for sun-elevation colour temperature.
+                                 // false = ignore every room's sunTemperature block
+                                 // and use the profile temperatures as-is
 };
 
 // ====== SUN TIMES CACHE ======
@@ -888,6 +1102,9 @@ const DEFAULT_DEVICE_STATE = {
   manual: false,          // Device in manual mode (user adjusted brightness/temp)
   lastProfile: null,      // Name of last applied profile
   fadeEndTime: 0,         // AL's own fade end timestamp (ms)
+  nextBoundaryAt: 0,      // Epoch ms of the next profile start (check-mode gate)
+  lastFullCheckAt: 0,     // Epoch ms of the last full (non-gated) check run
+  lastApplied: null,      // { brightness, temperature } AL last sent (daylight-scaled)
   forcedProfile: {
     index: -1,            // -1 = auto, 0-3 = forced profile
     profiles: null        // Cached profile schedule (array of 4)
@@ -1011,15 +1228,24 @@ function getLastProfile(deviceId) {
 /**
  * Set last applied profile for a device
  */
-function setLastProfile(deviceId, profileName) {
+function setLastProfile(deviceId, profileName, brightness = null, temperature = null, daylightMeta = null) {
   const state = getDeviceState(deviceId);
   state.lastProfile = profileName;
-  state.manual = false; // Clear manual mode when profile is applied
-  saveDeviceState(deviceId, state);
-
-  if (SETTINGS.enableDetailedLogging) {
-    log(`[AdaptiveLighting] Last profile set to ${profileName} for ${getDeviceKey(deviceId)}`);
+  if (typeof brightness === 'number') {
+    state.lastApplied = {
+      brightness,
+      temperature: typeof temperature === 'number' ? temperature : null,
+      // Daylight bookkeeping for the "lux" gate (factor 1 when not scaled)
+      factor: typeof daylightMeta?.daylightFactor === 'number' ? daylightMeta.daylightFactor : 1,
+      scheduledBrightness: typeof daylightMeta?.scheduledBrightness === 'number' ? daylightMeta.scheduledBrightness : brightness,
+      lux: typeof daylightMeta?.lux === 'number' ? daylightMeta.lux : null,
+      // Sun-temperature bookkeeping (only when the applied profile was sun-managed)
+      sun: typeof daylightMeta?.sunCool === 'number'
+        ? { cool: daylightMeta.sunCool, warm: daylightMeta.sunWarm }
+        : null
+    };
   }
+  saveDeviceState(deviceId, state);
 }
 
 /**
@@ -1282,6 +1508,174 @@ function findActiveProfile(profiles, currentMinutes) {
 }
 
 /**
+ * Read the room's luminance sensor and turn it into a brightness factor.
+ * Never throws; every failure path returns { active: false, reason }.
+ * Uses CACHED_ALL_DEVICES (fetched anyway in non-button modes) — no API call.
+ */
+function getDaylight(roomConfig, device) {
+  if (!SETTINGS.enableLuminance) return { active: false, reason: 'disabled' };
+  if (!roomConfig.luminance) return { active: false, reason: 'not configured' };
+  const c = { ...DAYLIGHT_DEFAULTS, ...roomConfig.luminance };
+  if (c.enabled === false) return { active: false, reason: 'room disabled' };
+  if (!c.sensorId) return { active: false, reason: 'no sensorId' };
+
+  const sensor = CACHED_ALL_DEVICES ? CACHED_ALL_DEVICES[c.sensorId] : null;
+  const cap = sensor?.capabilitiesObj?.measure_luminance;
+  if (!cap || typeof cap.value !== 'number') return { active: false, reason: 'sensor/lux unavailable' };
+
+  const updated = new Date(cap.lastUpdated ?? cap.lastChanged ?? 0).getTime();
+  if (updated > 0 && Date.now() - updated > c.maxAgeMinutes * 60000) {
+    return { active: false, reason: `stale (${Math.round((Date.now() - updated) / 60000)} min)` };
+  }
+
+  // Subtract what this light itself contributes to the reading
+  const isOn = device?.capabilitiesObj?.onoff?.value === true;
+  const ownDim = isOn ? (device?.capabilitiesObj?.dim?.value || 0) : 0;
+  const luxAdjusted = Math.max(0, cap.value - c.lampLuxAtFull * ownDim);
+
+  const factor = daylightFactorFor(luxAdjusted, c);
+
+  return { active: true, lux: cap.value, luxAdjusted: Math.round(luxAdjusted), factor, config: c };
+}
+
+/** Piecewise-linear lux → factor (1.0 at darkBelow … minFactor at brightAbove) */
+function daylightFactorFor(luxAdjusted, c) {
+  let factor;
+  if (luxAdjusted <= c.darkBelow) factor = 1;
+  else if (luxAdjusted >= c.brightAbove) factor = c.minFactor;
+  else factor = 1 - (1 - c.minFactor) * (luxAdjusted - c.darkBelow) / (c.brightAbove - c.darkBelow);
+  return Math.round(factor * 100) / 100;
+}
+
+/**
+ * Return the profile with daylight-scaled brightness, or the profile itself
+ * when scaling does not apply. Temperature is never changed.
+ */
+function applyDaylight(profile, daylight) {
+  if (!profile || !daylight || !daylight.active) return profile;
+  if (!daylight.config.profiles.includes(profile.name)) return profile;
+  if (daylight.factor >= 1) return profile;
+  const scaled = Math.max(daylight.config.minBrightness, Math.round(profile.brightness * daylight.factor * 100) / 100);
+  return { ...profile, brightness: scaled, scheduledBrightness: profile.brightness, daylightFactor: daylight.factor, lux: daylight.lux };
+}
+
+/** Short diag suffix, e.g. " | lux=180 factor=0.62 | sun=12.3°" — empty when neither applies */
+function daylightTag(profile) {
+  let tag = '';
+  if (typeof profile?.daylightFactor === 'number') tag += ` | lux=${profile.lux} factor=${profile.daylightFactor}`;
+  if (typeof profile?.sunElevation === 'number') tag += ` | sun=${profile.sunElevation}°`;
+  return tag;
+}
+
+/**
+ * Solar elevation in degrees (NOAA solar position, refraction ignored).
+ * Pure math — safe to call from the cheap gates.
+ */
+function solarElevationDeg(date, lat, lon) {
+  const rad = Math.PI / 180;
+  const jd = date.getTime() / 86400000 + 2440587.5;
+  const jc = (jd - 2451545) / 36525;
+  const gml = ((280.46646 + jc * (36000.76983 + jc * 0.0003032)) % 360 + 360) % 360;
+  const gma = 357.52911 + jc * (35999.05029 - 0.0001537 * jc);
+  const ecc = 0.016708634 - jc * (0.000042037 + 0.0000001267 * jc);
+  const seoc = Math.sin(gma * rad) * (1.914602 - jc * (0.004817 + 0.000014 * jc))
+    + Math.sin(2 * gma * rad) * (0.019993 - 0.000101 * jc)
+    + Math.sin(3 * gma * rad) * 0.000289;
+  const stl = gml + seoc;
+  const omega = (125.04 - 1934.136 * jc) * rad;
+  const sal = stl - 0.00569 - 0.00478 * Math.sin(omega);
+  const moe = 23 + (26 + (21.448 - jc * (46.815 + jc * (0.00059 - jc * 0.001813))) / 60) / 60;
+  const oc = moe + 0.00256 * Math.cos(omega);
+  const decl = Math.asin(Math.sin(oc * rad) * Math.sin(sal * rad));
+  const y = Math.tan(oc * rad / 2) ** 2;
+  const eqt = 4 * (y * Math.sin(2 * gml * rad) - 2 * ecc * Math.sin(gma * rad)
+    + 4 * ecc * y * Math.sin(gma * rad) * Math.cos(2 * gml * rad)
+    - 0.5 * y * y * Math.sin(4 * gml * rad) - 1.25 * ecc * ecc * Math.sin(2 * gma * rad)) / rad;
+  const utcMinutes = date.getUTCHours() * 60 + date.getUTCMinutes() + date.getUTCSeconds() / 60;
+  const tst = (((utcMinutes + eqt + 4 * lon) % 1440) + 1440) % 1440;
+  const ha = (tst / 4 < 0 ? tst / 4 + 180 : tst / 4 - 180) * rad;
+  const cosZen = Math.sin(lat * rad) * Math.sin(decl) + Math.cos(lat * rad) * Math.cos(decl) * Math.cos(ha);
+  return 90 - Math.acos(Math.max(-1, Math.min(1, cosZen))) / rad;
+}
+
+/** Interpolate temperature between warm (low sun) and cool (high sun) */
+function sunTemperatureFor(elevation, cool, warm, c) {
+  const span = Math.max(0.1, c.highElevation - c.lowElevation);
+  const t = Math.max(0, Math.min(1, (elevation - c.lowElevation) / span));
+  return Math.round((warm + (cool - warm) * t) * 100) / 100;
+}
+
+/** Room's sun-temperature setup, or { active: false } */
+function getSunTemperature(roomConfig) {
+  if (!SETTINGS.enableSunTemperature) return { active: false, reason: 'disabled' };
+  if (!roomConfig.sunTemperature) return { active: false, reason: 'not configured' };
+  const c = { ...SUN_TEMPERATURE_DEFAULTS, ...roomConfig.sunTemperature };
+  if (c.enabled === false) return { active: false, reason: 'room disabled' };
+  const elevation = Math.round(solarElevationDeg(new Date(), SETTINGS.latitude, SETTINGS.longitude) * 10) / 10;
+  return { active: true, elevation, config: c };
+}
+
+/**
+ * Return the profile with sun-adjusted temperature, or the profile itself when
+ * not applicable. Brightness is never changed here.
+ */
+function applySunTemperature(profile, sun, roomConfig) {
+  if (!profile || !sun || !sun.active) return profile;
+  if (!sun.config.profiles.includes(profile.name)) return profile;
+  const warmSrc = roomConfig.profiles.find(p => p.name === sun.config.warmProfile);
+  if (!warmSrc || typeof warmSrc.temperature !== 'number') return profile;
+  const cool = profile.temperature;
+  const warm = warmSrc.temperature;
+  const temperature = sunTemperatureFor(sun.elevation, cool, warm, sun.config);
+  return { ...profile, temperature, scheduledTemperature: cool, sunElevation: sun.elevation, sunCool: cool, sunWarm: warm };
+}
+
+/**
+ * Hue bulb (Philips Hue app exposes button.migrate_v3) or a group whose
+ * name-matched members are Hue bulbs. Uses the cached device list — no API call.
+ */
+async function isHueDevice(device) {
+  if (device.capabilities?.includes('button.migrate_v3')) return true;
+  const members = await findGroupMembers(device.name);
+  return members.length > 0 && members.every(m => m.capabilities?.includes('button.migrate_v3'));
+}
+
+/**
+ * Find the next profile start after currentMinutes (today, else first tomorrow)
+ * @returns {{ minutes: number, profile: object, msFromNow: number }|null}
+ *   minutes may exceed 1440 when the boundary is tomorrow
+ */
+function findNextBoundary(profiles, currentMinutes) {
+  let best = null;
+  let earliest = null;
+  for (const profile of profiles) {
+    const start = parseTimeToMinutes(profile.startTime ?? profile.startHour);
+    if (start > currentMinutes && (!best || start < best.minutes)) best = { minutes: start, profile };
+    if (!earliest || start < earliest.minutes) earliest = { minutes: start, profile };
+  }
+  if (!best && earliest) best = { minutes: earliest.minutes + 1440, profile: earliest.profile };
+  if (!best) return null;
+  const secondsIntoMinute = new Date().getSeconds();
+  best.msFromNow = ((best.minutes - currentMinutes) * 60 - secondsIntoMinute) * 1000;
+  return best;
+}
+
+/**
+ * Remember when the next boundary is and that a full run happened now.
+ * Read by the check-mode gate at the top of the script (before any API call).
+ * @param {number} fromMinutes - compute the boundary after this local time
+ */
+function recordSchedule(deviceId, profiles, fromMinutes) {
+  const next = findNextBoundary(profiles, fromMinutes);
+  const state = getDeviceState(deviceId);
+  state.lastFullCheckAt = Date.now();
+  // msFromNow is relative to fromMinutes; shift it back to real "now"
+  state.nextBoundaryAt = next ? Date.now() + next.msFromNow + ((fromMinutes - getCurrentTimeInMinutes()) * 60000) : 0;
+  saveDeviceState(deviceId, state);
+  return next;
+}
+
+/**
  * Get room configuration or create default
  * Returns weekend profiles if it's weekend and they exist
  */
@@ -1299,7 +1693,9 @@ function getRoomConfig(deviceId, deviceName) {
       name: config.name || deviceName,
       profiles: profiles,
       isWeekend: weekend,
-      usingWeekendProfile: weekend && !!config.weekendProfiles
+      usingWeekendProfile: weekend && !!config.weekendProfiles,
+      luminance: config.luminance || null,
+      sunTemperature: config.sunTemperature || null
     };
   }
   
@@ -1323,7 +1719,7 @@ async function findGroupMembers(groupName) {
 
   for (const d of Object.values(CACHED_ALL_DEVICES)) {
     // Match "GroupName X/Y" pattern
-    if (d.name.startsWith(groupName + ' ') && d.name !== groupName && d.class === 'light') {
+    if (typeof d.name === 'string' && d.name.startsWith(groupName + ' ') && d.name !== groupName && d.class === 'light') {
       members.push(d);
     }
   }
@@ -1490,7 +1886,8 @@ async function applyLighting(device, brightness, temperature, useDuration = fals
  */
 async function verifyDeviceState(device, expectedBrightness, expectedTemperature, tolerance = SETTINGS.verificationTolerance) {
   // Wait briefly for state to propagate
-  await new Promise(resolve => setTimeout(resolve, SETTINGS.verificationDelay));
+  // NOTE: HomeyScript has no setTimeout — use the built-in async wait(ms)
+  await wait(SETTINGS.verificationDelay);
   
   // Re-fetch device to get latest state
   const freshDevice = await Homey.devices.getDevice({ id: device.id });
@@ -1597,7 +1994,7 @@ async function applyLightingWithRetry(device, brightness, temperature, profileNa
     
     // Wait before retry (longer each time: 1s, 2s, 3s)
     if (attempt < maxRetries) {
-      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      await wait(1000 * attempt);
     }
   }
   
@@ -1624,7 +2021,9 @@ const argParts = argString.toString().trim().split(/\s+/);
 const DEVICE_ID = argParts[0] || "3f4e2391-3be6-44ee-b340-fcc3219853b2"; // Default: ST Standerlampe
 const MODE_ARG = (argParts[1] || '').toLowerCase();
 
-const CHECK_MANUAL = MODE_ARG === 'check' || MODE_ARG === 'hourly';
+const LUX_MODE = MODE_ARG === 'lux';
+const LUX_VALUE = LUX_MODE ? parseFloat(argParts[2]) : NaN;   // NaN = not passed → full run
+const CHECK_MANUAL = MODE_ARG === 'check' || MODE_ARG === 'hourly' || LUX_MODE;
 const FORCE_UPDATE = MODE_ARG === 'force' || MODE_ARG === 'reset';
 const CLEAR_MANUAL = MODE_ARG === 'clear' || MODE_ARG === 'off';
 const CYCLE_PROFILE = MODE_ARG === 'cycle-profile' || MODE_ARG === 'cycle';
@@ -1653,6 +2052,59 @@ try {
   // For button actions: only fetch the device (fast path)
   // For all other modes: fetch device, sun times, and device list in parallel
   const isButtonMode = BUTTON_BRIGHTEN || BUTTON_DIM || BUTTON_MAX || BUTTON_TOGGLE;
+
+  // CHECK-MODE GATE: the flows poll every checkPollMinutes. Nothing can change
+  // between profile boundaries, so skip the (expensive) device fetch unless the
+  // next boundary is inside the coming poll window, or a periodic full run is
+  // due. Runs before any API call — costs one global.get.
+  if (LUX_MODE) {
+    // LUX GATE: triggered by "luminance changed". Decide from the passed value
+    // alone whether a re-scale is worthwhile; no API call on the skip path.
+    const luxCfg = ROOM_CONFIG[DEVICE_ID]?.luminance;
+    if (!SETTINGS.enableLuminance || !luxCfg || luxCfg.enabled === false) {
+      return { skipped: true, reason: 'luminance_not_enabled' };
+    }
+    const gateState = getDeviceState(DEVICE_ID);
+    if (gateState.manual) return { skipped: true, reason: 'manual_mode' };
+    if (Date.now() < gateState.fadeEndTime) return { skipped: true, reason: 'fade_in_progress' };
+    const last = gateState.lastApplied;
+    if (!isNaN(LUX_VALUE) && last && typeof last.factor === 'number') {
+      const c = { ...DAYLIGHT_DEFAULTS, ...luxCfg };
+      const luxAdjusted = Math.max(0, LUX_VALUE - c.lampLuxAtFull * (last.brightness || 0));
+      const newFactor = daylightFactorFor(luxAdjusted, c);
+      const sched = typeof last.scheduledBrightness === 'number' ? last.scheduledBrightness : last.brightness;
+      const brightnessDelta = Math.abs(newFactor - last.factor) * sched;
+      if (brightnessDelta < c.step) {
+        return { skipped: true, reason: 'lux_change_too_small', lux: LUX_VALUE, factor: newFactor, lastFactor: last.factor };
+      }
+    }
+    // Significant change (or nothing to compare against) → fall through to a full check run
+  } else if (CHECK_MANUAL) {
+    const gateState = getDeviceState(DEVICE_ID);
+    const gateNow = Date.now();
+    const pollMs = SETTINGS.checkPollMinutes * 60000;
+    const resyncDue = gateNow - (gateState.lastFullCheckAt || 0) >= SETTINGS.checkResyncMinutes * 60000;
+    const boundaryNear = !gateState.nextBoundaryAt || gateNow >= gateState.nextBoundaryAt - pollMs;
+    // Sun-temperature drift: predict from elevation (pure math) and wake a full
+    // run when the colour should have moved by >= step since the last apply
+    let tempDriftDue = false;
+    const sunCfg = ROOM_CONFIG[DEVICE_ID]?.sunTemperature;
+    const lastSun = gateState.lastApplied?.sun;
+    if (SETTINGS.enableSunTemperature && sunCfg && sunCfg.enabled !== false && lastSun && !gateState.manual) {
+      const c = { ...SUN_TEMPERATURE_DEFAULTS, ...sunCfg };
+      const elevation = solarElevationDeg(new Date(), SETTINGS.latitude, SETTINGS.longitude);
+      const predicted = sunTemperatureFor(elevation, lastSun.cool, lastSun.warm, c);
+      tempDriftDue = Math.abs(predicted - (gateState.lastApplied.temperature ?? predicted)) >= c.step;
+    }
+    if (!resyncDue && !boundaryNear && !tempDriftDue) {
+      return {
+        skipped: true,
+        reason: 'not_due',
+        nextBoundaryIn: Math.round((gateState.nextBoundaryAt - gateNow) / 60000)
+      };
+    }
+  }
+
   let device;
   if (isButtonMode) {
     device = await Homey.devices.getDevice({ id: DEVICE_ID });
@@ -1705,7 +2157,25 @@ try {
   const roomName = roomConfig.name;
 
   // Find active profile for current time (needed by clear mode and other operations)
-  const activeProfile = findActiveProfile(roomConfig.profiles, currentMinutes);
+  const scheduledProfile = findActiveProfile(roomConfig.profiles, currentMinutes);
+
+  // Daylight scaling (no-op unless the room has a luminance block and
+  // SETTINGS.enableLuminance is true). Everything below uses activeProfile,
+  // so the scaled brightness flows through normal/check/force/clear alike.
+  const daylight = getDaylight(roomConfig, device);
+  const sun = getSunTemperature(roomConfig);
+  const activeProfile = applySunTemperature(applyDaylight(scheduledProfile, daylight), sun, roomConfig);
+  if (daylight.active && SETTINGS.enableDetailedLogging) {
+    log(`[${roomName}] Daylight: ${daylight.lux} lx (adj ${daylight.luxAdjusted}) → factor ${daylight.factor}`);
+  }
+  if (sun.active && SETTINGS.enableDetailedLogging) {
+    log(`[${roomName}] Sun elevation ${sun.elevation}° → temperature ${activeProfile.temperature}`);
+  }
+
+  // Remember the next boundary + this full run (feeds the check-mode gate)
+  if (!CYCLE_PROFILE) {
+    recordSchedule(DEVICE_ID, roomConfig.profiles, currentMinutes);
+  }
   
   // Handle "cycle-profile" mode - cycle through forced profiles
   if (CYCLE_PROFILE) {
@@ -1735,7 +2205,7 @@ try {
       // Update index (keep the same profile schedule)
       setForcedProfile(DEVICE_ID, nextIndex, cachedData.profiles);
       
-      setLastProfile(DEVICE_ID, nextProfile.name);
+      setLastProfile(DEVICE_ID, nextProfile.name, nextProfile.brightness, nextProfile.temperature, nextProfile);
       await clearManualModeForGroup(DEVICE_ID, device.name);
       
       const brightnessPercent = Math.round(nextProfile.brightness * 100);
@@ -1786,7 +2256,7 @@ try {
     setForcedProfile(DEVICE_ID, nextIndex, profileSchedule);
     
     await clearManualModeForGroup(DEVICE_ID, device.name);
-    setLastProfile(DEVICE_ID, profile.name);
+    setLastProfile(DEVICE_ID, profile.name, profile.brightness, profile.temperature, profile);
     
     const brightnessPercent = Math.round(profile.brightness * 100);
     const tempDesc = profile.temperature >= 0.7 ? 'warm' : 
@@ -1871,7 +2341,7 @@ try {
     
     if (result.success) {
       // Verification passed - safe to set lastProfile
-      setLastProfile(DEVICE_ID, activeProfile.name);
+      setLastProfile(DEVICE_ID, activeProfile.name, activeProfile.brightness, activeProfile.temperature, activeProfile);
       
       const brightnessPercent = Math.round(activeProfile.brightness * 100);
       const tempDesc = activeProfile.temperature >= 0.7 ? 'warm' :
@@ -1939,9 +2409,13 @@ try {
     };
   }
 
-  // Normal mode: only skip if a fade is actively in progress
+  // Normal mode: skip if a fade is in progress OR a restore just happened.
   // During a fade, RestoreSavedSettings handles the restore — AL stays out of the way.
-  // Once the fade completes and lights are off, any turn-on always applies the profile.
+  // RestoreSavedSettings clears _FadeActiveUntil and sets _RestoredAt in the same
+  // tick; a "turned on" trigger that arrives after that (zone "turn on" card,
+  // bulb reporting on again after the restore command) must not override the
+  // values that were just restored. Once the fade completes and lights are
+  // off, _RestoredAt is stale and any turn-on applies the profile as before.
   if (!FORCE_UPDATE && !CLEAR_MANUAL && !CHECK_MANUAL) {
     const externalFadeUntil = global.get(`${DEVICE_ID}_FadeActiveUntil`) || 0;
     if (Date.now() < externalFadeUntil) {
@@ -1953,6 +2427,20 @@ try {
         room: roomName,
         skipped: true,
         reason: 'fade_in_progress'
+      };
+    }
+
+    const restoredAt = global.get(`${DEVICE_ID}_RestoredAt`) || 0;
+    const restoredAgoMs = Date.now() - restoredAt;
+    if (restoredAt > 0 && restoredAgoMs >= 0 && restoredAgoMs < SETTINGS.restoreGraceSeconds * 1000) {
+      if (SETTINGS.enableLogging) {
+        log(`[${roomName}] ⸏ Skipping - restored ${Math.round(restoredAgoMs / 1000)}s ago, keeping restored values`);
+      }
+      diagLog(`AL-SKIP-RESTORE | ${roomName} | currentDim=${Math.round((currentBrightness ?? 0) * 100)}% | restored ${Math.round(restoredAgoMs / 1000)}s ago | mode=normal`);
+      return {
+        room: roomName,
+        skipped: true,
+        reason: 'recently_restored'
       };
     }
   }
@@ -1995,16 +2483,81 @@ try {
       };
     }
     
-    // Check if values match active profile (within tolerance)
+    // Check if values match active profile (within tolerance).
+    // Daylight-managed profiles use the finer luminance.step for brightness so
+    // that small daylight adjustments are actually applied; the 10% tolerance
+    // is kept for temperature and for manual-adjustment detection below.
+    const daylightManaged = daylight.active && daylight.config.profiles.includes(scheduledProfile.name);
+    const dimTolerance = daylightManaged ? daylight.config.step : SETTINGS.tolerance;
+    const sunManaged = sun.active && sun.config.profiles.includes(scheduledProfile.name);
+    const tempTolerance = sunManaged ? sun.config.step : SETTINGS.tolerance;
     const dimDiff = Math.abs(currentBrightness - activeProfile.brightness);
     const tempDiff = currentTemperature !== null 
       ? Math.abs(currentTemperature - activeProfile.temperature) 
       : 0;
     
-    const isCorrect = dimDiff <= SETTINGS.tolerance && tempDiff <= SETTINGS.tolerance;
+    const isCorrect = dimDiff <= dimTolerance && tempDiff <= tempTolerance;
     
     if (isCorrect) {
-      // Already at correct values - skip silently
+      // Already at the active profile. If the next boundary falls before the
+      // next poll, start the upcoming profile NOW with a fade that ends
+      // transitionDuration after the boundary — lands on schedule despite the
+      // 5-minute polling.
+      const upcoming = findNextBoundary(roomConfig.profiles, currentMinutes);
+      const pollMs = SETTINGS.checkPollMinutes * 60000;
+      // Only Hue bulbs (and groups of them) are known to honour multi-minute
+      // transitions; for anything else an early start would just be an early
+      // instant change, so leave those to the normal catch-up path.
+      const supportsLongFade = await isHueDevice(device);
+      if (upcoming && supportsLongFade && upcoming.msFromNow <= pollMs && upcoming.profile.name !== activeProfile.name) {
+        const next = applySunTemperature(applyDaylight(upcoming.profile, daylight), sun, roomConfig);
+        const sameValues = approxEqual(next.brightness, activeProfile.brightness)
+          && approxEqual(next.temperature, activeProfile.temperature);
+        if (sameValues) {
+          // Nothing visible changes at this boundary — just track it
+          setLastProfile(DEVICE_ID, next.name, next.brightness, next.temperature, next);
+        } else {
+          const secsToBoundary = Math.max(0, Math.round(upcoming.msFromNow / 1000));
+          const fadeSeconds = secsToBoundary + SETTINGS.transitionDuration;
+          await applyLighting(device, next.brightness, next.temperature, true, fadeSeconds);
+          setLastProfile(DEVICE_ID, next.name, next.brightness, next.temperature, next);
+          // The gate should now look past this boundary
+          recordSchedule(DEVICE_ID, roomConfig.profiles, upcoming.minutes);
+
+          const bPct = Math.round(next.brightness * 100);
+          const tPct = Math.round(next.temperature * 100);
+          const bTime = formatMinutesToTime(upcoming.minutes % 1440);
+          const message = `[${roomName}] ${next.name} → ${bPct}% / ${tPct}% (early: boundary ${bTime} in ${secsToBoundary}s, fade ${fadeSeconds}s)`;
+          diagLog(`AL-APPLY | ${roomName} | ${next.name} | dim=${bPct}% temp=${tPct}% | mode=check (early, boundary ${bTime}, fade ${fadeSeconds}s)${daylightTag(next)}`);
+          if (SETTINGS.enableLogging) log(message);
+          await notify(message);
+          return {
+            room: roomName,
+            profile: next.name,
+            brightness: next.brightness,
+            temperature: next.temperature,
+            early: true,
+            boundary: bTime,
+            fadeSeconds,
+            skipped: false,
+            message
+          };
+        }
+      }
+
+      // Already at correct values. For sun/daylight-managed profiles make sure
+      // the bookkeeping the gates rely on exists (first run after an upgrade,
+      // or the light was already within tolerance so nothing was applied):
+      // record what the light actually shows plus the sun ends. No command sent.
+      if ((sunManaged || daylightManaged)) {
+        const la = getDeviceState(DEVICE_ID).lastApplied;
+        const needsMeta = !la || (sunManaged && !la.sun) || (daylightManaged && typeof la.factor !== 'number');
+        if (needsMeta) {
+          setLastProfile(DEVICE_ID, activeProfile.name, currentBrightness, currentTemperature, activeProfile);
+        }
+      }
+
+      // Skip silently
       if (SETTINGS.enableDetailedLogging) {
         log(`[${roomName}] Skipped - already at ${activeProfile.name} values`);
       }
@@ -2016,11 +2569,20 @@ try {
       };
     }
     
-    // Values don't match active profile - check if they match LAST applied profile
+    // Values don't match active profile - check if they match what AL LAST APPLIED.
+    // Prefer the stored values (daylight-scaled brightness lives there); fall back
+    // to the profile table by name for states written before v2.22.
     const lastProfileName = getLastProfile(DEVICE_ID);
+    const lastApplied = getDeviceState(DEVICE_ID).lastApplied;
     let matchesLastProfile = false;
-    
-    if (lastProfileName) {
+
+    if (lastApplied && typeof lastApplied.brightness === 'number') {
+      const lastDimDiff = Math.abs(currentBrightness - lastApplied.brightness);
+      const lastTempDiff = (currentTemperature !== null && typeof lastApplied.temperature === 'number')
+        ? Math.abs(currentTemperature - lastApplied.temperature)
+        : 0;
+      matchesLastProfile = lastDimDiff <= SETTINGS.tolerance && lastTempDiff <= SETTINGS.tolerance;
+    } else if (lastProfileName) {
       const lastProfile = roomConfig.profiles.find(p => p.name === lastProfileName);
       if (lastProfile) {
         const lastDimDiff = Math.abs(currentBrightness - lastProfile.brightness);
@@ -2100,7 +2662,7 @@ try {
         await applyLighting(device, activeProfile.brightness, activeProfile.temperature, false);
 
         // Small delay to ensure the bulb has processed the brightness/temperature commands
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await wait(100);
 
         // NOW turn on the light - it should turn on at the correct level
         await device.setCapabilityValue('onoff', true);
@@ -2110,7 +2672,7 @@ try {
         }
         
         // Mark profile as applied
-        setLastProfile(DEVICE_ID, activeProfile.name);
+        setLastProfile(DEVICE_ID, activeProfile.name, activeProfile.brightness, activeProfile.temperature, activeProfile);
         
         // Return early to avoid duplicate applyLighting call
         const brightnessPercent = Math.round(activeProfile.brightness * 100);
@@ -2165,7 +2727,7 @@ try {
     
     if (result.success) {
       // Verification passed - safe to set lastProfile
-      setLastProfile(DEVICE_ID, activeProfile.name);
+      setLastProfile(DEVICE_ID, activeProfile.name, activeProfile.brightness, activeProfile.temperature, activeProfile);
     } else {
       // Verification failed - mark as fading to prevent false manual mode
       setDeviceFading(DEVICE_ID, SETTINGS.failedVerificationBuffer);
@@ -2189,7 +2751,7 @@ try {
     await applyLighting(device, activeProfile.brightness, activeProfile.temperature, useDuration);
 
     // Remember which profile was applied (for check mode comparison)
-    setLastProfile(DEVICE_ID, activeProfile.name);
+    setLastProfile(DEVICE_ID, activeProfile.name, activeProfile.brightness, activeProfile.temperature, activeProfile);
   }
 
   // Logging and notifications
@@ -2205,7 +2767,7 @@ try {
   const weekendIndicator = roomConfig.usingWeekendProfile ? ' [Weekend]' : '';
   const message = `[${roomName}] ${activeProfile.name} → ${brightnessPercent}% / ${tempDesc}${weekendIndicator}${modeIndicator}`;
 
-  diagLog(`AL-APPLY | ${roomName} | ${activeProfile.name} | dim=${brightnessPercent}% temp=${tempPercent}% | mode=${CHECK_MANUAL ? 'check' : FORCE_UPDATE ? 'force' : CLEAR_MANUAL ? 'clear' : 'normal'}${weekendIndicator}`);
+  diagLog(`AL-APPLY | ${roomName} | ${activeProfile.name} | dim=${brightnessPercent}% temp=${tempPercent}% | mode=${CHECK_MANUAL ? 'check' : FORCE_UPDATE ? 'force' : CLEAR_MANUAL ? 'clear' : 'normal'}${weekendIndicator}${daylightTag(activeProfile)}`);
 
   // Only log when in check mode (not when light turns on)
   if (SETTINGS.enableLogging && CHECK_MANUAL) {

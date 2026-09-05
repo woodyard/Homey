@@ -7,6 +7,19 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 4.2  2026-09-04  Faster restore: use fade targets cached by GradualFadeOut
+//                  - GradualFadeOut/watchdog v6.11/v2.10 now save the exact
+//                    list of bulbs they faded in ${deviceId}_FadeTargets
+//                  - Restore reads that list and sends the restore commands
+//                    straight away: no getDevice() and no getDevices() (the
+//                    full device dump was the slowest step, and B9 always hit
+//                    it because "B9 Lys" needs the zone fallback)
+//                  - Flag clear + _RestoredAt now happen before ANY API call,
+//                    so AdaptiveLighting can't read a half-updated state
+//                  - Dim and temperature are sent in parallel per bulb
+//                  - Old discovery path kept as fallback when no cached
+//                    targets exist (e.g. restore raced the fade-out's
+//                    member lookup)
 // 4.1  2026-06-10  Explicit restore marker; keep expired fade flag intact
 //                  - Real restore now sets ${deviceId}_RestoredAt timestamp
 //                  - Fast path no longer zeroes _FadeActiveUntil: the stale
@@ -109,21 +122,15 @@ try {
       global.set(savedDimVar, null);
       global.set(savedTempVar, null);
       global.set(`${deviceId}_SavedManualMode`, null);
+      global.set(`${deviceId}_FadeTargets`, null);
       // NOTE: do NOT zero _FadeActiveUntil here — it is already expired, and
       // zeroing it races GradualFadeOut/watchdog's post-fade turn-off check
     }
     return `No active fade for ${deviceId.substring(0, 8)}, skipped`;
   }
 
-  // ACTIVE FADE — fetch device and proceed with restore
+  // ACTIVE FADE — restore
   log(`Fade active (${Math.round((fadeActiveUntil - now) / 1000)}s remaining) - restoring`);
-
-  let device;
-  try {
-    device = await Homey.devices.getDevice({ id: deviceId });
-  } catch (error) {
-    return `ERROR: Device not found with ID: ${deviceId}`;
-  }
 
   // Get saved values from global variables
   const savedDim = global.get(savedDimVar);
@@ -131,13 +138,12 @@ try {
 
   log(`Saved values: dim=${savedDim !== null ? Math.round(savedDim * 100) + '%' : 'N/A'}, temp=${savedTemp !== null ? Math.round(savedTemp * 100) + '%' : 'N/A'}`);
 
-  // Clear fade timestamp - allows AdaptiveLighting to proceed
+  // Clear fade timestamp AND mark the restore in the same tick, before any
+  // API call: AdaptiveLighting (normal mode) reads both and must never see
+  // "flag cleared, no restore" in between
   global.set(fadeActiveUntilVar, 0);
-  log(`Fade timestamp cleared`);
-
-  // Mark that a real restore happened — GradualFadeOut/watchdog check this
-  // timestamp to decide whether to skip their final turn-off
   global.set(`${deviceId}_RestoredAt`, Date.now());
+  log(`Fade timestamp cleared`);
 
   // If device was in manual mode before fade, signal AdaptiveLighting to preserve it
   const wasManualMode = global.get(`${deviceId}_SavedManualMode`);
@@ -147,7 +153,75 @@ try {
     log(`Manual mode preserved - AdaptiveLighting will respect restored values`);
   }
 
-  diagLog(`RESTORE | ${device.name} | dim=${savedDim !== null ? Math.round(savedDim * 100) + '%' : 'N/A'} temp=${savedTemp !== null ? Math.round(savedTemp * 100) + '%' : 'N/A'} | manual=${!!wasManualMode} | fadeRemaining=${Math.round((fadeActiveUntil - now) / 1000)}s`);
+  // FAST PATH: GradualFadeOut/watchdog cached the exact bulbs they faded.
+  // Restore those directly by ID — no device fetch, no full device dump.
+  let cached = null;
+  try {
+    const raw = global.get(`${deviceId}_FadeTargets`);
+    if (raw) cached = JSON.parse(raw);
+  } catch (e) { cached = null; }
+
+  if (cached && Array.isArray(cached.targets) && cached.targets.length > 0) {
+    const displayName = cached.name || deviceId.substring(0, 8);
+    diagLog(`RESTORE | ${displayName} | dim=${savedDim !== null ? Math.round(savedDim * 100) + '%' : 'N/A'} temp=${savedTemp !== null ? Math.round(savedTemp * 100) + '%' : 'N/A'} | manual=${!!wasManualMode} | fadeRemaining=${Math.round((fadeActiveUntil - now) / 1000)}s | targets=${cached.targets.length} (cached)`);
+
+    // Restore one bulb by ID. Dim goes through the flow card with a short
+    // duration to override the running hardware fade; temperature in parallel.
+    async function restoreById(target, dim, temp) {
+      const ops = [];
+      if (dim !== null && dim !== undefined && dim > 0) {
+        ops.push(
+          Homey.flow.runFlowCardAction({
+            uri: `homey:device:${target.id}`,
+            id: `homey:device:${target.id}:dim`,
+            args: { dim },
+            duration: 0.5
+          }).catch(async () => {
+            const dev = await Homey.devices.getDevice({ id: target.id });
+            await dev.setCapabilityValue('dim', dim);
+          })
+        );
+      }
+      if (temp !== null && temp !== undefined) {
+        ops.push(
+          Homey.devices.setCapabilityValue({ deviceId: target.id, capabilityId: 'light_temperature', value: temp })
+            .catch(() => null) // device might not support temperature
+        );
+      }
+      await Promise.all(ops);
+    }
+
+    const results = await Promise.all(cached.targets.map(t =>
+      restoreById(t, savedDim, savedTemp)
+        .then(() => { log(`  ✓ Restored: ${t.name || t.id}`); return true; })
+        .catch(e => { log(`  ✗ Failed: ${t.name || t.id} - ${e.message}`); return false; })
+    ));
+
+    // Group device: also set the group itself (UI consistency). Not on the
+    // perceived-latency path — the bulbs already have their commands.
+    const isGroupTarget = !(cached.targets.length === 1 && cached.targets[0].id === deviceId);
+    if (isGroupTarget && savedDim !== null && savedDim > 0) {
+      try {
+        await Homey.devices.setCapabilityValue({ deviceId, capabilityId: 'dim', value: savedDim });
+      } catch (e) { /* group device might lag behind */ }
+    }
+
+    const okCount = results.filter(r => r).length;
+    if (okCount === 0) {
+      diagLog(`RESTORE-ERROR | ${displayName} | all ${cached.targets.length} cached target(s) failed`);
+    }
+    return `${displayName}: Restored ${okCount}/${cached.targets.length} to ${Math.round(savedDim * 100)}%${savedTemp !== null ? ` / ${Math.round(savedTemp * 100)}% temp` : ''}`;
+  }
+
+  // FALLBACK: no cached targets — discover them the slow way
+  let device;
+  try {
+    device = await Homey.devices.getDevice({ id: deviceId });
+  } catch (error) {
+    return `ERROR: Device not found with ID: ${deviceId}`;
+  }
+
+  diagLog(`RESTORE | ${device.name} | dim=${savedDim !== null ? Math.round(savedDim * 100) + '%' : 'N/A'} temp=${savedTemp !== null ? Math.round(savedTemp * 100) + '%' : 'N/A'} | manual=${!!wasManualMode} | fadeRemaining=${Math.round((fadeActiveUntil - now) / 1000)}s | targets=discovered`);
 
   // Find group members (to cancel hardware fade on each)
   // Group devices lack button.migrate_v3; individual Zigbee bulbs have it.
@@ -185,25 +259,22 @@ try {
   // Uses flow card with short duration to cancel any in-progress hardware fade.
   // Plain setCapabilityValue doesn't interrupt a running move_to_level on many bulbs.
   async function restoreDevice(dev, dim, temp) {
+    const ops = [];
     if (dim !== null && dim !== undefined && dim > 0) {
-      try {
-        await Homey.flow.runFlowCardAction({
+      ops.push(
+        Homey.flow.runFlowCardAction({
           uri: `homey:device:${dev.id}`,
           id: `homey:device:${dev.id}:dim`,
           args: { dim },
           duration: 0.5
-        });
-      } catch (e) {
-        await dev.setCapabilityValue('dim', dim);
-      }
+        }).catch(() => dev.setCapabilityValue('dim', dim))
+      );
     }
     if (temp !== null && temp !== undefined) {
-      try {
-        await dev.setCapabilityValue('light_temperature', temp);
-      } catch (e) {
-        // Device might not support temperature
-      }
+      // Device might not support temperature — ignore failures
+      ops.push(dev.setCapabilityValue('light_temperature', temp).catch(() => null));
     }
+    await Promise.all(ops);
   }
 
   // Check if it's a group
@@ -217,11 +288,11 @@ try {
     const restorePromises = members.map(member =>
       restoreDevice(member, savedDim, savedTemp)
         .then(() => {
-          log(`  âœ" Restored: ${member.name}`);
+          log(`  ✓ Restored: ${member.name}`);
           return { success: true, name: member.name };
         })
         .catch(e => {
-          log(`  âœ— Failed: ${member.name} - ${e.message}`);
+          log(`  ✗ Failed: ${member.name} - ${e.message}`);
           return { error: true, name: member.name };
         })
     );
@@ -238,7 +309,7 @@ try {
   } else {
     // Single device
     await restoreDevice(device, savedDim, savedTemp);
-    log(`âœ“ Restored brightness to ${Math.round(savedDim * 100)}%`);
+    log(`✓ Restored brightness to ${Math.round(savedDim * 100)}%`);
   }
 
   return `${device.name}: Restored to ${Math.round(savedDim * 100)}%${savedTemp !== null ? ` / ${Math.round(savedTemp * 100)}% temp` : ''}`;

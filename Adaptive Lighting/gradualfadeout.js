@@ -12,6 +12,13 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.11 2026-09-04  Cache fade targets for a faster restore
+//                  - Saves the exact bulbs being faded (id + name) in
+//                    ${deviceId}_FadeTargets so RestoreSavedSettings v4.2
+//                    can restore by ID without fetching any devices
+//                  - Aborts before sending the fade if a restore already
+//                    happened during the (slow) member lookup — previously
+//                    the fade command was sent anyway and undid the restore
 // 6.10 2026-07-06  Fix: setTimeout is not defined in HomeyScript
 //                  - The post-fade wait and 3s verify wait used
 //                    `new Promise(r => setTimeout(r, ...))`; HomeyScript has
@@ -118,9 +125,12 @@ const restoreBuffer = 15;    // seconds the restore window stays open after the
 //   FADE-SAVE  (GradualFadeOut)   - brightness/temp saved before fade, manual mode state
 //   FADE-SKIP  (GradualFadeOut)   - light already off, no fade needed
 //   FADE-CANCELLED (GradualFadeOut) - fade aborted early because of a restore/cleared flag
+//   FADE-ABORT (GradualFadeOut)   - restore ran before the fade command was sent; fade not started
 //   RESTORE    (RestoreSavedSettings) - brightness/temp restored, manual mode preserved
 //   RESTORE-SKIP (RestoreSavedSettings) - fade expired, nothing to restore
+//   RESTORE-ERROR (RestoreSavedSettings) - every cached target failed to restore
 //   AL-SKIP-FADE (AdaptiveLighting) - skipped because fade/restore in progress
+//   AL-SKIP-RESTORE (AdaptiveLighting) - skipped because a restore just happened (restoreGraceSeconds)
 //   AL-SKIP-MANUAL (AdaptiveLighting) - skipped because ManualRestoreUntil active
 //   AL-APPLY   (AdaptiveLighting) - profile applied (brightness/temp/profile name)
 // Max 500 lines retained (oldest trimmed). Read via: global.get('AL_DiagnostikLog')
@@ -248,6 +258,21 @@ async function processDevice(deviceId) {
 
     // Determine turn-off targets (members for groups, device itself otherwise)
     const turnOffTargets = isGroup ? members : [device];
+
+    // Cache the exact targets so RestoreSavedSettings can restore by ID
+    // without any device lookup (the lookup above is the slow part)
+    global.set(`${deviceId}_FadeTargets`, JSON.stringify({
+      name: device.name,
+      targets: turnOffTargets.map(t => ({ id: t.id, name: t.name }))
+    }));
+
+    // A restore may already have run while we were looking up members
+    // (someone walked back in right at countdown zero). Don't start a fade
+    // that would immediately undo it.
+    if ((global.get(`${deviceId}_RestoredAt`) || 0) >= fadeStartedAt) {
+      diagLog(`FADE-ABORT | ${device.name} | restore ran during member lookup — fade not started`);
+      return `${device.name}: restore ran first, fade aborted`;
+    }
 
     if (isGroup) {
       log(`Group detected with ${members.length} members - applying hardware fade to each`);

@@ -12,6 +12,11 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.10 2026-09-04  Cache fade targets for a faster restore
+//                  - Saves the bulbs being faded in ${deviceId}_FadeTargets
+//                    (primary light: its members; each extra light: itself)
+//                    so RestoreSavedSettings v4.2 can restore by ID without
+//                    fetching any devices — matches GradualFadeOut v6.11
 // 2.9  2026-07-06  Fix: setTimeout is not defined in HomeyScript
 //                  - The post-fade wait and 3s verify wait used
 //                    `new Promise(r => setTimeout(r, ...))`; HomeyScript has
@@ -261,6 +266,13 @@ try {
   }
   targets = members.length > 0 ? members : [device];
 
+  // Cache the primary light's targets so RestoreSavedSettings can restore
+  // by ID without any device lookup
+  global.set(`${ROOM.primaryLight}_FadeTargets`, JSON.stringify({
+    name: device.name,
+    targets: targets.map(t => ({ id: t.id, name: t.name }))
+  }));
+
   // Add extra lights (non-group lights in the same room)
   if (ROOM.extraLights) {
     for (const extraId of ROOM.extraLights) {
@@ -280,6 +292,10 @@ try {
           if (extraAlRaw) extraManual = JSON.parse(extraAlRaw).manual === true;
         } catch (e) { /* parse error — treat as not manual */ }
         global.set(`${extraId}_SavedManualMode`, extraManual);
+        global.set(`${extraId}_FadeTargets`, JSON.stringify({
+          name: extraDevice.name,
+          targets: [{ id: extraDevice.id, name: extraDevice.name }]
+        }));
 
         targets.push(extraDevice);
       }
