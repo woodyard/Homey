@@ -13,6 +13,10 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.13 2026-10-28  Stop writing ${id}_SavedManualMode (primary and extra lights)
+//                  - Same as GradualFadeOut 6.14: its only reader turned it into
+//                    _ManualRestoreUntil, unread since AdaptiveLighting 2.17.0.
+//                    WATCHDOG-FADE still shows manual= from AL's state
 // 2.12 2026-10-27  Errors reach AL_DiagnostikLog
 //                  - The script had no top-level catch: an unknown light or
 //                    motion-sensor id (e.g. after re-pairing for the Hue Bridge
@@ -289,14 +293,13 @@ try {
   const fadeUntil = fadeStartedAt + ((FADE_DURATION + RESTORE_BUFFER) * 1000);
   global.set(`${ROOM.primaryLight}_FadeActiveUntil`, fadeUntil);
 
-  // Save manual mode state from AdaptiveLighting per-device state (for RestoreSavedSettings coordination)
+  // AdaptiveLighting's manual flag, for the WATCHDOG-FADE line only
   const alDeviceKey = ROOM.primaryLight.substring(0, 8);
   let wasManualMode = false;
   try {
     const alRaw = global.get(`AL_Device_${alDeviceKey}.State`);
     if (alRaw) wasManualMode = JSON.parse(alRaw).manual === true;
   } catch (e) { /* parse error — treat as not manual */ }
-  global.set(`${ROOM.primaryLight}_SavedManualMode`, wasManualMode);
 
   checkOverride(ROOM.primaryLight, device.name, currentBrightness, currentTemp, 'watchdog');
 
@@ -357,14 +360,6 @@ try {
           global.set(`${extraId}_SavedDim`, extraDim);
           if (extraTemp !== null) global.set(`${extraId}_SavedTemp`, extraTemp);
           global.set(`${extraId}_FadeActiveUntil`, fadeUntil);
-
-          const extraAlKey = extraId.substring(0, 8);
-          let extraManual = false;
-          try {
-            const extraAlRaw = global.get(`AL_Device_${extraAlKey}.State`);
-            if (extraAlRaw) extraManual = JSON.parse(extraAlRaw).manual === true;
-          } catch (e) { /* parse error — treat as not manual */ }
-          global.set(`${extraId}_SavedManualMode`, extraManual);
           global.set(`${extraId}_FadeTargets`, JSON.stringify({
             name: extraDevice.name,
             targets: [{ id: extraDevice.id, name: extraDevice.name }]

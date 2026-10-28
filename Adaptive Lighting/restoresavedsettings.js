@@ -7,6 +7,14 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 4.4  2026-10-28  Remove the dead manual-mode hand-off
+//                  - _SavedManualMode (from GradualFadeOut/watchdog) was turned
+//                    into _ManualRestoreUntil, which nothing has read since
+//                    AdaptiveLighting 2.17.0. Neither is written any more; the
+//                    RESTORE line's manual= now comes from AL's own state
+//                  - Log line no longer claims "AdaptiveLighting will respect
+//                    restored values" (the real guard is _RestoredAt +
+//                    restoreGraceSeconds)
 // 4.3  2026-10-27  Errors reach AL_DiagnostikLog
 //                  - The outer catch only logged to the console, which flow
 //                    runs never show — now also RESTORE-ERROR | <id> |
@@ -130,7 +138,6 @@ try {
     if (staleVal !== null) {
       global.set(savedDimVar, null);
       global.set(savedTempVar, null);
-      global.set(`${deviceId}_SavedManualMode`, null);
       global.set(`${deviceId}_FadeTargets`, null);
       // NOTE: do NOT zero _FadeActiveUntil here — it is already expired, and
       // zeroing it races GradualFadeOut/watchdog's post-fade turn-off check
@@ -154,13 +161,14 @@ try {
   global.set(`${deviceId}_RestoredAt`, Date.now());
   log(`Fade timestamp cleared`);
 
-  // If device was in manual mode before fade, signal AdaptiveLighting to preserve it
-  const wasManualMode = global.get(`${deviceId}_SavedManualMode`);
-  if (wasManualMode) {
-    global.set(`${deviceId}_ManualRestoreUntil`, Date.now() + 10000); // 10s window
-    global.set(`${deviceId}_SavedManualMode`, null); // Consumed
-    log(`Manual mode preserved - AdaptiveLighting will respect restored values`);
-  }
+  // AdaptiveLighting's manual flag, for the log line only. A restore never
+  // changes it; AL's restoreGraceSeconds (via _RestoredAt) keeps a late
+  // "turned on" trigger from overriding the restored values
+  let wasManualMode = false;
+  try {
+    const alRaw = global.get(`AL_Device_${deviceId.substring(0, 8)}.State`);
+    if (alRaw) wasManualMode = JSON.parse(alRaw).manual === true;
+  } catch (e) { /* parse error — treat as not manual */ }
 
   // FAST PATH: GradualFadeOut/watchdog cached the exact bulbs they faded.
   // Restore those directly by ID — no device fetch, no full device dump.

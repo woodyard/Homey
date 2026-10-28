@@ -93,9 +93,17 @@ export function createEnv(devices = []) {
     return d;
   };
 
+  // set(key, undefined) removes the key; env.emptiedStaysListed = true makes it
+  // stay listed with value null instead (HomeyScript may keep emptied keys)
+  env.emptiedStaysListed = false;
   env.global = {
     get: (k) => (env.store.has(k) ? env.store.get(k) : null),
-    set: (k, v) => { env.store.set(k, v); },
+    set: (k, v) => {
+      if (v !== undefined) env.store.set(k, v);
+      else if (env.emptiedStaysListed) env.store.set(k, null);
+      else env.store.delete(k);
+    },
+    keys: () => [...env.store.keys()],
   };
 
   env.Homey = {

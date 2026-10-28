@@ -2,12 +2,26 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.29.0
-// Date:        2026-10-27
+// Version:     2.29.1
+// Date:        2026-10-28
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.29.1 2026-10-28  Remove dead code and a dormant risk
+//                    - isDeviceFading no longer reads the legacy ${id}_FadeActive
+//                      flag: nothing has written it since GradualFadeOut 5.0, and
+//                      a leftover true would have made check mode skip that light
+//                      forever (AL-SKIP-FADE on every poll)
+//                    - Removed unused getCurrentHour, getTimestamp and
+//                      findMatchingProfile, the legacy startHour/endHour and
+//                      numeric-hour profile support (every profile uses
+//                      startTime/endTime) and the unread turnOnTransitionDuration
+//                    - Comments fixed: group members are found by name prefix (not
+//                      button.migrate_v3); forced profiles are stored in device
+//                      state; the normal-mode skip no longer waits 500 ms
+//                    - No behaviour change otherwise. Leftover keys can be removed
+//                      with al_cleanup_globals.js
 // 2.29.0 2026-10-27  Manual mode ends at Night
 //                    - Since 2.12.0 manual mode lasted until the light was
 //                      switched off and on (or force/clear/cycle), so a light
@@ -838,8 +852,9 @@ const SV_LUMINANCE = {
 const SV_SUN_TEMPERATURE = STUE_SUN_TEMPERATURE; // same elevation curve; ends come from the bedroom profiles
 
 // ====== ROOM CONFIGURATION ======
-// Only groups and standalone devices - individual bulbs in groups are excluded
-// Groups are identified by NOT having "button.migrate_v3" in their state
+// Only groups and standalone devices - individual bulbs in groups are excluded.
+// A group's bulbs are found by name prefix: group "ST Loft" → "ST Loft 1",
+// "ST Loft 2", … (class light). See findGroupMembers.
 //
 const ROOM_CONFIG = {
   
@@ -979,17 +994,12 @@ const ROOM_CONFIG = {
   }
 };
 
-// ====== FORCED PROFILE VARIABLES ======
-// Maps device IDs to global variable names for forced profile tracking
-// Variable value: -1 = auto (follow time-based schedule), 0-3 = forced profile index
-// Profiles are indexed as: 0 = Morning, 1 = Daytime, 2 = Evening, 3 = Night
-//
-// Uses HomeyScript global variables (no manual setup required)
-// Variables are automatically created when first used
-//
-// Usage with button controls:
-// - Double-click top button: Run script with "deviceId cycle-profile"
-// - Double-click bottom button: Run script with "deviceId clear" (resets to -1)
+// ====== FORCED PROFILES ======
+// Devices that can be forced to one profile with "deviceId cycle-profile"
+// (each run steps 0 = Morning → 1 = Daytime → 2 = Evening → 3 = Night);
+// "deviceId clear" or turning the light on returns to the schedule (-1).
+// Stored in the device's state (forcedProfile.index); no setup needed.
+// Wire the two modes to a button in the room's light flow to use them.
 //
 const FORCED_PROFILE_DEVICES = new Set([
   "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0",  // Oliver's room
@@ -1008,7 +1018,6 @@ const SETTINGS = {
   tolerance: 0.10,               // 10% tolerance when comparing values
   transitionDuration: 60,        // Fade time in SECONDS (60 = 1 min, 0 = instant)
                                  // Note: Only works on devices that support duration (Hue, IKEA, etc.)
-  turnOnTransitionDuration: 1,   // Quick fade when turning on (1s masks hardware flash)
   enableVerification: true,      // Verify settings after clear/reset operations
   verificationRetries: 3,        // Max retry attempts for verification
   verificationDelay: 1500,       // Wait time before verification (ms)
@@ -1503,7 +1512,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.29.0';
+const AL_VERSION = '2.29.1';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -1636,8 +1645,7 @@ function setDeviceFading(deviceId, duration) {
  * Check if device is currently fading
  * Checks:
  * 1. Unified state fadeEndTime (AL's own transition tracking)
- * 2. External: GradualFadeOut timestamp (${deviceId}_FadeActiveUntil)
- * 3. External: GradualFadeOut legacy flag (${deviceId}_FadeActive)
+ * 2. External: GradualFadeOut/watchdog timestamp (${deviceId}_FadeActiveUntil)
  * @param {string} deviceId - Device ID
  * @returns {boolean} True if fade is in progress
  */
@@ -1662,16 +1670,7 @@ function isDeviceFading(deviceId) {
     log(`[AdaptiveLighting] Device ${deviceKey} has external fade active (${remaining}s remaining)`);
   }
 
-  // Check external: GradualFadeOut legacy flag-based tracking (backwards compat)
-  const fadeActiveVar = `${deviceId}_FadeActive`;
-  const flagFading = global.get(fadeActiveVar) === true;
-
-  if (flagFading && SETTINGS.enableDetailedLogging) {
-    log(`[AdaptiveLighting] Device ${deviceKey} has legacy FadeActive flag set`);
-  }
-
-  // Return true if ANY system indicates fading
-  return timestampFading || bathroomFading || flagFading;
+  return timestampFading || bathroomFading;
 }
 
 /**
@@ -1741,13 +1740,10 @@ function setForcedProfile(deviceId, profileIndex, profileData = null) {
 }
 
 /**
- * Parse time string "HH:MM" or hour number to minutes since midnight
+ * Parse a profile time ("HH:MM" or "sunrise"/"sunset" with offset and limits)
+ * to minutes since midnight
  */
 function parseTimeToMinutes(time) {
-  if (typeof time === 'number') {
-    // Legacy support: treat number as hour
-    return time * 60;
-  }
   if (typeof time === 'string') {
     const timeLower = time.toLowerCase().trim();
     
@@ -1801,26 +1797,6 @@ function formatMinutesToTime(minutes) {
 }
 
 /**
- * Get current hour in configured timezone (for logging)
- */
-function getCurrentHour() {
-  const now = new Date();
-  const copenhagenTimeStr = now.toLocaleString('en-US', { 
-    timeZone: 'Europe/Copenhagen',
-    hour12: false,
-    hour: '2-digit'
-  });
-  return parseInt(copenhagenTimeStr, 10);
-}
-
-/**
- * Get formatted timestamp for logging
- */
-function getTimestamp() {
-  return new Date().toLocaleString('da-DK', { timeZone: SETTINGS.timezone });
-}
-
-/**
  * Check if two values are approximately equal (within tolerance)
  */
 function approxEqual(a, b, tolerance = SETTINGS.tolerance) {
@@ -1828,34 +1804,12 @@ function approxEqual(a, b, tolerance = SETTINGS.tolerance) {
 }
 
 /**
- * Check if current light state matches any profile in the list
- * Returns the matching profile name, or null if no match (manually adjusted)
- */
-function findMatchingProfile(profiles, currentBrightness, currentTemperature) {
-  for (const profile of profiles) {
-    const brightnessMatch = approxEqual(currentBrightness, profile.brightness);
-    const temperatureMatch = currentTemperature === null || 
-                             approxEqual(currentTemperature, profile.temperature);
-    
-    if (brightnessMatch && temperatureMatch) {
-      return profile.name;
-    }
-  }
-  return null; // No match = manually adjusted
-}
-
-/**
  * Find the appropriate lighting profile for the current time
- * Supports both "HH:MM" strings and legacy hour numbers
  */
 function findActiveProfile(profiles, currentMinutes) {
   for (const profile of profiles) {
-    // Support both startTime/endTime and legacy startHour/endHour
-    const startTime = profile.startTime ?? profile.startHour;
-    const endTime = profile.endTime ?? profile.endHour;
-    
-    const startMinutes = parseTimeToMinutes(startTime);
-    const endMinutes = parseTimeToMinutes(endTime);
+    const startMinutes = parseTimeToMinutes(profile.startTime);
+    const endMinutes = parseTimeToMinutes(profile.endTime);
     
     let inRange = false;
     
@@ -2082,7 +2036,7 @@ function findNextBoundary(profiles, currentMinutes) {
   let best = null;
   let earliest = null;
   for (const profile of profiles) {
-    const start = parseTimeToMinutes(profile.startTime ?? profile.startHour);
+    const start = parseTimeToMinutes(profile.startTime);
     if (start > currentMinutes && (!best || start < best.minutes)) best = { minutes: start, profile };
     if (!earliest || start < earliest.minutes) earliest = { minutes: start, profile };
   }
@@ -2142,7 +2096,7 @@ function getRoomConfig(deviceId, deviceName) {
 }
 
 /**
- * Find group members by name pattern (e.g., "SV Light Loft" → "SV Light Loft 1/3", "SV Light Loft 2/3")
+ * Find group members by name pattern (e.g., "SV Loft" → "SV Loft 1", "SV Loft 2", "SV Loft 3")
  */
 async function findGroupMembers(groupName) {
   if (!CACHED_ALL_DEVICES) {
@@ -2851,12 +2805,11 @@ try {
   const currentTemperature = device.capabilitiesObj?.light_temperature?.value ?? null;
   
   // Skip if device is in a fade/restore operation
-  // Check mode: uses isDeviceFading() which includes AL's own transition tracking
-  // Normal mode: only checks _FadeActiveUntil (GradualFadeOut/watchdog external fades)
-  //   AL's own AL_Fade_ timestamps must NOT block normal mode, since check-mode
-  //   transitions (60s+5s) would falsely prevent profile application when entering a room.
-  //   If _FadeActiveUntil is active, waits 500ms for RestoreSavedSettings to clear it.
-  //   If cleared → motion triggered restore → proceed. If still active → skip.
+  // Check mode: uses isDeviceFading() — AL's own transition (state.fadeEndTime)
+  //   or a GradualFadeOut/watchdog fade (_FadeActiveUntil)
+  // Normal mode (below) only looks at the external fade and the restore marker:
+  //   AL's own fadeEndTime must NOT block it, since a check-mode transition
+  //   (60 s + 5 s) would otherwise prevent the profile when entering the room
   if (!FORCE_UPDATE && !CLEAR_MANUAL && CHECK_MANUAL && isDeviceFading(DEVICE_ID)) {
     if (SETTINGS.enableLogging) {
       log(`[${roomName}] ⸏ Skipping check - fade/restore in progress`);
@@ -3285,8 +3238,8 @@ try {
     log(message);
     
     if (SETTINGS.enableDetailedLogging) {
-      const startTimeStr = activeProfile.startTime ?? `${activeProfile.startHour}:00`;
-      const endTimeStr = activeProfile.endTime ?? `${activeProfile.endHour}:00`;
+      const startTimeStr = activeProfile.startTime;
+      const endTimeStr = activeProfile.endTime;
       log(`[${roomName}] ├─ Day: ${getDayName()} (${roomConfig.isWeekend ? 'weekend' : 'weekday'})`);
       log(`[${roomName}] ├─ Brightness: ${brightnessPercent}%`);
       log(`[${roomName}] ├─ Temperature: ${tempPercent}% (${tempDesc})`);

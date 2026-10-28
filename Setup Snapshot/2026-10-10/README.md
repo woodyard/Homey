@@ -83,7 +83,7 @@ Kun enheder, der bruges i et flow, et script eller dashboardet. Flows medregner 
 | ST Smart Thermostat | tado | Heating Master Off (Advanced), Heating switched off, ST - Heating, ST - xHeating flow | – |
 | ST Standerlampe | Homey-gruppe | ST - Light flow, ST - Light reset | Adaptive Lighting/adaptivelighting.js, homey-dashboard/lib/adaptiveLighting.js |
 | SV Computer | Eve-app | SV - Computer, SV - Sluk Computer | EVE Device Monitor/evedevicemonitor.js |
-| SV Loft | Homey-gruppe | SV - Light flow, SV - Light reset | Adaptive Lighting/adaptivelighting.js, Adaptive Lighting/test_fade_single.js, homey-dashboard/lib/adaptiveLighting.js |
+| SV Loft | Homey-gruppe | SV - Light flow, SV - Light reset | Adaptive Lighting/adaptivelighting.js, homey-dashboard/lib/adaptiveLighting.js (test_fade_single.js er slettet 2026-10-28) |
 | SV Motion | Hue | SV - Light flow | Adaptive Lighting/adaptivelighting.js |
 | SV Smart Thermostat | tado | Heating Master Off (Advanced), Heating switched off, SV - Heating, SV - Window closed, SV - Window open, SV - xHeating flow | – |
 

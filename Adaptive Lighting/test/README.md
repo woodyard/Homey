@@ -20,7 +20,8 @@ functions that throw, because HomeyScript has neither (that crashed three script
 - **Homey**: lights whose values change when a command reaches them, motion and lux sensors,
   device flow cards (dim/temperature with duration), zones, and Logic variables with every call
   recorded. Devices can be made unreachable (`env.unreachable.add(id)`).
-- **global**: one in-memory store shared by all script runs in a scenario, like HomeyScript's.
+- **global**: one in-memory store shared by all script runs in a scenario, like HomeyScript's
+  (`get`, `set`, `keys`; `set(key, undefined)` removes the key).
 - **Clock**: `setClock('2026-10-27T21:00:00+01:00')` sets what `new Date()` and `Date.now()`
   return inside the scripts. Use Copenhagen local time with its offset (+01:00 winter,
   +02:00 summer). `wait()` returns at once.
@@ -39,6 +40,7 @@ functions that throw, because HomeyScript has neither (that crashed three script
 | `schedules.mjs` | Weekend set from Friday noon to Sunday noon, sun colour across the seasons, Claras værelse's two lights agree |
 | `fade_watchdog.mjs` | GradualFadeOut "fade already in progress" guard, RestoreSavedSettings partial/missing-device logging, Room_watchdog error rate limit, AL-ERROR / AL-APPLY-FAIL, detailed logging in check mode |
 | `dashboard.mjs` | `homey-dashboard/lib/adaptiveLighting.js`: badge mode from the published status, 30 s "Manual?" delay, tooltip text |
+| `cleanup.mjs` | Dead flags gone (a leftover `_FadeActive` no longer blocks check mode; no `_SavedManualMode`/`_ManualRestoreUntil` writes) and `al_cleanup_globals.js`: dry run, real run keeps other scripts' keys, index rebuild, batches, empty device list |
 | `platform.mjs` | Every script parses as a HomeyScript body and never calls `setTimeout`/`setInterval` |
 
 A scenario file exports `scenarios`, an object of `async (t) => {}` functions. `t.equal(actual,

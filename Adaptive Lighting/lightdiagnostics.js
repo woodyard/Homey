@@ -1,9 +1,13 @@
 /**
  * AdaptiveLighting Diagnostics
- * Version: 1.4
+ * Version: 1.5
  *
  * VERSION HISTORY:
  * -------------------------------------------------------------------------
+ * 1.5  2026-10-28  Drop dead flags: the legacy ${id}_FadeActive (not written
+ *                  since GradualFadeOut 5.0) and ${id}_SavedManualMode (not
+ *                  written since GradualFadeOut 6.14 / watchdog 2.13 — the
+ *                  manual flag is AL's own, shown above)
  * 1.4  2026-03-31  Show full device picture including GradualFadeOut state
  *                  - Shows SavedDim, SavedTemp, FadeActiveUntil, SavedManualMode
  *                  - Raw state dump includes both AL state and external variables
@@ -99,13 +103,11 @@ if (deviceKeys.length === 0) {
       const savedDim = global.get(`${device.id}_SavedDim`);
       const savedTemp = global.get(`${device.id}_SavedTemp`);
       const fadeActiveUntil = global.get(`${device.id}_FadeActiveUntil`) || 0;
-      const fadeActive = global.get(`${device.id}_FadeActive`) || false;
-      const savedManualMode = global.get(`${device.id}_SavedManualMode`);
 
       if (savedDim !== null && savedDim !== undefined) {
         const sDim = Math.round(savedDim * 100) + '%';
         const sTemp = savedTemp !== null && savedTemp !== undefined ? Math.round(savedTemp * 100) + '%' : 'N/A';
-        log(`         Saved settings: Dim=${sDim}, Temp=${sTemp}${savedManualMode ? ' (was manual)' : ''}`);
+        log(`         Saved settings: Dim=${sDim}, Temp=${sTemp}`);
       }
 
       // Fade Status - AL's own transition tracking
@@ -120,9 +122,6 @@ if (deviceKeys.length === 0) {
       if (now < fadeActiveUntil) {
         const remaining = Math.round((fadeActiveUntil - now) / 1000);
         log(`         ⏳ Fade active (Script): ${remaining}s remaining`);
-      }
-      if (fadeActive) {
-        log(`         ⏳ Fade active (legacy flag)`);
       }
     }
     log("");
@@ -152,9 +151,7 @@ if (deviceKeys.length === 0) {
       fullState._external = {
         savedDim: global.get(`${deviceId}_SavedDim`) ?? null,
         savedTemp: global.get(`${deviceId}_SavedTemp`) ?? null,
-        fadeActiveUntil: global.get(`${deviceId}_FadeActiveUntil`) || 0,
-        fadeActive: global.get(`${deviceId}_FadeActive`) || false,
-        savedManualMode: global.get(`${deviceId}_SavedManualMode`) ?? null
+        fadeActiveUntil: global.get(`${deviceId}_FadeActiveUntil`) || 0
       };
     }
 

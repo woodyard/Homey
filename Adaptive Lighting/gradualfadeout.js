@@ -12,6 +12,10 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.14 2026-10-28  Stop writing ${deviceId}_SavedManualMode
+//                  - RestoreSavedSettings only turned it into _ManualRestoreUntil,
+//                    which nothing has read since AdaptiveLighting 2.17.0. The
+//                    FADE-SAVE line still shows manual= (read from AL's state)
 // 6.13 2026-10-27  Don't start while another fade is running
 //                  - If countdown_to_zero fired while a watchdog fade (or an
 //                    earlier run) was still dimming the light, the save step
@@ -143,11 +147,11 @@ const restoreBuffer = 15;    // seconds the restore window stays open after the
 // All three scripts append to the same global variable: AL_DiagnostikLog
 // Format: "DD.MM HH:MM:SS | ACTION | DeviceName | details..."
 // Actions logged:
-//   FADE-SAVE  (GradualFadeOut)   - brightness/temp saved before fade, manual mode state
+//   FADE-SAVE  (GradualFadeOut)   - brightness/temp saved before fade (manual= is AL's flag)
 //   FADE-SKIP  (GradualFadeOut)   - light already off, no fade needed
 //   FADE-CANCELLED (GradualFadeOut) - fade aborted early because of a restore/cleared flag
 //   FADE-ABORT (GradualFadeOut)   - restore ran before the fade command was sent; fade not started
-//   RESTORE    (RestoreSavedSettings) - brightness/temp restored, manual mode preserved
+//   RESTORE    (RestoreSavedSettings) - brightness/temp restored (manual= is AL's flag)
 //   RESTORE-SKIP (RestoreSavedSettings) - fade expired, nothing to restore
 //   RESTORE-ERROR (RestoreSavedSettings) - every bulb failed, device not found, or unexpected error
 //   RESTORE-PARTIAL (RestoreSavedSettings) - some bulbs failed to restore (names listed)
@@ -317,14 +321,14 @@ async function processDevice(deviceId) {
     const fadeActiveUntil = fadeStartedAt + ((fadeDuration + restoreBuffer) * 1000);
     global.set(fadeActiveUntilVar, fadeActiveUntil);
 
-    // Save manual mode state from AdaptiveLighting per-device state (for restore coordination)
+    // AdaptiveLighting's manual flag, for the FADE-SAVE line only (the fade
+    // and restore never change it)
     const alDeviceKey = deviceId.substring(0, 8);
     let wasManualMode = false;
     try {
       const alRaw = global.get(`AL_Device_${alDeviceKey}.State`);
       if (alRaw) wasManualMode = JSON.parse(alRaw).manual === true;
     } catch (e) { /* parse error — treat as not manual */ }
-    global.set(`${deviceId}_SavedManualMode`, wasManualMode);
 
     checkOverride(deviceId, device.name, currentBrightness, currentTemperature, 'fade');
 
