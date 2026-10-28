@@ -24,7 +24,8 @@ functions that throw, because HomeyScript has neither (that crashed three script
   (`get`, `set`, `keys`; `set(key, undefined)` removes the key).
 - **Clock**: `setClock('2026-10-27T21:00:00+01:00')` sets what `new Date()` and `Date.now()`
   return inside the scripts. Use Copenhagen local time with its offset (+01:00 winter,
-  +02:00 summer). `wait()` returns at once; with `env.waitAdvancesClock = true` it moves
+  +02:00 summer). The runner sets TZ=UTC like Homey, so 00:00–02:00 Copenhagen is the
+  previous day in UTC, as on the real box. `wait()` returns at once; with `env.waitAdvancesClock = true` it moves
   the clock forward, and `env.onWait = async (ms) => {}` lets a test act during a wait
   (motion appearing, a restore arriving).
 - **Inspect**: `env.state(id)` (AL device state), `env.diag()` (AL_DiagnostikLog lines),
@@ -39,7 +40,7 @@ functions that throw, because HomeyScript has neither (that crashed three script
 |---|---|
 | `status.mjs` | AdaptiveLightingStatus: create once, no write when unchanged, no call on gated runs, manual/clear/forced, rebuild not merge, failure back-off, parallel first publish, hourly heartbeat, daylight + sun values |
 | `manual_expiry.mjs` | Manual mode ends at Night: Evening keeps it, Night override sticks, overnight (>12 h), pre-2.29 state, forced profile, kitchen 22:00, light already near Night values, failed apply |
-| `schedules.mjs` | Weekend set from Friday noon to Sunday noon, sun colour across the seasons, Claras værelse's two lights agree |
+| `schedules.mjs` | Weekend set from Friday noon to Sunday noon; holidays from Room Heating's calendar (school holidays for the kids' rooms only, fixed and Easter-based public holidays for every room with weekend profiles, the reason in the log tag, Saturday/Sunday only without a readable calendar); sun colour across the seasons, Claras værelse's two lights agree |
 | `fade_watchdog.mjs` | GradualFadeOut "fade already in progress" guard, RestoreSavedSettings partial/missing-device logging, Room_watchdog error rate limit, AL-ERROR / AL-APPLY-FAIL, detailed logging in check mode |
 | `dashboard.mjs` | `homey-dashboard/lib/adaptiveLighting.js`: badge mode from the published status, 30 s "Manual?" delay, tooltip text |
 | `arguments.mjs` | Strict arguments: unknown mode / `off` / malformed id → BADARG and nothing changes, logged once an hour; no argument → default light + DEFAULT-ID line; every mode the live flows use still runs; GradualFadeOut/RestoreSavedSettings/Room_watchdog checks |

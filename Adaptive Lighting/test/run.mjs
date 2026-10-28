@@ -12,6 +12,10 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installClock, restoreClock, setScriptDir } from './mock.mjs';
 
+// Homey's clock runs in UTC: the scripts' Copenhagen conversions must work
+// there, not just on a PC in Danish time (00:00–02:00 is a different date in UTC)
+process.env.TZ = 'UTC';
+
 // The dashboard lib is an ES module in a package without "type": "module";
 // Node says so on every import — not useful here
 process.removeAllListeners('warning');

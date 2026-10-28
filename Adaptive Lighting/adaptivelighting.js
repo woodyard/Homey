@@ -2,12 +2,35 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.29.3
+// Version:     2.30.0
 // Date:        2026-10-28
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.30.0 2026-10-28  Holidays use the weekend schedule
+//                    - Weekend profiles only knew Saturday and Sunday, so the
+//                      kids got the school-night bedtime all through the autumn
+//                      holiday, and everyone the weekday morning on Christmas
+//                      Day or Easter Monday
+//                    - Free days from the calendar Room Heating keeps
+//                      (global Config.Global, room_heating_config.js): the
+//                      fixed public holidays (publicHolidaysFixed) and the
+//                      Easter-based ones (computed as room_heating.js does)
+//                      count for every room with weekendProfiles; the
+//                      schoolHolidays ranges only for rooms with
+//                      schoolHolidays: true (O Loft, C Loft, C LightStrip)
+//                    - Same noon rule as weekends: the evening before a free
+//                      day gets the weekend bedtime, the evening of the last
+//                      one the weekday bedtime
+//                    - No or unreadable Config.Global: Saturday/Sunday only,
+//                      as before. The ad hoc SchoolHoliday Logic variable is
+//                      not used (it means "no school today", not tonight)
+//                    - Log tag shows the reason: [Weekend: Efterårsferie]
+//                    - Not followed yet by B9/E9 - Light flow: their 06:00
+//                      (Mon–Fri) and 07:30 (Sat/Sun) inactivity-timeout cards go
+//                      by weekday, so 06:00–07:30 on a weekday holiday the Night
+//                      light gets the daytime timeout (180 s / 120 s, not 30 / 60)
 // 2.29.3 2026-10-28  Group and Hue detection from the device driver
 //                    - Groups were found by name prefix only, and Hue by the
 //                      button.migrate_v3 capability, which may not survive the
@@ -994,6 +1017,7 @@ const ROOM_CONFIG = {
   "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0": {
     name: "O Loft",
     profiles: PROFILES.kidsRoom,
+    schoolHolidays: true,                      // school holidays use the weekend schedule too
     weekendProfiles: PROFILES.kidsRoomWeekend, // Later bedtime on weekends
     sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
   },
@@ -1004,12 +1028,14 @@ const ROOM_CONFIG = {
   "9b15cb64-bf61-494d-be49-f3dcd9dfd0bf": {
     name: "C Loft",
     profiles: PROFILES.kidsRoom,
+    schoolHolidays: true,                      // school holidays use the weekend schedule too
     weekendProfiles: PROFILES.kidsRoomWeekend, // Later bedtime on weekends
     sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
   },
   "5acaab17-7864-4831-b6e2-72bd35588b21": {
     name: "C LightStrip",
     profiles: PROFILES.kidsRoom,
+    schoolHolidays: true,                      // school holidays use the weekend schedule too
     weekendProfiles: PROFILES.kidsRoomWeekend, // Same weekend bedtime as C Loft
     sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
   },
@@ -1307,17 +1333,97 @@ function getCurrentDayOfWeek() {
   return copenhagenDate.getDay();
 }
 
+// ====== FREE DAYS (weekends and holidays) ======
+// The holiday calendar Room Heating keeps (room_heating_config.js → global
+// Config.Global): schoolHolidays [{ from, to, name }] and publicHolidaysFixed
+// ['MM-DD']; the Easter-based public holidays are computed as room_heating.js
+// does. Missing or unreadable Config.Global → plain Saturday/Sunday.
+
+let _holidayConfig;  // read once per run
+function holidayConfig() {
+  if (_holidayConfig !== undefined) return _holidayConfig;
+  try {
+    const stored = global.get('Config.Global');
+    const cfg = typeof stored === 'string' ? JSON.parse(stored) : stored;
+    _holidayConfig = cfg && typeof cfg === 'object' ? cfg : null;
+  } catch (e) {
+    _holidayConfig = null;
+  }
+  return _holidayConfig;
+}
+
+// Log names for Room Heating's fixed free days (other dates: 'Helligdag')
+const FIXED_HOLIDAY_NAMES = {
+  '01-01': 'Nytårsdag', '06-05': 'Grundlovsdag', '12-24': 'Juleaften',
+  '12-25': '1. juledag', '12-26': '2. juledag', '12-31': 'Nytårsaften'
+};
+
+/** Easter Sunday as a UTC date (Gregorian, anonymous algorithm — as room_heating.js) */
+function easterSunday(year) {
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+/** Danish public holidays that move with Easter: [{ date: 'YYYY-MM-DD', name }] */
+function easterBasedHolidays(year) {
+  const easter = easterSunday(year).getTime();
+  const at = (days, name) => ({ date: new Date(easter + days * 86400000).toISOString().slice(0, 10), name });
+  return [at(-3, 'Skærtorsdag'), at(-2, 'Langfredag'), at(1, '2. påskedag'),
+    at(39, 'Kristi himmelfartsdag'), at(50, '2. pinsedag')];
+}
+
 /**
- * Check if the weekend profiles apply right now
- * Before 12:00 today decides, from 12:00 tomorrow: an evening belongs to the
- * next morning, so Friday evening gets the weekend bedtime and Sunday evening
- * the weekday one. Daytime is identical in every weekday/weekend pair, so the
- * switch at noon is invisible.
+ * The calendar day the schedule follows: before 12:00 today, from 12:00
+ * tomorrow — an evening belongs to the next morning, so Friday evening gets the
+ * weekend bedtime and Sunday evening the weekday one. Daytime is identical in
+ * every weekday/weekend pair, so the switch at noon is invisible.
+ * @returns {{ iso: string, dow: number }} Copenhagen date, 0 = Sunday
  */
+function scheduleDay() {
+  const [m, d, y] = new Date().toLocaleDateString('en-US', {
+    timeZone: 'Europe/Copenhagen', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).split('/').map(Number);
+  const offset = getCurrentTimeInMinutes() >= 12 * 60 ? 1 : 0;
+  const date = new Date(Date.UTC(y, m - 1, d + offset));
+  return { iso: date.toISOString().slice(0, 10), dow: date.getUTCDay() };
+}
+
+/**
+ * Why the schedule day is a free day ('Weekend', a holiday's name), or null.
+ * Public holidays count for every room; school holidays only when asked
+ * (rooms with schoolHolidays: true — the kids' rooms)
+ */
+function freeDayReason(includeSchoolHolidays = false) {
+  const day = scheduleDay();
+  if (day.dow === 0 || day.dow === 6) return 'Weekend';
+  const cfg = holidayConfig();
+  if (!cfg) return null;
+  const monthDay = day.iso.slice(5);
+  if (Array.isArray(cfg.publicHolidaysFixed) && cfg.publicHolidaysFixed.includes(monthDay)) {
+    return FIXED_HOLIDAY_NAMES[monthDay] || 'Helligdag';
+  }
+  const easterHoliday = easterBasedHolidays(Number(day.iso.slice(0, 4))).find(h => h.date === day.iso);
+  if (easterHoliday) return easterHoliday.name;
+  if (includeSchoolHolidays && Array.isArray(cfg.schoolHolidays)) {
+    const range = cfg.schoolHolidays.find(r => r && day.iso >= r.from && day.iso <= r.to);
+    if (range) return range.name || 'Skoleferie';
+  }
+  return null;
+}
+
+/** Log tag for a room on its weekend set: ' [Weekend]', ' [Weekend: Juleaften]', or '' */
+function weekendTag(roomConfig) {
+  if (!roomConfig.usingWeekendProfile) return '';
+  return roomConfig.freeDay === 'Weekend' ? ' [Weekend]' : ` [Weekend: ${roomConfig.freeDay}]`;
+}
+
+/** Is today a free day for every room with weekend profiles? (published status; no school holidays) */
 function isWeekendSchedule() {
-  const today = getCurrentDayOfWeek();
-  const day = getCurrentTimeInMinutes() >= 12 * 60 ? (today + 1) % 7 : today;
-  return day === 0 || day === 6; // Sunday = 0, Saturday = 6
+  return freeDayReason() !== null;
 }
 
 /**
@@ -1545,7 +1651,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.29.3';
+const AL_VERSION = '2.30.0';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -2136,18 +2242,20 @@ function recordSchedule(deviceId, profiles, fromMinutes) {
  */
 function getRoomConfig(deviceId, deviceName) {
   const config = ROOM_CONFIG[deviceId];
-  const weekend = isWeekendSchedule();
-  
+  const freeDay = freeDayReason(config?.schoolHolidays === true);
+  const weekend = freeDay !== null;
+
   if (config) {
-    // Check for weekend-specific profiles
-    const profiles = (weekend && config.weekendProfiles) 
-      ? config.weekendProfiles 
+    // Check for weekend-specific profiles (weekends and holidays)
+    const profiles = (weekend && config.weekendProfiles)
+      ? config.weekendProfiles
       : (config.profiles || DEFAULT_PROFILES);
-    
+
     return {
       name: config.name || deviceName,
       profiles: profiles,
       isWeekend: weekend,
+      freeDay,                      // 'Weekend', a holiday's name, or null
       usingWeekendProfile: weekend && !!config.weekendProfiles,
       luminance: config.luminance || null,
       sunTemperature: config.sunTemperature || null
@@ -3238,7 +3346,7 @@ try {
         const brightnessPercent = Math.round(activeProfile.brightness * 100);
         const tempDesc = activeProfile.temperature >= 0.7 ? 'warm' :
                          activeProfile.temperature <= 0.4 ? 'cool' : 'neutral';
-        const weekendIndicator = roomConfig.usingWeekendProfile ? ' [Weekend]' : '';
+        const weekendIndicator = weekendTag(roomConfig);
         
         return {
           room: roomName,
@@ -3333,7 +3441,7 @@ try {
   if (verified && attempts > 1) {
     modeIndicator += ` (verified after ${attempts} attempts)`;
   }
-  const weekendIndicator = roomConfig.usingWeekendProfile ? ' [Weekend]' : '';
+  const weekendIndicator = weekendTag(roomConfig);
   const message = `[${roomName}] ${activeProfile.name} → ${brightnessPercent}% / ${tempDesc}${weekendIndicator}${modeIndicator}`;
 
   diagLog(`AL-APPLY | ${roomName} | ${activeProfile.name} | dim=${brightnessPercent}% temp=${tempPercent}% | mode=${CHECK_MANUAL ? 'check' : FORCE_UPDATE ? 'force' : CLEAR_MANUAL ? 'clear' : 'normal'}${weekendIndicator}${daylightTag(activeProfile)}`);
