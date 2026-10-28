@@ -1,0 +1,648 @@
+[
+ {
+  "id": "01588645-0830-49d8-8b80-5631803dccab",
+  "name": "ST - Heating Reset",
+  "type": "standard",
+  "enabled": true,
+  "folder": "9d6c169b-e7c0-4e6c-ae28-f0a5b5014a4e",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Stue,cancel"
+    }
+   }
+  ]
+ },
+ {
+  "id": "10c8db4e-3795-41ce-96cf-a65ec4a79440",
+  "name": "SV - Heating Boost",
+  "type": "standard",
+  "enabled": true,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Soveværelse,boost"
+    }
+   }
+  ]
+ },
+ {
+  "id": "16412110-db68-4af9-bdb0-fe160ecc5e8a",
+  "name": "SV - Sluk Computer",
+  "type": "standard",
+  "enabled": true,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "trigger": {
+   "uri": "homey:manager:cron",
+   "card": "time_exactly",
+   "args": {
+    "time": "23:00"
+   }
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:device:90e264af-01ca-4c26-a189-93fc4ce5a326",
+    "card": "off",
+    "args": {}
+   }
+  ]
+ },
+ {
+  "id": "2b3be76f-9eb3-4f4f-bff9-bba9b1dad10c",
+  "name": "C - Heating Reset",
+  "type": "standard",
+  "enabled": true,
+  "folder": "fc31a032-1e92-4ba5-a2d2-23a7af544c5d",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Clara,cancel"
+    }
+   }
+  ]
+ },
+ {
+  "id": "2ea238e7-9c17-47e5-824d-80d3946f4005",
+  "name": "E7 - Inactive 5",
+  "type": "standard",
+  "enabled": true,
+  "folder": "d28cfcff-699d-4f69-a239-b507ef8101f2",
+  "trigger": {
+   "uri": "homey:zone:3bd5ecdf-6c9b-4ca3-ac19-b1439fc1845d",
+   "card": "inactive_for",
+   "args": {
+    "minutes": 5
+   }
+  },
+  "conditions": [
+   {
+    "uri": "homey:zone:5477fed5-a59d-4196-96bc-0f3b14d3cff4",
+    "card": "is_active",
+    "args": {},
+    "inverted": true
+   }
+  ],
+  "actions": [
+   {
+    "uri": "homey:zone:3bd5ecdf-6c9b-4ca3-ac19-b1439fc1845d",
+    "card": "turn_off",
+    "args": {
+     "class": "light"
+    }
+   }
+  ]
+ },
+ {
+  "id": "3151f1e6-f0f9-4f44-a957-3ae3b0fe5f21",
+  "name": "ST - Heating Boost",
+  "type": "standard",
+  "enabled": true,
+  "folder": "9d6c169b-e7c0-4e6c-ae28-f0a5b5014a4e",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Stue,boost"
+    }
+   }
+  ]
+ },
+ {
+  "id": "4652cf03-b7da-42de-849a-4324f9df10fc",
+  "name": "A - Turn on",
+  "type": "standard",
+  "enabled": true,
+  "folder": "4faf7b09-4693-41c1-a081-3f75ae329b84",
+  "trigger": {
+   "uri": "homey:manager:cron",
+   "card": "sunrise",
+   "args": {
+    "before": 120
+   }
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:device:16a55a55-d67b-4b85-9562-cc4f11e12975",
+    "card": "on",
+    "args": {}
+   }
+  ]
+ },
+ {
+  "id": "5e202512-e89f-4735-8a6a-cfc2b154f118",
+  "name": "O - Heating Reset",
+  "type": "standard",
+  "enabled": true,
+  "folder": "4456c471-4ff6-4724-90c8-cc4b058f50d6",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Oliver,cancel"
+    }
+   }
+  ]
+ },
+ {
+  "id": "626114d6-7ea0-413c-8e6e-e8d082775a82",
+  "name": "SV - Window open",
+  "type": "standard",
+  "enabled": false,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "trigger": {
+   "uri": "homey:device:6f837c30-3175-4754-bf0b-d30d83e0f9bc",
+   "card": "alarm_contact_true_duration",
+   "args": {
+    "duration": 60,
+    "unit": "seconds"
+   }
+  },
+  "conditions": [
+   {
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "is_power_mode_on",
+    "args": {}
+   }
+  ],
+  "actions": [
+   {
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "set_power_mode_off",
+    "args": {}
+   },
+   {
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "SV: Window open, heating off"
+    }
+   }
+  ]
+ },
+ {
+  "id": "6562f11b-33d8-412b-ba47-18ed5c4f7af3",
+  "name": "SV - Window closed",
+  "type": "standard",
+  "enabled": false,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "trigger": {
+   "uri": "homey:device:6f837c30-3175-4754-bf0b-d30d83e0f9bc",
+   "card": "alarm_contact_false_duration",
+   "args": {
+    "duration": 1800,
+    "unit": "seconds"
+   }
+  },
+  "conditions": [
+   {
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "is_power_mode_on",
+    "args": {},
+    "inverted": true
+   },
+   {
+    "uri": "homey:manager:logic",
+    "card": "equal_boolean",
+    "args": {},
+    "droptoken": "homey:manager:logic|ad9e00d1-a38f-436e-99eb-fb3e3c283e55"
+   }
+  ],
+  "actions": [
+   {
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "set_power_mode_on",
+    "args": {}
+   },
+   {
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "set_smart_schedule",
+    "args": {}
+   },
+   {
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "SV: Window closed, heating resumed"
+    }
+   }
+  ]
+ },
+ {
+  "id": "76920514-dfdf-4ca7-87be-c22d1a39cdb5",
+  "name": "A - Turn off",
+  "type": "standard",
+  "enabled": true,
+  "folder": "4faf7b09-4693-41c1-a081-3f75ae329b84",
+  "trigger": {
+   "uri": "homey:manager:cron",
+   "card": "time_exactly",
+   "args": {
+    "time": "22:30"
+   }
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:device:16a55a55-d67b-4b85-9562-cc4f11e12975",
+    "card": "off",
+    "args": {}
+   }
+  ]
+ },
+ {
+  "id": "7db6fdcb-cc88-48a8-ab0c-e815abbb71c5",
+  "name": "ST - Heating Pause",
+  "type": "standard",
+  "enabled": true,
+  "folder": "9d6c169b-e7c0-4e6c-ae28-f0a5b5014a4e",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Stue,pause"
+    }
+   }
+  ]
+ },
+ {
+  "id": "820ba766-4a6a-445b-98eb-bed009fb75b3",
+  "name": "SV - Heating Pause",
+  "type": "standard",
+  "enabled": true,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Soveværelse,pause"
+    }
+   }
+  ]
+ },
+ {
+  "id": "a224adfd-26d8-4270-887b-a9e3b8072117",
+  "name": "O - Heating Pause",
+  "type": "standard",
+  "enabled": true,
+  "folder": "4456c471-4ff6-4724-90c8-cc4b058f50d6",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Oliver,pause"
+    }
+   }
+  ]
+ },
+ {
+  "id": "a4a6dec4-f3b1-49ea-9827-c262e04aa57d",
+  "name": "E7 - Inactive 1",
+  "type": "standard",
+  "enabled": true,
+  "folder": "d28cfcff-699d-4f69-a239-b507ef8101f2",
+  "trigger": {
+   "uri": "homey:zone:e241f755-9f03-44d3-ad19-e3bb61b18692",
+   "card": "inactive_for",
+   "args": {
+    "minutes": 1
+   }
+  },
+  "conditions": [
+   {
+    "uri": "homey:zone:5477fed5-a59d-4196-96bc-0f3b14d3cff4",
+    "card": "is_active",
+    "args": {},
+    "inverted": true
+   },
+   {
+    "uri": "homey:manager:cron",
+    "card": "time_between",
+    "args": {
+     "time1": "20:00",
+     "time2": "06:00"
+    }
+   }
+  ],
+  "actions": [
+   {
+    "uri": "homey:zone:3bd5ecdf-6c9b-4ca3-ac19-b1439fc1845d",
+    "card": "turn_off",
+    "args": {
+     "class": "light"
+    }
+   }
+  ]
+ },
+ {
+  "id": "ab07bec9-c464-4125-8c0e-f455f5566b0a",
+  "name": "C - Heating Boost",
+  "type": "standard",
+  "enabled": true,
+  "folder": "fc31a032-1e92-4ba5-a2d2-23a7af544c5d",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Clara,boost"
+    }
+   }
+  ]
+ },
+ {
+  "id": "b125ded3-a306-417f-88b3-4d0951b6f2b7",
+  "name": "A - Sunrise",
+  "type": "standard",
+  "enabled": true,
+  "folder": "4faf7b09-4693-41c1-a081-3f75ae329b84",
+  "trigger": {
+   "uri": "homey:manager:cron",
+   "card": "sunrise",
+   "args": {
+    "before": 0
+   }
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:device:16a55a55-d67b-4b85-9562-cc4f11e12975",
+    "card": "off",
+    "args": {}
+   },
+   {
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "Sunrise"
+    }
+   }
+  ]
+ },
+ {
+  "id": "b364c811-e26a-4d09-9a8f-61836a82aa7f",
+  "name": "O - Heating Boost",
+  "type": "standard",
+  "enabled": true,
+  "folder": "4456c471-4ff6-4724-90c8-cc4b058f50d6",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Oliver,boost"
+    }
+   }
+  ]
+ },
+ {
+  "id": "bc0498fd-e06e-4fb1-80ed-d81dd9fe42ad",
+  "name": "Heating switched off",
+  "type": "standard",
+  "enabled": false,
+  "trigger": {
+   "uri": "homey:manager:logic",
+   "card": "variable_changed",
+   "args": {
+    "variable": {
+     "id": "ad9e00d1-a38f-436e-99eb-fb3e3c283e55",
+     "name": "HeatingEnabled"
+    }
+   }
+  },
+  "conditions": [
+   {
+    "uri": "homey:manager:logic",
+    "card": "equal_boolean",
+    "args": {},
+    "droptoken": "homey:manager:logic|ad9e00d1-a38f-436e-99eb-fb3e3c283e55",
+    "inverted": true
+   }
+  ],
+  "actions": [
+   {
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "Master switch off"
+    }
+   },
+   {
+    "uri": "homey:zone:f998561b-2213-4de7-af78-1d6f5e3c45a5",
+    "card": "turn_off",
+    "args": {
+     "class": "heater"
+    }
+   },
+   {
+    "uri": "homey:device:102211c2-6f7a-46e7-b5b1-9ec9ac7be971",
+    "card": "set_power_mode_off",
+    "args": {}
+   },
+   {
+    "uri": "homey:device:871f8a62-5548-40a0-b987-accd9e6c3079",
+    "card": "set_power_mode_off",
+    "args": {}
+   },
+   {
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "set_power_mode_off",
+    "args": {}
+   }
+  ]
+ },
+ {
+  "id": "be57b2af-6590-4477-9b25-85c3c01d8d0b",
+  "name": "SV - Heating Reset",
+  "type": "standard",
+  "enabled": true,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Soveværelse,cancel"
+    }
+   }
+  ]
+ },
+ {
+  "id": "d641110a-05a2-4fd3-bd80-d070ce3236f0",
+  "name": "C - Heating Pause",
+  "type": "standard",
+  "enabled": true,
+  "folder": "fc31a032-1e92-4ba5-a2d2-23a7af544c5d",
+  "trigger": {
+   "uri": "homey:manager:flow",
+   "card": "programmatic_trigger",
+   "args": {}
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Clara,pause"
+    }
+   }
+  ]
+ },
+ {
+  "id": "fc0ca842-1a49-42b6-a571-c93b9cf87618",
+  "name": "A - Sunset",
+  "type": "standard",
+  "enabled": true,
+  "folder": "4faf7b09-4693-41c1-a081-3f75ae329b84",
+  "trigger": {
+   "uri": "homey:manager:cron",
+   "card": "sunset",
+   "args": {
+    "before": 0
+   }
+  },
+  "conditions": [],
+  "actions": [
+   {
+    "uri": "homey:device:16a55a55-d67b-4b85-9562-cc4f11e12975",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "Sunset"
+    }
+   }
+  ]
+ }
+]

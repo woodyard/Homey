@@ -1,0 +1,99 @@
+id	name	class	driver	available	matter_node	matter_net	model
+02561b2b-977f-41c2-a09a-da71ac2fe602	K Kaffemaskine	socket (Virtual: coffeemachine)	homey:virtualdrivermatter:driver	Yes	0xdb58449f	Thread	Eve Energy 20EBO8301
+0295dabc-d8fb-441c-9780-aeb3de74d96d	SV Vindue	sensor	nl.philips.hue:contactsensor	Yes			SOC001
+05766f2b-971b-4973-a311-471173349937	ST Loft 5	light	nl.philips.hue:bulb	Yes			LTO002
+062f2aa7-bb53-4d1d-8ea6-7a9022446b39	E9 Switch	sensor	nl.philips.hue:dimmerswitch2	Yes			RWL022
+0da27a1f-ced1-4d02-9193-9438109c5c38	E9 Motion	sensor	nl.philips.hue:motionsensor	Yes			SML003
+0e5d845d-d8ea-4db6-8096-663b0a311e07	K Bord	light	homey:virtualdrivergroup:driver	Yes
+102211c2-6f7a-46e7-b5b1-9ec9ac7be971	O Smart Thermostat	thermostat	com.tado2:thermostat	Yes
+1062dc39-7909-44ab-a706-a5d55ab181b3	B9 Wall 3	light	nl.philips.hue:bulb	Yes			LTA009
+115b0390-0d0e-42b8-9bf7-350a509fdd82	E7 Switch	sensor	nl.philips.hue:dimmerswitch2	Yes			RWL022
+116df2e7-8d28-49ce-95bd-00d1dbbfb04b	B7 2	light	nl.philips.hue:bulb	Yes			LTG005
+12a47fed-4668-4ecb-b7bb-0db437953500	B7 Switch	sensor	nl.philips.hue:dimmerswitch2	Yes			RWL022
+131dbfe1-2434-47a0-89c0-4fdd550b41d1	O Switch	sensor	nl.philips.hue:dimmerswitch2	Yes			RWL022
+16a55a55-d67b-4b85-9562-cc4f11e12975	A Light Lyskæde	light	com.twinkly:twinklycloud	Yes
+18b6f5bf-1666-4bf1-92be-d9cb7e6b74c5	SS Loft	light	nl.philips.hue:bulb	Yes			LCA004
+18f57e55-ca0d-40e3-87f2-561bab945ae0	E7 Eve Motion	sensor	homey:virtualdrivermatter:driver	Yes	0x65b79d44	Thread	Eve Motion 20EBY9901
+1ab9ca1f-60ca-44f9-8221-a03e10f005bf	B7 Lys	light	homey:virtualdrivergroup:driver	Yes
+1d57b034-0c93-4aaa-8c9e-911b1e43c88e	B9 Wall 1	light	nl.philips.hue:bulb	Yes			929003056001
+1e87af68-506e-4c86-8bc9-ffc6a05f3ef0	O Loft	light	nl.philips.hue:bulb	Yes			LCA006
+2656f184-8c87-4434-95a2-fdb3fc36bdd8	E9 Loft	light	nl.philips.hue:bulb	Yes			3216131P6
+2ca14bef-8a28-43cc-af70-0d0611f5281f	Skovgaard / Stue	thermostat	com.tado.community.home:tado-room	Yes
+31067cc5-721c-4c5e-abfb-a261dbf44c57	SV Smart Thermostat	thermostat	com.tado2:thermostat	Yes
+35c2be09-895b-41f1-8aab-32829a167849	K Bord 1	light	nl.philips.hue:bulb	Yes			LCA004
+37ff0c79-6e74-45eb-90bd-6376ed8c767f	B7 3	light	nl.philips.hue:bulb	Yes			LTG005
+3ce414f6-3095-42c2-a6b2-a779613af694	SV Loft 2	light	nl.philips.hue:bulb	Yes			LCA004
+3ec7f010-4dba-4d1c-8d0a-0185f3861eff	ST Loft 1	light	nl.philips.hue:bulb	Yes			LTO002
+3f4e2391-3be6-44ee-b340-fcc3219853b2	ST Standerlampe	light	homey:virtualdrivergroup:driver	Yes
+4136a432-cadf-4082-99a9-6e78f9051c10	ST Loft 3	light	nl.philips.hue:bulb	Yes			LTO002
+42685dd3-4cf3-4305-9a2f-f5af853e4a0c	K Fryser	socket (Virtual: freezer)	com.evehome:eve-energy-europe	Yes	0x58237ffa	Thread	Eve Energy 20EBO8301
+42faeb51-492e-46d9-bd8e-a9a8f1b0cc3c	WWB380 Washing machine	washer	com.miele:washing_machine	Yes
+439be454-0e4e-4835-b51c-a83a1d78e9f1	Skovgaard / Soveværelse	thermostat	com.tado.community.home:tado-room	Yes
+4408d1b4-e799-4632-a2a1-d1e3af4f2adc	B7 1	light	nl.philips.hue:bulb	Yes			LTG005
+44c9c9d5-4a0f-4e94-b6ce-9edb72862449	B9 Switch	sensor	nl.philips.hue:dimmerswitch2	Yes			RWL022
+47172014-0488-43a7-93c6-920ad01113b3	SV Motion	sensor	nl.philips.hue:motionsensor	Yes			SML003
+473fdc40-530d-43fb-94ce-69e77ab5271a	SV Loft 1	light	nl.philips.hue:bulb	Yes			LCA004
+4c34d605-334b-4207-b9a3-1796829b0caf	C Light Svampelampe	light	homey:virtualdrivermatter:driver	Yes	0x18726ec9	Wifi	WiZ Candle Warm White
+518da1ba-9412-41eb-978d-e21f18cb871f	ST Standerlampe 1	light	nl.philips.hue:bulb	Yes			LCA004
+5460cb23-ec59-4a52-accd-962ef79a31e0	SV Switch	sensor	nl.philips.hue:dimmerswitch	Yes			RWL021
+5622637a-e6ba-4d28-a92b-3bfe9ed3c72b	ST Loft 2	light	nl.philips.hue:bulb	Yes			LTO002
+56b800a2-9c09-43d1-9e55-3b8944175e21	K Dreame X50	vacuumcleaner	homey:virtualdrivermatter:driver	Yes	0x44cfea9a		R2489
+577bbf99-0934-4495-85b6-c80747ab617d	C Radiator 2	socket (Virtual: heater)	nl.philips.hue:plug	Yes			LOM007
+5a27ff62-6e13-4902-aa6f-33c4eb988f0c	ST Light Lyskæde	socket (Virtual: light)	homey:virtualdrivermatter:driver	Yes	0x3343d0e6	Thread	Eve Energy 20EBO8301
+5acaab17-7864-4831-b6e2-72bd35588b21	C LightStrip	light	nl.philips.hue:bulb	Yes			LCL001
+5b3581b4-a525-4746-8307-b1a5e3b13f04	O Eve Door & Window	sensor	com.evehome:eve-door-window	Yes	0x3db9383b	Thread	Eve Door 20EBN9901
+5b5fe4d3-ef59-47f3-9dbb-9f587abe3c7b	C Loft 1	light	nl.philips.hue:bulb	Yes			LCA006
+5b9388ae-0d7b-4660-85b8-401d5b00780e	SS Dør	sensor	nl.philips.hue:contactsensor	Yes			SOC001
+5c72c2cd-fc6e-4c9d-9e56-7c9f2c04bcd2	K Loft 3	light	nl.philips.hue:bulb	Yes			LCA004
+5ccf5881-f665-40f5-bd89-f61e1f926d4c	SS Bordlampe	light	nl.philips.hue:bulb	Yes			LWV005
+64711990-bf03-4d46-a1e0-aac6851b7390	E7 Homey Pro	sensor	com.sysInternals:homey5q	Yes
+68ef424e-3ab9-4573-8a89-bdce2b4ffe65	E9 Dør	sensor	nl.philips.hue:contactsensor	Yes			SOC001
+6d28f898-521a-42dc-a463-18984ed7a192	C Loft 2	light	nl.philips.hue:bulb	Yes			LCA006
+6eb8b5d2-7d53-4015-b132-84c8e9b9df89	ST TV	socket (Virtual: tv)	nl.philips.hue:plug	Yes			LOM007
+781432b2-f267-407e-bc0f-3f4ee278da5b	C Motion	sensor	nl.philips.hue:motionsensor	Yes			SML003
+804dec54-93cd-4f9b-89d1-3939a16eec92	C Vindue	sensor	nl.philips.hue:contactsensor	Yes			SOC001
+82106f80-a6bb-4360-b5fa-e35a4855722e	O PS5	socket	nl.philips.hue:plug	Yes			LOM007
+825d3d61-b4b8-49e5-854b-5126758808b6	O Eve Motion	sensor	com.evehome:eve-motion	Yes	0x9e132121	Thread	Eve Motion 20EBY9901
+871f8a62-5548-40a0-b987-accd9e6c3079	ST Smart Thermostat	thermostat	com.tado2:thermostat	Yes
+8739bc8c-7058-461b-a7e4-7e6261c8d6dd	K Eve Motion	sensor	homey:virtualdrivermatter:driver	Yes	0x767bbe54	Thread	Eve Motion 20EBY9901
+8864309c-a6cd-4de6-a227-0d6e34874e4a	SV Loft 3	light	nl.philips.hue:bulb	Yes			LCA004
+88fe3c19-9de9-4bc1-a6f7-7f3d86f07250	ST Vindue	sensor	nl.philips.hue:contactsensor	Yes			SOC001
+8a4ba773-2827-4e58-a996-2f169d45f954	ST Roller Shade Driver E1	curtain	com.xiaomi-mi:curtain.acn002	Yes
+90130aa7-e3be-43d1-9d3e-2bc3d1cb3a7d	K Switch	sensor	nl.philips.hue:dimmerswitch	Yes			RWL021
+90bc5383-608b-43c9-89a1-f7f7c54d1675	B9 Motion	sensor	nl.philips.hue:motionsensor	Yes			SML003
+90e264af-01ca-4c26-a189-93fc4ce5a326	SV Computer	socket	com.evehome:eve-energy-europe	Yes	0x4769449c	Thread	Eve Energy 20EBO8301
+9b15cb64-bf61-494d-be49-f3dcd9dfd0bf	C Loft	light	homey:virtualdrivergroup:driver	Yes
+a5669385-95a3-4eb5-b439-e80c2a1d130a	SS Switch	sensor	nl.philips.hue:dimmerswitch2	Yes			RWL022
+acc2b15c-2774-4293-922a-c0659df04a41	B7 Motion	sensor	nl.philips.hue:motionsensor	Yes			SML003
+acc819ec-fc88-4e8c-b98b-5de8bb97d91c	Skovgaard	other	com.tado.community.home:tado-home	Yes
+b135fbd5-dda4-4957-9cce-6184fa5c731a	E7 Lys	light	nl.philips.hue:bulb	Yes			3216131P6
+b3828238-0986-4ef7-9f51-3243946528a5	TIMMERFLOTTE temp/hmd sensor	sensor	com.ikea.tradfri:matter_timmerflotte	No	0xf18e1712	Thread	TIMMERFLOTTE temp/hmd sensor
+b8591f4d-a493-4de7-9745-c13cd07e033c	B9 Lys	light	homey:virtualdrivergroup:driver	Yes
+b88fc1cd-cd4f-447e-960b-03fb51951ca4	ST Motion	sensor	nl.philips.hue:motionsensor	Yes			SML003
+bd2ddb09-f0f8-49be-8d3e-011d65a9fdd1	C Radiator 1	socket (Virtual: heater)	nl.philips.hue:plug	Yes			LOM007
+c5299c00-bb52-45df-90f5-01ac8f749633	SS Vindue	sensor	nl.philips.hue:contactsensor	Yes			SOC001
+cbbd7c60-dc84-43c7-8f0f-790556fc9b14	SV Loft	light	homey:virtualdrivergroup:driver	Yes
+cc30f76b-7634-489c-a721-541fdb49d46f	SS Light Perler	light	com.twinkly:twinklycloud	Yes
+cf22be2a-c8e8-4657-b75c-841225e38143	ST Standerlampe 2	light	nl.philips.hue:bulb	Yes			LCA004
+d54b602b-a93d-4159-8a45-22dbcd14971f	K Bord 3	light	nl.philips.hue:bulb	Yes			LCA004
+d67058ba-7724-4757-9a7b-d92014dca780	KLIPPBOK water leak sensor	sensor	com.ikea.tradfri:matter_klippbok	No	0xc716f372	Thread	KLIPPBOK water leak sensor
+d78e0e15-5a6b-4908-be3c-4e5d3dc1a9d6	B9 Eve Motion Bruser	sensor	com.evehome:eve-motion	Yes	0xf372a464	Thread	Eve Motion 20EBY9901
+df72ee89-a2ce-421b-9d32-8b7b78d10a4f	K Bord 2	light	nl.philips.hue:bulb	Yes			LCA004
+dffadfd2-2061-4869-a474-b01986fd59bc	C Switch	sensor	nl.philips.hue:dimmerswitch2	Yes			RWL022
+e1e82d85-465a-413e-a20a-5577bce02730	K Network	socket (Virtual: mediaplayer)	com.evehome:eve-energy-europe	Yes	0x395000a3	Thread	Eve Energy 20EBO8301
+e339c184-ea11-4413-bd90-dac726861fd0	E9 Garderobe	light	nl.philips.hue:bulb	Yes			LTA009
+e3906379-8e20-47e2-b569-c6d806875f61	K Eve Motion Køkkendør	sensor	com.evehome:eve-motion	Yes	0x6bf7ff9a	Thread	Eve Motion 20EBY9901
+e3e5ff44-148f-42b6-81bd-bed920eec14d	B9 Wall 2	light	nl.philips.hue:bulb	Yes			929003056001
+e5c73601-975b-4252-88b6-faa3e497bd1a	K Loft 1	light	nl.philips.hue:bulb	Yes			LCA004
+e68f5786-7bda-47af-a1c3-a8ff7b3a0a90	ST Loft 4	light	nl.philips.hue:bulb	Yes			LTO002
+eab575b2-86d9-4880-b6b7-b5e19dc1fbd7	K Støvsuger	socket	homey:virtualdrivermatter:driver	Yes	0xdcd7ccf5	Thread	Eve Energy 20EBO8301
+eb4218c2-ed7c-450d-9552-9c600a236756	K Køleskab	socket (Virtual: fridge)	homey:virtualdrivermatter:driver	Yes	0xf4a7b97b	Thread	Eve Energy 20EBO8301
+eee3d502-3cac-41b6-8c02-a55ad2380e77	Skovgaard / Oliver	thermostat	com.tado.community.home:tado-room	Yes
+f097b38c-cfb0-4b83-8124-59e35f82cd0f	K Loft	light	homey:virtualdrivergroup:driver	Yes
+f12f7ec6-0051-4f9b-bf93-2dbb8ca62650	BILRESA dual button	button	com.ikea.tradfri:matter_bilresa_dual_button	No	0xcec6c78c	Thread	BILRESA dual button
+f1920513-a477-47ae-a91a-f8c4d637eaa4	K Loft 2	light	nl.philips.hue:bulb	Yes			LCA004
+fc6a164a-661b-464d-9904-5780f33ca2ca	ST Switch	sensor	nl.philips.hue:dimmerswitch2	Yes			RWL022
+fd754abf-4397-45f5-9a68-98d7f079fd7b	ST Loft	light	homey:virtualdrivergroup:driver	Yes
+fdc17099-fa24-48d6-9654-d1f4415ac482	C Roller Shade Driver E1	curtain	com.xiaomi-mi:curtain.acn002	Yes
+feb0af82-1133-4604-9579-c00a83178620	A Eve Weather	sensor	com.evehome:eve-weather	Yes	0x1bf021a4	Thread	Eve Weather 20EBS9901
+ff5ec097-10c5-4937-b318-4caa5b3e31c3	Dyson	fan	unofficial.dyson.fans:dysonfan	No

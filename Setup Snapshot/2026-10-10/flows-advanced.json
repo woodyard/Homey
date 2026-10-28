@@ -1,0 +1,2946 @@
+[
+ {
+  "id": "18535599-e288-4951-8f50-726b2ce2b68f",
+  "name": "SV - Light reset",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "cardCount": 2,
+  "cards": [
+   {
+    "type": "start"
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "cbbd7c60-dc84-43c7-8f0f-790556fc9b14 clear"
+    }
+   }
+  ]
+ },
+ {
+  "id": "1f9a64d6-6d8d-4cf6-af89-5c13ba0e3f8c",
+  "name": "C - Light flow",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "fc31a032-1e92-4ba5-a2d2-23a7af544c5d",
+  "cardCount": 7,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:device:9b15cb64-bf61-494d-be49-f3dcd9dfd0bf",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "9b15cb64-bf61-494d-be49-f3dcd9dfd0bf"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:29f983ac-05a3-484b-93e8-809b28bf3917",
+    "card": "inactive_for",
+    "args": {
+     "minutes": 20
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "daytime",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:29f983ac-05a3-484b-93e8-809b28bf3917",
+    "card": "turn_off",
+    "args": {
+     "class": "light"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "5acaab17-7864-4831-b6e2-72bd35588b21"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:5acaab17-7864-4831-b6e2-72bd35588b21",
+    "card": "onoff_true",
+    "args": {}
+   }
+  ]
+ },
+ {
+  "id": "1fd8af0e-b867-4674-984b-939c6b80c4a6",
+  "name": "ST - Light reset",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "9d6c169b-e7c0-4e6c-ae28-f0a5b5014a4e",
+  "cardCount": 3,
+  "cards": [
+   {
+    "type": "start"
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "fd754abf-4397-45f5-9a68-98d7f079fd7b clear"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "3f4e2391-3be6-44ee-b340-fcc3219853b2 clear"
+    }
+   }
+  ]
+ },
+ {
+  "id": "20d76127-960d-4ec8-9311-15066b9f4256",
+  "name": "ST - xHeating flow",
+  "type": "advanced",
+  "enabled": false,
+  "folder": "9d6c169b-e7c0-4e6c-ae28-f0a5b5014a4e",
+  "cardCount": 21,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:device:871f8a62-5548-40a0-b987-accd9e6c3079",
+    "card": "measure_temperature_threshold_above",
+    "args": {
+     "threshold": 23
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:871f8a62-5548-40a0-b987-accd9e6c3079",
+    "card": "is_smart_schedule",
+    "args": {},
+    "inverted": true
+   },
+   {
+    "type": "action",
+    "uri": "homey:device:871f8a62-5548-40a0-b987-accd9e6c3079",
+    "card": "set_smart_schedule",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:logic",
+    "card": "equal_boolean",
+    "args": {},
+    "droptoken": "homey:manager:logic|ad9e00d1-a38f-436e-99eb-fb3e3c283e55"
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "ST_HeatingOverMaxAllowedSeconds",
+      "type": "number"
+     },
+     "value": "1800"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:871f8a62-5548-40a0-b987-accd9e6c3079",
+    "card": "is_smart_schedule",
+    "args": {},
+    "inverted": true
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "pause_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "ST_HeatingOverMaxAllowedSeconds",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "ST_HeatingOverMaxAllowedSeconds",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:device:871f8a62-5548-40a0-b987-accd9e6c3079",
+    "card": "set_power_mode_off",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:0f707820-c7e7-4e24-b6ed-28f69ae2bca2",
+    "card": "alarm_false",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact alarm"
+     }
+    }
+   },
+   {
+    "type": "delay",
+    "args": {
+     "delay": {
+      "number": "10",
+      "multiplier": 60
+     }
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:0f707820-c7e7-4e24-b6ed-28f69ae2bca2",
+    "card": "alarms_off",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact alarm"
+     }
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:0f707820-c7e7-4e24-b6ed-28f69ae2bca2",
+    "card": "alarms_off",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:0f707820-c7e7-4e24-b6ed-28f69ae2bca2",
+    "card": "alarm_true",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:0f707820-c7e7-4e24-b6ed-28f69ae2bca2",
+    "card": "alarms_off",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact alarm"
+     }
+    },
+    "inverted": true
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "ST_HeatCountdown",
+      "type": "number"
+     },
+     "value": "60"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "ST_HeatCountdown",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "pause_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "ST_HeatCountdown",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:2ca14bef-8a28-43cc-af70-0d0611f5281f",
+    "card": "target_temperature_changed",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "ST Heat target changed to [[homey:device:2ca14bef-8a28-43cc-af70-0d0611f5281f|target_temperature]]"
+    }
+   }
+  ]
+ },
+ {
+  "id": "365d8aee-d9e0-4249-a1ec-44d8a64e536c",
+  "name": "SV - Computer",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "cardCount": 5,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "active",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "day_equals",
+    "args": {
+     "day": "weekday"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "time_between",
+    "args": {
+     "time1": "07:15",
+     "time2": "21:30"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:device:90e264af-01ca-4c26-a189-93fc4ce5a326",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:90e264af-01ca-4c26-a189-93fc4ce5a326",
+    "card": "on",
+    "args": {},
+    "inverted": true
+   }
+  ]
+ },
+ {
+  "id": "3ca87469-222c-40ed-96ba-77a80744a2b6",
+  "name": "O - Light reset",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "4456c471-4ff6-4724-90c8-cc4b058f50d6",
+  "cardCount": 2,
+  "cards": [
+   {
+    "type": "start"
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "7768c895-c037-4b83-84d4-9ef82404fe12 clear"
+    }
+   }
+  ]
+ },
+ {
+  "id": "4d79fa64-5377-4d5b-ab78-c65bf636bb0d",
+  "name": "O - Light flow",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "4456c471-4ff6-4724-90c8-cc4b058f50d6",
+  "cardCount": 20,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:device:1e87af68-506e-4c86-8bc9-ffc6a05f3ef0",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:1e87af68-506e-4c86-8bc9-ffc6a05f3ef0",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0 check"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:1b1d3f08-5e17-40e8-b6a3-ad2d206ab369",
+    "card": "inactive_for",
+    "args": {
+     "minutes": 30
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "daytime",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:1b1d3f08-5e17-40e8-b6a3-ad2d206ab369",
+    "card": "turn_off",
+    "args": {
+     "class": "light"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:f12f7ec6-0051-4f9b-bf93-2dbb8ca62650",
+    "card": "switch_press_multi",
+    "args": {
+     "button": "1"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0 brighten"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:f12f7ec6-0051-4f9b-bf93-2dbb8ca62650",
+    "card": "switch_long_press_multi",
+    "args": {
+     "button": "1"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0 max"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:f12f7ec6-0051-4f9b-bf93-2dbb8ca62650",
+    "card": "switch_multi_press_multi",
+    "args": {
+     "button": "1",
+     "count": "2"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0 cycle-profile"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:f12f7ec6-0051-4f9b-bf93-2dbb8ca62650",
+    "card": "switch_press_multi",
+    "args": {
+     "button": "2"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0 dim-down"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:f12f7ec6-0051-4f9b-bf93-2dbb8ca62650",
+    "card": "switch_long_press_multi",
+    "args": {
+     "button": "2"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0 toggle"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:f12f7ec6-0051-4f9b-bf93-2dbb8ca62650",
+    "card": "switch_multi_press_multi",
+    "args": {
+     "button": "2",
+     "count": "2"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0 clear"
+    }
+   }
+  ]
+ },
+ {
+  "id": "5491c0d4-7a5a-4a89-a05f-1effd5ede15d",
+  "name": "Heating Master Off (Advanced)",
+  "type": "advanced",
+  "enabled": true,
+  "folder": null,
+  "cardCount": 7,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:manager:logic",
+    "card": "variable_changed",
+    "args": {
+     "variable": {
+      "id": "ad9e00d1-a38f-436e-99eb-fb3e3c283e55",
+      "name": "HeatingEnabled"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:f998561b-2213-4de7-af78-1d6f5e3c45a5",
+    "card": "turn_off",
+    "args": {
+     "class": "heater"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:device:102211c2-6f7a-46e7-b5b1-9ec9ac7be971",
+    "card": "set_power_mode_off",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:device:871f8a62-5548-40a0-b987-accd9e6c3079",
+    "card": "set_power_mode_off",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "set_power_mode_off",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:logic",
+    "card": "equal_boolean",
+    "args": {},
+    "droptoken": "homey:manager:logic|ad9e00d1-a38f-436e-99eb-fb3e3c283e55",
+    "inverted": true
+   }
+  ]
+ },
+ {
+  "id": "6542d9f1-8141-4c3e-b1f2-db4983246cc3",
+  "name": "SV - xHeating flow",
+  "type": "advanced",
+  "enabled": false,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "cardCount": 16,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "SV_HeatCountdown",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    },
+    "note": "no outputs"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:439be454-0e4e-4835-b51c-a83a1d78e9f1",
+    "card": "target_temperature_changed",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "alarm_true",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "alarm_false",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "alarms_off",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact alarm"
+     }
+    },
+    "inverted": true
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "alarms_off",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:logic",
+    "card": "equal_boolean",
+    "args": {},
+    "droptoken": "homey:manager:logic|ad9e00d1-a38f-436e-99eb-fb3e3c283e55"
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "is_smart_schedule",
+    "args": {},
+    "inverted": true
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "alarms_off",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "set_power_mode_off",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "SV Heat target changed to [[homey:device:439be454-0e4e-4835-b51c-a83a1d78e9f1|target_temperature]]"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "SV_HeatCountdown",
+      "type": "number"
+     },
+     "value": "60"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "pause_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "SV_HeatCountdown",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "delay",
+    "args": {
+     "delay": {
+      "number": "10",
+      "multiplier": 60
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "set_smart_schedule",
+    "args": {}
+   }
+  ]
+ },
+ {
+  "id": "66172b64-fc03-4e93-86cc-d53eda29f05a",
+  "name": "K - Light reset",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "3b092b66-fbe9-4305-b043-bb3f5a6603c8",
+  "cardCount": 3,
+  "cards": [
+   {
+    "type": "start"
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "0e5d845d-d8ea-4db6-8096-663b0a311e07 clear"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "f097b38c-cfb0-4b83-8124-59e35f82cd0f clear"
+    }
+   }
+  ]
+ },
+ {
+  "id": "722e2b8d-aa36-4349-b7f6-113de8b4afac",
+  "name": "SV - Light flow",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "cardCount": 12,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:device:cbbd7c60-dc84-43c7-8f0f-790556fc9b14",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "cbbd7c60-dc84-43c7-8f0f-790556fc9b14"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:cbbd7c60-dc84-43c7-8f0f-790556fc9b14",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "cbbd7c60-dc84-43c7-8f0f-790556fc9b14 check"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "inactive_for",
+    "args": {
+     "minutes": 30
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "daytime",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "turn_off",
+    "args": {
+     "class": "light"
+    }
+   },
+   {
+    "type": "note",
+    "text": "Luminance changed -> re-scale Daytime brightness (AdaptiveLighting lux mode)"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:47172014-0488-43a7-93c6-920ad01113b3",
+    "card": "measure_luminance_changed",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:cbbd7c60-dc84-43c7-8f0f-790556fc9b14",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "cbbd7c60-dc84-43c7-8f0f-790556fc9b14 lux [[homey:device:47172014-0488-43a7-93c6-920ad01113b3|measure_luminance]]"
+    }
+   }
+  ]
+ },
+ {
+  "id": "76105856-c750-4b7b-afc5-a9a34b5362a3",
+  "name": "SS - Light reset",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "005ad277-8191-49fe-ac48-395af18a7709",
+  "cardCount": 4,
+  "cards": [
+   {
+    "type": "start"
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "18b6f5bf-1666-4bf1-92be-d9cb7e6b74c5 clear"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "5ccf5881-f665-40f5-bd89-f61e1f926d4c clear"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "cc30f76b-7634-489c-a721-541fdb49d46f clear"
+    }
+   }
+  ]
+ },
+ {
+  "id": "7b299b25-7ed0-4c81-be54-55fa5abc5192",
+  "name": "ST - Light flow",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "9d6c169b-e7c0-4e6c-ae28-f0a5b5014a4e",
+  "cardCount": 22,
+  "cards": [
+   {
+    "type": "note",
+    "text": "Settings"
+   },
+   {
+    "type": "note",
+    "text": "Active - turn lights on"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:fd754abf-4397-45f5-9a68-98d7f079fd7b",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "fd754abf-4397-45f5-9a68-98d7f079fd7b"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:3f4e2391-3be6-44ee-b340-fcc3219853b2",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "3f4e2391-3be6-44ee-b340-fcc3219853b2"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:fd754abf-4397-45f5-9a68-98d7f079fd7b",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "fd754abf-4397-45f5-9a68-98d7f079fd7b check"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:3f4e2391-3be6-44ee-b340-fcc3219853b2",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "3f4e2391-3be6-44ee-b340-fcc3219853b2 check"
+    }
+   },
+   {
+    "type": "note",
+    "text": "Inactive - turn lights off"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:2051734f-89b8-441d-a0c0-00e9b4d4bc3a",
+    "card": "inactive_for",
+    "args": {
+     "minutes": 30
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "daytime",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "Stue inactive for 30 minutes -> Lights off"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:2051734f-89b8-441d-a0c0-00e9b4d4bc3a",
+    "card": "turn_off",
+    "args": {
+     "class": "light"
+    }
+   },
+   {
+    "type": "note",
+    "text": "Luminance changed -> re-scale Daytime brightness (AdaptiveLighting lux mode)"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:b88fc1cd-cd4f-447e-960b-03fb51951ca4",
+    "card": "measure_luminance_changed",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:fd754abf-4397-45f5-9a68-98d7f079fd7b",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "fd754abf-4397-45f5-9a68-98d7f079fd7b lux [[homey:device:b88fc1cd-cd4f-447e-960b-03fb51951ca4|measure_luminance]]"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:3f4e2391-3be6-44ee-b340-fcc3219853b2",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "3f4e2391-3be6-44ee-b340-fcc3219853b2 lux [[homey:device:b88fc1cd-cd4f-447e-960b-03fb51951ca4|measure_luminance]]"
+    }
+   }
+  ]
+ },
+ {
+  "id": "7cb50d95-37a6-4963-87de-53708d6e63ce",
+  "name": "B9 - Light flow",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "9f58e947-9bf6-4672-a0d5-3aa0b3c9a50a",
+  "cardCount": 25,
+  "cards": [
+   {
+    "type": "note",
+    "text": "Settings - Main delay"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "time_exactly",
+    "args": {
+     "time": "06:00"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "day_equals_multiselect",
+    "args": {
+     "day": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5"
+     ]
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "time_exactly",
+    "args": {
+     "time": "08:00"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "day_equals_multiselect",
+    "args": {
+     "day": [
+      "0",
+      "6"
+     ]
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:logic",
+    "card": "variable_set_number",
+    "args": {
+     "variable": {
+      "id": "e3886029-29f0-4a60-8bc8-aea4aa1665d6",
+      "name": "B9_InactivitySeconds"
+     },
+     "value": 120
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "time_exactly",
+    "args": {
+     "time": "23:00"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:logic",
+    "card": "variable_set_number",
+    "args": {
+     "variable": {
+      "id": "e3886029-29f0-4a60-8bc8-aea4aa1665d6",
+      "name": "B9_InactivitySeconds"
+     },
+     "value": 60
+    }
+   },
+   {
+    "type": "note",
+    "text": "Gradual fade to OFF"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "B9_Countdown",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "9c6b60be-fbf6-47fe-b6eb-4f6987e9d0ff",
+      "name": "GradualFadeOut"
+     },
+     "argument": "b8591f4d-a493-4de7-9745-c13cd07e033c"
+    }
+   },
+   {
+    "type": "note",
+    "text": "Inactive - start countdown"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:79861df8-7b80-4fa5-ae14-799fe61c1db5",
+    "card": "inactive",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "B9_Countdown",
+      "type": "number"
+     },
+     "value": "[[homey:manager:logic|e3886029-29f0-4a60-8bc8-aea4aa1665d6]]"
+    }
+   },
+   {
+    "type": "note",
+    "text": "Active - pause timer & restore saved settings"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:79861df8-7b80-4fa5-ae14-799fe61c1db5",
+    "card": "active",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "pause_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "B9_Countdown",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "86512ec7-b98c-419e-a349-ab20c5257ff7",
+      "name": "RestoreSavedSettings"
+     },
+     "argument": "b8591f4d-a493-4de7-9745-c13cd07e033c"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:79861df8-7b80-4fa5-ae14-799fe61c1db5",
+    "card": "all_on",
+    "args": {
+     "class": {
+      "id": "light",
+      "name": "Light"
+     }
+    },
+    "inverted": true
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:79861df8-7b80-4fa5-ae14-799fe61c1db5",
+    "card": "turn_on",
+    "args": {
+     "class": "light"
+    }
+   },
+   {
+    "type": "note",
+    "text": "Adaptive Lighting on turn-on"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:b8591f4d-a493-4de7-9745-c13cd07e033c",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "b8591f4d-a493-4de7-9745-c13cd07e033c"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 1,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "7b7dfc4c-78be-4dfc-a3a2-18545ab73608",
+      "name": "Room_watchdog"
+     },
+     "argument": "B9"
+    }
+   }
+  ]
+ },
+ {
+  "id": "97eb07e8-686a-40d6-b8e3-35a8c5c16570",
+  "name": "ST - Heating",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "9d6c169b-e7c0-4e6c-ae28-f0a5b5014a4e",
+  "cardCount": 13,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:0f707820-c7e7-4e24-b6ed-28f69ae2bca2",
+    "card": "active",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:0f707820-c7e7-4e24-b6ed-28f69ae2bca2",
+    "card": "inactive_for",
+    "args": {
+     "minutes": 15
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:0f707820-c7e7-4e24-b6ed-28f69ae2bca2",
+    "card": "alarm_true",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:acc819ec-fc88-4e8c-b98b-5de8bb97d91c",
+    "card": "tado_presence_mode_changed",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:871f8a62-5548-40a0-b987-accd9e6c3079",
+    "card": "target_temperature_changed",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:0f707820-c7e7-4e24-b6ed-28f69ae2bca2",
+    "card": "alarm_false",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:0f707820-c7e7-4e24-b6ed-28f69ae2bca2",
+    "card": "alarms_off",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "ST_WindowOpenedDelay",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "ST_WindowClosedDelay",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Stue"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "ST_WindowOpenedDelay",
+      "type": "number"
+     },
+     "value": "70"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "ST_WindowClosedDelay",
+      "type": "number"
+     },
+     "value": "610"
+    }
+   }
+  ]
+ },
+ {
+  "id": "9f55c580-0b20-4ea3-9e3b-b08fce62a6e4",
+  "name": "O - Heating",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "4456c471-4ff6-4724-90c8-cc4b058f50d6",
+  "cardCount": 15,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:1b1d3f08-5e17-40e8-b6a3-ad2d206ab369",
+    "card": "active",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:1b1d3f08-5e17-40e8-b6a3-ad2d206ab369",
+    "card": "inactive_for",
+    "args": {
+     "minutes": 30
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:1b1d3f08-5e17-40e8-b6a3-ad2d206ab369",
+    "card": "alarm_true",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:acc819ec-fc88-4e8c-b98b-5de8bb97d91c",
+    "card": "tado_presence_mode_changed",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:102211c2-6f7a-46e7-b5b1-9ec9ac7be971",
+    "card": "target_temperature_changed",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:eee3d502-3cac-41b6-8c02-a55ad2380e77",
+    "card": "target_temperature_changed",
+    "args": {}
+   },
+   {
+    "type": "delay",
+    "args": {
+     "delay": {
+      "number": "10",
+      "multiplier": 1
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:1b1d3f08-5e17-40e8-b6a3-ad2d206ab369",
+    "card": "alarm_false",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:1b1d3f08-5e17-40e8-b6a3-ad2d206ab369",
+    "card": "alarms_off",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "O_WindowOpenedDelay",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "O_WindowClosedDelay",
+      "type": "number"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Oliver"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "O_WindowOpenedDelay",
+      "type": "number"
+     },
+     "value": "70"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "O_WindowClosedDelay",
+      "type": "number"
+     },
+     "value": "610"
+    }
+   }
+  ]
+ },
+ {
+  "id": "a035a7d2-b1d1-47c6-87ba-49ee1c606bd2",
+  "name": "B7 - Light flow",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "4a719114-939a-4f2e-8f37-ab394aaefc0f",
+  "cardCount": 19,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "time_exactly",
+    "args": {
+     "time": "06:00"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "time_exactly",
+    "args": {
+     "time": "23:00"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:5477fed5-a59d-4196-96bc-0f3b14d3cff4",
+    "card": "active",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:5477fed5-a59d-4196-96bc-0f3b14d3cff4",
+    "card": "all_on",
+    "args": {
+     "class": {
+      "id": "light",
+      "name": "Light"
+     }
+    },
+    "inverted": true
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:5477fed5-a59d-4196-96bc-0f3b14d3cff4",
+    "card": "turn_on",
+    "args": {
+     "class": "light"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:logic",
+    "card": "variable_set_number",
+    "args": {
+     "variable": {
+      "id": "22969c8f-b5d0-426e-a8c0-0c0af2b9d13f",
+      "name": "B7_InactivitySeconds"
+     },
+     "value": 300
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:logic",
+    "card": "variable_set_number",
+    "args": {
+     "variable": {
+      "id": "22969c8f-b5d0-426e-a8c0-0c0af2b9d13f",
+      "name": "B7_InactivitySeconds"
+     },
+     "value": 60
+    }
+   },
+   {
+    "type": "note",
+    "text": "Inactive - start countdown, then gradual fade to off"
+   },
+   {
+    "type": "note",
+    "text": "Active - turn lights on"
+   },
+   {
+    "type": "note",
+    "text": "Settings"
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "9c6b60be-fbf6-47fe-b6eb-4f6987e9d0ff",
+      "name": "GradualFadeOut"
+     },
+     "argument": "1ab9ca1f-60ca-44f9-8221-a03e10f005bf"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:5477fed5-a59d-4196-96bc-0f3b14d3cff4",
+    "card": "inactive",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "B7_Countdown",
+      "type": "number",
+      "description": "Just added"
+     },
+     "value": "[[homey:manager:logic|22969c8f-b5d0-426e-a8c0-0c0af2b9d13f]]"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "pause_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "B7_Countdown",
+      "type": "number",
+      "description": "Just added"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "B7_Countdown",
+      "type": "number",
+      "description": "Create new countdown"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:1ab9ca1f-60ca-44f9-8221-a03e10f005bf",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "1ab9ca1f-60ca-44f9-8221-a03e10f005bf"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 1,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "7b7dfc4c-78be-4dfc-a3a2-18545ab73608",
+      "name": "Room_watchdog"
+     },
+     "argument": "B7"
+    }
+   }
+  ]
+ },
+ {
+  "id": "bed2efc5-4e3f-4796-90f1-aeec20a81556",
+  "name": "ST - MediaCenter flow",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "9d6c169b-e7c0-4e6c-ae28-f0a5b5014a4e",
+  "cardCount": 12,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:zone:2051734f-89b8-441d-a0c0-00e9b4d4bc3a",
+    "card": "active",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:2051734f-89b8-441d-a0c0-00e9b4d4bc3a",
+    "card": "all_off",
+    "args": {
+     "class": {
+      "id": "tv",
+      "name": "TV"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:2051734f-89b8-441d-a0c0-00e9b4d4bc3a",
+    "card": "turn_on",
+    "args": {
+     "class": "tv"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "Tænd MC"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "time_exactly",
+    "args": {
+     "time": "06:00"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "ST_MediaCenterIdleTime",
+      "type": "number",
+      "description": "Create new countdown"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "pause_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "ST_MediaCenterIdleTime",
+      "type": "number",
+      "description": "Just added"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:2051734f-89b8-441d-a0c0-00e9b4d4bc3a",
+    "card": "inactive",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "ST_MediaCenterIdleTime",
+      "type": "number",
+      "description": "Just added"
+     },
+     "value": "1800"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:2051734f-89b8-441d-a0c0-00e9b4d4bc3a",
+    "card": "turn_off",
+    "args": {
+     "class": "tv"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "time_between",
+    "args": {
+     "time1": "21:30",
+     "time2": "05:30"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "time_between",
+    "args": {
+     "time1": "21:30",
+     "time2": "05:30"
+    }
+   }
+  ]
+ },
+ {
+  "id": "d230d923-b187-417f-b615-7a60721db823",
+  "name": "SV - Heating",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "428597a6-f067-4650-855d-cb62e769d426",
+  "cardCount": 13,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Soveværelse"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "active",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "inactive_for",
+    "args": {
+     "minutes": 30
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "alarm_true",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:acc819ec-fc88-4e8c-b98b-5de8bb97d91c",
+    "card": "tado_presence_mode_changed",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "alarm_false",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:a6a116d6-fe57-437c-a2f2-33cea5506a60",
+    "card": "alarms_off",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:31067cc5-721c-4c5e-abfb-a261dbf44c57",
+    "card": "target_temperature_changed",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "SV_WindowOpenedDelay",
+      "type": "number",
+      "description": "Create new countdown"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "SV_WindowClosedDelay",
+      "type": "number",
+      "description": "Create new countdown"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "SV_WindowOpenedDelay",
+      "value": -1,
+      "type": "number",
+      "remove": false,
+      "pause": "0",
+      "lastChanged": "2026-01-17T20:11:58.102Z",
+      "auto": true
+     },
+     "value": "70"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "SV_WindowClosedDelay",
+      "value": -1,
+      "type": "number",
+      "remove": false,
+      "pause": "0",
+      "lastChanged": "2026-01-17T20:11:58.105Z",
+      "auto": true
+     },
+     "value": "610"
+    }
+   }
+  ]
+ },
+ {
+  "id": "d3c18fa4-cb65-4f63-b538-32a1cdb18c60",
+  "name": "E9 - Light flow",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "7fa67a77-2fab-4021-ad38-dbf1472fdcb7",
+  "cardCount": 26,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "time_exactly",
+    "args": {
+     "time": "06:00"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "time_exactly",
+    "args": {
+     "time": "23:00"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:e241f755-9f03-44d3-ad19-e3bb61b18692",
+    "card": "active",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:e241f755-9f03-44d3-ad19-e3bb61b18692",
+    "card": "all_on",
+    "args": {
+     "class": {
+      "id": "light",
+      "name": "Light"
+     }
+    },
+    "inverted": true
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:e241f755-9f03-44d3-ad19-e3bb61b18692",
+    "card": "turn_on",
+    "args": {
+     "class": "light"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "E9_Countdown",
+      "value": -1,
+      "type": "number",
+      "remove": false,
+      "pause": "0",
+      "lastChanged": "2025-02-13T08:23:10.417Z",
+      "auto": true
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:logic",
+    "card": "variable_set_number",
+    "args": {
+     "variable": {
+      "id": "804f5c6b-0f17-44cf-bf9c-18c4d49018c5",
+      "name": "E9_InactivitySeconds"
+     },
+     "value": 180
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:logic",
+    "card": "variable_set_number",
+    "args": {
+     "variable": {
+      "id": "804f5c6b-0f17-44cf-bf9c-18c4d49018c5",
+      "name": "E9_InactivitySeconds"
+     },
+     "value": 30
+    }
+   },
+   {
+    "type": "note",
+    "text": "Inactive - turn lights off"
+   },
+   {
+    "type": "note",
+    "text": "Active - turn lights on"
+   },
+   {
+    "type": "note",
+    "text": "Settings"
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:e241f755-9f03-44d3-ad19-e3bb61b18692",
+    "card": "inactive",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "E9_Countdown",
+      "type": "number",
+      "description": "Create new countdown"
+     },
+     "value": "[[homey:manager:logic|804f5c6b-0f17-44cf-bf9c-18c4d49018c5]]"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "pause_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "E9_Countdown",
+      "value": -1,
+      "type": "number",
+      "remove": false,
+      "pause": "0",
+      "lastChanged": "2025-02-13T08:23:10.417Z",
+      "auto": true
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:e339c184-ea11-4413-bd90-dac726861fd0",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "e339c184-ea11-4413-bd90-dac726861fd0"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:2656f184-8c87-4434-95a2-fdb3fc36bdd8",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "2656f184-8c87-4434-95a2-fdb3fc36bdd8"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "day_equals_multiselect",
+    "args": {
+     "day": [
+      "1",
+      "2",
+      "3",
+      "4",
+      "5"
+     ]
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "day_equals_multiselect",
+    "args": {
+     "day": [
+      "0",
+      "6"
+     ]
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "time_exactly",
+    "args": {
+     "time": "08:00"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "9c6b60be-fbf6-47fe-b6eb-4f6987e9d0ff",
+      "name": "GradualFadeOut"
+     },
+     "argument": "e339c184-ea11-4413-bd90-dac726861fd0,2656f184-8c87-4434-95a2-fdb3fc36bdd8"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "86512ec7-b98c-419e-a349-ab20c5257ff7",
+      "name": "RestoreSavedSettings"
+     },
+     "argument": "e339c184-ea11-4413-bd90-dac726861fd0"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "86512ec7-b98c-419e-a349-ab20c5257ff7",
+      "name": "RestoreSavedSettings"
+     },
+     "argument": "2656f184-8c87-4434-95a2-fdb3fc36bdd8"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 1,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "7b7dfc4c-78be-4dfc-a3a2-18545ab73608",
+      "name": "Room_watchdog"
+     },
+     "argument": "E9"
+    }
+   }
+  ]
+ },
+ {
+  "id": "e348b663-021f-442d-8f38-b1046422b2a4",
+  "name": "SS - Light flow",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "005ad277-8191-49fe-ac48-395af18a7709",
+  "cardCount": 13,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:device:18b6f5bf-1666-4bf1-92be-d9cb7e6b74c5",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "18b6f5bf-1666-4bf1-92be-d9cb7e6b74c5"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:5ccf5881-f665-40f5-bd89-f61e1f926d4c",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "5ccf5881-f665-40f5-bd89-f61e1f926d4c"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:cc30f76b-7634-489c-a721-541fdb49d46f",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "cc30f76b-7634-489c-a721-541fdb49d46f"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:18b6f5bf-1666-4bf1-92be-d9cb7e6b74c5",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:5ccf5881-f665-40f5-bd89-f61e1f926d4c",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:cc30f76b-7634-489c-a721-541fdb49d46f",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "18b6f5bf-1666-4bf1-92be-d9cb7e6b74c5 check"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "5ccf5881-f665-40f5-bd89-f61e1f926d4c check"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "cc30f76b-7634-489c-a721-541fdb49d46f check"
+    }
+   }
+  ]
+ },
+ {
+  "id": "ebc6cab7-6ad0-4158-9603-a530fa518fb9",
+  "name": "Eve Error Handler (HomeyScript)",
+  "type": "advanced",
+  "enabled": true,
+  "folder": null,
+  "cardCount": 10,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 2,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "run",
+    "args": {
+     "script": {
+      "id": "b7ae4f8c-6299-4bb2-9a7c-0a53cdac53c5",
+      "name": "EveDeviceMonitor"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:logic",
+    "card": "variable_changed",
+    "args": {
+     "variable": {
+      "id": "b3a8e4f3-9b09-471b-8cad-f08df12fb38d",
+      "name": "EveErrorCount"
+     }
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:logic",
+    "card": "gt",
+    "args": {
+     "comparator": 4
+    },
+    "droptoken": "homey:manager:logic|b3a8e4f3-9b09-471b-8cad-f08df12fb38d"
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "EVE: More than 4 consecutive errors - rebooting in 4 min if not resolved"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:logic",
+    "card": "variable_set_number",
+    "args": {
+     "variable": {
+      "id": "b3a8e4f3-9b09-471b-8cad-f08df12fb38d",
+      "name": "EveErrorCount"
+     },
+     "value": 0
+    }
+   },
+   {
+    "type": "delay",
+    "uri": null,
+    "card": "delay",
+    "args": {
+     "delay": {
+      "number": "4",
+      "multiplier": 60
+     }
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:logic",
+    "card": "gt",
+    "args": {
+     "comparator": 0
+    },
+    "droptoken": "homey:manager:logic|b3a8e4f3-9b09-471b-8cad-f08df12fb38d"
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:notifications",
+    "card": "create_notification",
+    "args": {
+     "text": "EVE: Rebooting Homey..."
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:manager:system",
+    "card": "reboot",
+    "args": {}
+   }
+  ]
+ },
+ {
+  "id": "f1db16a5-58ba-4b96-9b4e-4a7edc19d41d",
+  "name": "K - Light flow",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "3b092b66-fbe9-4305-b043-bb3f5a6603c8",
+  "cardCount": 12,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:device:0e5d845d-d8ea-4db6-8096-663b0a311e07",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:f097b38c-cfb0-4b83-8124-59e35f82cd0f",
+    "card": "onoff_true",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "0e5d845d-d8ea-4db6-8096-663b0a311e07"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "f097b38c-cfb0-4b83-8124-59e35f82cd0f"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "0e5d845d-d8ea-4db6-8096-663b0a311e07 check"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "a6f9d44b-f818-4ca8-b4ec-681c3eceec5e",
+      "name": "AdaptiveLighting"
+     },
+     "argument": "f097b38c-cfb0-4b83-8124-59e35f82cd0f check"
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:0e5d845d-d8ea-4db6-8096-663b0a311e07",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "condition",
+    "uri": "homey:device:f097b38c-cfb0-4b83-8124-59e35f82cd0f",
+    "card": "on",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:69235672-0b52-4551-bd2f-358444a236f8",
+    "card": "inactive_for",
+    "args": {
+     "minutes": 30
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:manager:cron",
+    "card": "daytime",
+    "args": {}
+   },
+   {
+    "type": "action",
+    "uri": "homey:zone:69235672-0b52-4551-bd2f-358444a236f8",
+    "card": "turn_off",
+    "args": {
+     "class": "light"
+    }
+   }
+  ]
+ },
+ {
+  "id": "f2102b82-0aba-4a1d-bad4-18c6d8d49665",
+  "name": "C - Heating",
+  "type": "advanced",
+  "enabled": true,
+  "folder": "fc31a032-1e92-4ba5-a2d2-23a7af544c5d",
+  "cardCount": 14,
+  "cards": [
+   {
+    "type": "trigger",
+    "uri": "homey:manager:cron",
+    "card": "every_nth",
+    "args": {
+     "n": 5,
+     "type": "minute"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:com.athom.homeyscript",
+    "card": "runWithArg",
+    "args": {
+     "script": {
+      "id": "381664de-ed64-4a81-a0a8-9e7cea4eb83f",
+      "name": "Room Heating"
+     },
+     "argument": "Clara"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:29f983ac-05a3-484b-93e8-809b28bf3917",
+    "card": "active",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:29f983ac-05a3-484b-93e8-809b28bf3917",
+    "card": "inactive_for",
+    "args": {
+     "minutes": 30
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:29f983ac-05a3-484b-93e8-809b28bf3917",
+    "card": "alarm_true",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:device:acc819ec-fc88-4e8c-b98b-5de8bb97d91c",
+    "card": "tado_presence_mode_changed",
+    "args": {}
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:zone:29f983ac-05a3-484b-93e8-809b28bf3917",
+    "card": "alarm_false",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "condition",
+    "uri": "homey:zone:29f983ac-05a3-484b-93e8-809b28bf3917",
+    "card": "alarms_off",
+    "args": {
+     "capability": {
+      "id": "alarm_contact",
+      "name": "Contact Alarm"
+     }
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "C_WindowOpenedDelay",
+      "type": "number",
+      "description": "Create new countdown"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "C_WindowOpenedDelay",
+      "type": "number",
+      "description": "Just added"
+     },
+     "value": "70"
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "set_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "C_WindowClosedDelay",
+      "type": "number",
+      "description": "Just added"
+     },
+     "value": "610"
+    }
+   },
+   {
+    "type": "trigger",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "countdown_to_zero",
+    "args": {
+     "variable": {
+      "name": "C_WindowClosedDelay",
+      "type": "number",
+      "description": "Just added"
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "pause_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "C_WindowClosedDelay",
+      "value": -1,
+      "type": "number",
+      "remove": false,
+      "pause": "0",
+      "lastChanged": "2026-01-14T15:43:33.165Z",
+      "auto": true
+     }
+    }
+   },
+   {
+    "type": "action",
+    "uri": "homey:app:nl.bevlogenheid.countdown",
+    "card": "pause_countdown_timer",
+    "args": {
+     "variable": {
+      "name": "C_WindowOpenedDelay",
+      "value": -1,
+      "type": "number",
+      "remove": false,
+      "pause": "0",
+      "lastChanged": "2026-01-14T15:43:33.161Z",
+      "auto": true
+     }
+    }
+   }
+  ]
+ }
+]
