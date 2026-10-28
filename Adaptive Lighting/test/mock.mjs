@@ -45,11 +45,16 @@ const homeyScriptMissing = (name) => () => { throw new Error(`${name} is not def
 // A light whose capability values change when commands reach it.
 // hue: true adds button.migrate_v3, which the scripts use to tell single Hue
 // bulbs from Homey groups
-export function light(id, name, { on = true, dim = 0.5, temp = 0.5, hue = true, zone = 'zone', noTemp = false } = {}) {
+// driver: sets driverId as Homey reports it, e.g. 'homey:app:nl.philips.hue:bulb'
+// or 'homey:virtualdrivergroup:driver' (without it the scripts fall back to
+// button.migrate_v3)
+export const HUE_DRIVER = 'homey:app:nl.philips.hue:bulb';
+export const GROUP_DRIVER = 'homey:virtualdrivergroup:driver';
+export function light(id, name, { on = true, dim = 0.5, temp = 0.5, hue = true, zone = 'zone', noTemp = false, driver = null } = {}) {
   const capabilitiesObj = { onoff: { value: on }, dim: { value: dim } };
   if (!noTemp) capabilitiesObj.light_temperature = { value: temp };
   const capabilities = Object.keys(capabilitiesObj).concat(hue ? ['button.migrate_v3'] : []);
-  return { id, name, class: 'light', zone, capabilities, capabilitiesObj };
+  return { id, name, class: 'light', zone, capabilities, capabilitiesObj, ...(driver ? { driverId: driver } : {}) };
 }
 
 export function motionSensor(id, name, { motion = false, lastChanged = null } = {}) {

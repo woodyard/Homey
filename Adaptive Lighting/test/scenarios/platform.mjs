@@ -17,6 +17,19 @@ export const scenarios = {
     }
   },
 
+  async 'the shared GROUPS block is identical in all four scripts'(t) {
+    const blockOf = (f) => {
+      const s = fs.readFileSync(scriptPath(f), 'utf8').replace(/\r\n/g, '\n');
+      const a = s.indexOf('// ====== GROUPS — same block');
+      const e = s.indexOf('// ====== end of shared GROUPS block ======');
+      return a >= 0 && e > a ? s.slice(a, e) : null;
+    };
+    const files = ['adaptivelighting.js', 'gradualfadeout.js', 'restoresavedsettings.js', 'room_watchdog.js'];
+    const ref = blockOf(files[0]);
+    t.check(ref, 'adaptivelighting.js has the block');
+    for (const f of files.slice(1)) t.check(blockOf(f) === ref, `${f} has the same block`);
+  },
+
   async 'no setTimeout or setInterval calls'(t) {
     for (const f of scriptFiles()) {
       const code = stripComments(fs.readFileSync(scriptPath(f), 'utf8'));

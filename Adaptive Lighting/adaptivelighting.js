@@ -2,12 +2,30 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.29.2
+// Version:     2.29.3
 // Date:        2026-10-28
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.29.3 2026-10-28  Group and Hue detection from the device driver
+//                    - Groups were found by name prefix only, and Hue by the
+//                      button.migrate_v3 capability, which may not survive the
+//                      move to the Hue Bridge Pro. New shared GROUPS block (the
+//                      same in GradualFadeOut, RestoreSavedSettings and
+//                      Room_watchdog): group = Homey's virtual group driver, Hue
+//                      = the Philips Hue app's driver or button.migrate_v3
+//                      (driverId/ownerUri/driverUri); with no driver info at
+//                      all, a group is "lacks button.migrate_v3" as before
+//                    - findGroupMembers(device) now takes the device; members by
+//                      name for anything that isn't a Hue bulb, so a group still
+//                      works if its driver text looks unexpected (no zone
+//                      fallback in AL). A driver-identified group without
+//                      "<group> <n>" bulbs logs AL-GROUP-NO-MEMBERS
+//                      (once an hour per group, AL_GroupWarningAt) — before, its
+//                      commands silently went to the group device
+//                    - B9 and B7 bulbs renamed on Homey (B9 Wall 1–3 → B9 Lys
+//                      1–3, B7 1–3 → B7 Lys 1–3), so AL now finds them
 // 2.29.2 2026-10-28  Strict argument checking
 //                    - An unknown mode (a typo in a flow card) matched no mode
 //                      and ran as normal mode: clear manual, re-apply, switch
@@ -1527,7 +1545,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.29.2';
+const AL_VERSION = '2.29.3';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -2032,14 +2050,49 @@ function applySunTemperature(profile, sun, roomConfig) {
   return { ...profile, temperature, scheduledTemperature: cool, sunElevation: sun.elevation, sunCool: cool, sunWarm: warm, ...luxMeta };
 }
 
+// ====== GROUPS — same block in adaptivelighting.js, gradualfadeout.js,
+// restoresavedsettings.js and room_watchdog.js; change all four together ======
+// A Homey group uses the virtual group driver, a Hue bulb comes from the
+// Philips Hue app. Homey reports the driver in driverId (e.g.
+// "homey:virtualdrivergroup:driver", "homey:app:nl.philips.hue:bulb"), and in
+// ownerUri/driverUri depending on the API version; all three are read. Only a
+// device without any driver info falls back to the old rule (Hue bulbs have
+// button.migrate_v3, groups don't), which may not survive a move to the Hue
+// Bridge Pro
+function driverOf(device) {
+  return [device?.driverId, device?.ownerUri, device?.driverUri].filter(Boolean).join(' ').toLowerCase();
+}
+function isGroupDevice(device) {
+  const driver = driverOf(device);
+  return driver ? driver.includes('virtualdrivergroup') : !device?.capabilities?.includes('button.migrate_v3');
+}
+// Either sign is enough: only the Philips Hue app adds button.migrate_v3
+function isHueBulb(device) {
+  return driverOf(device).includes('nl.philips.hue') || !!device?.capabilities?.includes('button.migrate_v3');
+}
+// A light's bulbs: lights named "<name> <n>" ("B9 Lys 1") — never for a Hue
+// bulb, which is a single light. With zoneFallback, a group (by driver) whose
+// bulbs aren't named that way gets every other light in its zone (viaZone: log
+// it — a bulb is probably misnamed). Name matching doesn't need the driver, so
+// a group whose driver text looks unexpected still finds its bulbs
+function groupMembers(device, allDevices, { zoneFallback = true, exclude = [] } = {}) {
+  if (isHueBulb(device)) return { members: [], viaZone: false };
+  const lights = Object.values(allDevices || {}).filter(d => d.class === 'light' && d.id !== device.id);
+  const byName = lights.filter(d => typeof d.name === 'string' && d.name.startsWith(device.name + ' '));
+  if (byName.length > 0 || !zoneFallback || !isGroupDevice(device)) return { members: byName, viaZone: false };
+  const byZone = lights.filter(d => d.zone === device.zone && !exclude.includes(d.id));
+  return { members: byZone, viaZone: byZone.length > 0 };
+}
+// ====== end of shared GROUPS block ======
+
 /**
- * Hue bulb (Philips Hue app exposes button.migrate_v3) or a group whose
- * name-matched members are Hue bulbs. Uses the cached device list — no API call.
+ * Hue bulb, or a group whose members are all Hue bulbs. Uses the cached device
+ * list — no API call.
  */
 async function isHueDevice(device) {
-  if (device.capabilities?.includes('button.migrate_v3')) return true;
-  const members = await findGroupMembers(device.name);
-  return members.length > 0 && members.every(m => m.capabilities?.includes('button.migrate_v3'));
+  if (isHueBulb(device)) return true;
+  const members = await findGroupMembers(device);
+  return members.length > 0 && members.every(isHueBulb);
 }
 
 /**
@@ -2111,21 +2164,25 @@ function getRoomConfig(deviceId, deviceName) {
 }
 
 /**
- * Find group members by name pattern (e.g., "SV Loft" → "SV Loft 1", "SV Loft 2", "SV Loft 3")
+ * A group's bulbs by name ("SV Loft" → "SV Loft 1", "SV Loft 2", "SV Loft 3").
+ * No zone fallback here: a group without name-matched bulbs gets the commands
+ * itself, and AL-GROUP-NO-MEMBERS is logged (at most once an hour per group)
  */
-async function findGroupMembers(groupName) {
+async function findGroupMembers(device) {
   if (!CACHED_ALL_DEVICES) {
     CACHED_ALL_DEVICES = await Homey.devices.getDevices();
   }
-  const members = [];
-
-  for (const d of Object.values(CACHED_ALL_DEVICES)) {
-    // Match "GroupName X/Y" pattern
-    if (typeof d.name === 'string' && d.name.startsWith(groupName + ' ') && d.name !== groupName && d.class === 'light') {
-      members.push(d);
+  const { members } = groupMembers(device, CACHED_ALL_DEVICES, { zoneFallback: false });
+  if (members.length === 0 && isGroupDevice(device)) {
+    let warned = {};
+    try { warned = JSON.parse(global.get('AL_GroupWarningAt') || '{}') || {}; } catch (e) { warned = {}; }
+    const key = getDeviceKey(device.id);
+    if (!(Date.now() - (warned[key] || 0) < 3600000)) {
+      warned[key] = Date.now();
+      global.set('AL_GroupWarningAt', JSON.stringify(warned));
+      diagLog(`AL-GROUP-NO-MEMBERS | ${device.name} | no "${device.name} <n>" lights — commands go to the group device`);
     }
   }
-  
   return members;
 }
 
@@ -2133,8 +2190,8 @@ async function findGroupMembers(groupName) {
  * Clear manual mode for a device and all its group members (if it's a group)
  * Per-device state: each write is O(1), no cross-device overhead
  */
-async function clearManualModeForGroup(deviceId, deviceName) {
-  const members = await findGroupMembers(deviceName);
+async function clearManualModeForGroup(deviceId, device) {
+  const members = await findGroupMembers(device);
 
   // Clear main device
   const state = getDeviceState(deviceId);
@@ -2149,7 +2206,7 @@ async function clearManualModeForGroup(deviceId, deviceName) {
   }
 
   if (members.length > 0 && SETTINGS.enableDetailedLogging) {
-    log(`[AdaptiveLighting] Clearing manual mode for group ${deviceName} and ${members.length} members`);
+    log(`[AdaptiveLighting] Clearing manual mode for group ${device.name} and ${members.length} members`);
     for (const member of members) {
       log(`[AdaptiveLighting] - Cleared ${member.name}`);
     }
@@ -2241,7 +2298,7 @@ async function applyLighting(device, brightness, temperature, useDuration = fals
   }
   
   // Find group members (if any)
-  const members = await findGroupMembers(device.name);
+  const members = await findGroupMembers(device);
   const isGroup = members.length > 0;
   
   if (isGroup) {
@@ -2667,7 +2724,7 @@ try {
       setForcedProfile(DEVICE_ID, nextIndex, cachedData.profiles);
       
       setLastProfile(DEVICE_ID, nextProfile.name, nextProfile.brightness, nextProfile.temperature, nextProfile);
-      await clearManualModeForGroup(DEVICE_ID, device.name);
+      await clearManualModeForGroup(DEVICE_ID, device);
       
       const brightnessPercent = Math.round(nextProfile.brightness * 100);
       const tempDesc = nextProfile.temperature >= 0.7 ? 'warm' : 
@@ -2716,7 +2773,7 @@ try {
     
     setForcedProfile(DEVICE_ID, nextIndex, profileSchedule);
     
-    await clearManualModeForGroup(DEVICE_ID, device.name);
+    await clearManualModeForGroup(DEVICE_ID, device);
     setLastProfile(DEVICE_ID, profile.name, profile.brightness, profile.temperature, profile);
     
     const brightnessPercent = Math.round(profile.brightness * 100);
@@ -2748,7 +2805,7 @@ try {
     const wasManual = isManualMode(DEVICE_ID);
     
     // Clear manual mode for group and all members
-    await clearManualModeForGroup(DEVICE_ID, device.name);
+    await clearManualModeForGroup(DEVICE_ID, device);
     
     // Clear forced profile (reset to auto mode) and pre-calculate all profiles
     if (FORCED_PROFILE_DEVICES.has(DEVICE_ID)) {
@@ -3135,7 +3192,7 @@ try {
   // Light turned on (normal mode) or force/reset - clear manual mode for group and members
   if (!CHECK_MANUAL || FORCE_UPDATE) {
     const wasManual = isManualMode(DEVICE_ID);
-    await clearManualModeForGroup(DEVICE_ID, device.name);
+    await clearManualModeForGroup(DEVICE_ID, device);
     
     // Also reset forced profile to auto mode (light turning on = back to automatic)
     // BUT pre-calculate ALL profiles so cycling is instant
@@ -3260,7 +3317,7 @@ try {
     // Manual mode ends only now that the new profile is applied — if the apply
     // threw, the light stays manual and the next full run tries again
     if (manualExpired) {
-      await clearManualModeForGroup(DEVICE_ID, device.name);
+      await clearManualModeForGroup(DEVICE_ID, device);
       diagLog(`AL-MANUAL-EXPIRED | ${roomName} | ${manualExpiredFrom} → ${activeProfile.name}`);
       if (SETTINGS.enableLogging) log(`[${roomName}] Manual mode ended → ${activeProfile.name}`);
     }

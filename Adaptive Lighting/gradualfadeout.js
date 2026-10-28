@@ -12,6 +12,16 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.17 2026-10-28  Group detection from the device driver
+//                  - Shared GROUPS block (same as AdaptiveLighting 2.29.3): a
+//                    group is Homey's virtual group driver, not "lacks
+//                    button.migrate_v3". If that capability disappeared (Hue
+//                    Bridge Pro), E9 Loft would have been treated as a group,
+//                    its zone fallback would fade E9 Garderobe and E9 Loft
+//                    would never be turned off
+//                  - A single Hue bulb skips the device-list fetch entirely
+//                  - The zone fallback (group without "<group> <n>" bulbs) is
+//                    logged as FADE-ZONE-FALLBACK
 // 6.16 2026-10-28  Never leave an occupied room at ~0%
 //                  - Zone already active before the fade starts (the countdown
 //                    fired just as someone moved, so RestoreSavedSettings ran
@@ -254,36 +264,49 @@ function checkOverride(deviceId, name, dim, temp, source) {
   } catch (e) { /* override logging is best-effort */ }
 }
 
-// Find group members
-// Group devices lack button.migrate_v3; individual Zigbee bulbs have it.
-// Strategy 1: Name-based ("SV Loft" → "SV Loft 1/2/3")
-// Strategy 2: Zone-based fallback, only if target is a group ("B9 Lys" → "B9 Wall 1/2/3")
+// ====== GROUPS — same block in adaptivelighting.js, gradualfadeout.js,
+// restoresavedsettings.js and room_watchdog.js; change all four together ======
+// A Homey group uses the virtual group driver, a Hue bulb comes from the
+// Philips Hue app. Homey reports the driver in driverId (e.g.
+// "homey:virtualdrivergroup:driver", "homey:app:nl.philips.hue:bulb"), and in
+// ownerUri/driverUri depending on the API version; all three are read. Only a
+// device without any driver info falls back to the old rule (Hue bulbs have
+// button.migrate_v3, groups don't), which may not survive a move to the Hue
+// Bridge Pro
+function driverOf(device) {
+  return [device?.driverId, device?.ownerUri, device?.driverUri].filter(Boolean).join(' ').toLowerCase();
+}
+function isGroupDevice(device) {
+  const driver = driverOf(device);
+  return driver ? driver.includes('virtualdrivergroup') : !device?.capabilities?.includes('button.migrate_v3');
+}
+// Either sign is enough: only the Philips Hue app adds button.migrate_v3
+function isHueBulb(device) {
+  return driverOf(device).includes('nl.philips.hue') || !!device?.capabilities?.includes('button.migrate_v3');
+}
+// A light's bulbs: lights named "<name> <n>" ("B9 Lys 1") — never for a Hue
+// bulb, which is a single light. With zoneFallback, a group (by driver) whose
+// bulbs aren't named that way gets every other light in its zone (viaZone: log
+// it — a bulb is probably misnamed). Name matching doesn't need the driver, so
+// a group whose driver text looks unexpected still finds its bulbs
+function groupMembers(device, allDevices, { zoneFallback = true, exclude = [] } = {}) {
+  if (isHueBulb(device)) return { members: [], viaZone: false };
+  const lights = Object.values(allDevices || {}).filter(d => d.class === 'light' && d.id !== device.id);
+  const byName = lights.filter(d => typeof d.name === 'string' && d.name.startsWith(device.name + ' '));
+  if (byName.length > 0 || !zoneFallback || !isGroupDevice(device)) return { members: byName, viaZone: false };
+  const byZone = lights.filter(d => d.zone === device.zone && !exclude.includes(d.id));
+  return { members: byZone, viaZone: byZone.length > 0 };
+}
+// ====== end of shared GROUPS block ======
+
+// A single Hue bulb has no members (no device lookup); otherwise bulbs by name,
+// else every light in its zone (logged — a bulb is probably misnamed)
 async function findGroupMembers(groupDevice) {
-  const isGroup = !groupDevice.capabilities?.includes('button.migrate_v3');
-  const devices = await Homey.devices.getDevices();
-  const allDevices = Object.values(devices);
-
-  // Try name-based first
-  const nameMembers = allDevices.filter(d =>
-    d.name.startsWith(groupDevice.name + ' ') && d.name !== groupDevice.name && d.class === 'light'
-  );
-  if (nameMembers.length > 0) {
-    log(`Group detected by name pattern (${nameMembers.length} members)`);
-    return nameMembers;
-  }
-
-  // Zone fallback — only if target device is a group (no button.migrate_v3)
-  if (isGroup) {
-    const zoneMembers = allDevices.filter(d =>
-      d.zone === groupDevice.zone && d.id !== groupDevice.id && d.class === 'light'
-    );
-    if (zoneMembers.length > 0) {
-      log(`Group detected by zone fallback (${zoneMembers.length} members in same zone)`);
-      return zoneMembers;
-    }
-  }
-
-  return [];
+  if (isHueBulb(groupDevice)) return [];
+  const { members, viaZone } = groupMembers(groupDevice, await Homey.devices.getDevices());
+  if (viaZone) diagLog(`FADE-ZONE-FALLBACK | ${groupDevice.name} | no "${groupDevice.name} <n>" lights — using ${members.length} light(s) in its zone`);
+  log(`Group members: ${members.length}${viaZone ? ' (zone fallback)' : ''}`);
+  return members;
 }
 
 // Hardware fade via Flow Card action (duration:true on individual bulbs)

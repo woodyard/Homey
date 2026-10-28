@@ -13,6 +13,11 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.16 2026-10-28  Group detection from the device driver
+//                  - Shared GROUPS block (same as AdaptiveLighting 2.29.3): a
+//                    group is Homey's virtual group driver, not "lacks
+//                    button.migrate_v3"; the zone fallback (still excluding the
+//                    extra lights) is logged as WATCHDOG-ZONE-FALLBACK
 // 2.15 2026-10-28  Never leave an occupied room at ~0% (as GradualFadeOut 6.16)
 //                  - Motion at fade end: keep the restore window open, wait up
 //                    to HOLD_WAIT_SECONDS (10 s) for RestoreSavedSettings, and
@@ -198,6 +203,41 @@ function diagLog(entry) {
   global.set('AL_DiagnostikLog', trimmed);
 }
 
+// ====== GROUPS — same block in adaptivelighting.js, gradualfadeout.js,
+// restoresavedsettings.js and room_watchdog.js; change all four together ======
+// A Homey group uses the virtual group driver, a Hue bulb comes from the
+// Philips Hue app. Homey reports the driver in driverId (e.g.
+// "homey:virtualdrivergroup:driver", "homey:app:nl.philips.hue:bulb"), and in
+// ownerUri/driverUri depending on the API version; all three are read. Only a
+// device without any driver info falls back to the old rule (Hue bulbs have
+// button.migrate_v3, groups don't), which may not survive a move to the Hue
+// Bridge Pro
+function driverOf(device) {
+  return [device?.driverId, device?.ownerUri, device?.driverUri].filter(Boolean).join(' ').toLowerCase();
+}
+function isGroupDevice(device) {
+  const driver = driverOf(device);
+  return driver ? driver.includes('virtualdrivergroup') : !device?.capabilities?.includes('button.migrate_v3');
+}
+// Either sign is enough: only the Philips Hue app adds button.migrate_v3
+function isHueBulb(device) {
+  return driverOf(device).includes('nl.philips.hue') || !!device?.capabilities?.includes('button.migrate_v3');
+}
+// A light's bulbs: lights named "<name> <n>" ("B9 Lys 1") — never for a Hue
+// bulb, which is a single light. With zoneFallback, a group (by driver) whose
+// bulbs aren't named that way gets every other light in its zone (viaZone: log
+// it — a bulb is probably misnamed). Name matching doesn't need the driver, so
+// a group whose driver text looks unexpected still finds its bulbs
+function groupMembers(device, allDevices, { zoneFallback = true, exclude = [] } = {}) {
+  if (isHueBulb(device)) return { members: [], viaZone: false };
+  const lights = Object.values(allDevices || {}).filter(d => d.class === 'light' && d.id !== device.id);
+  const byName = lights.filter(d => typeof d.name === 'string' && d.name.startsWith(device.name + ' '));
+  if (byName.length > 0 || !zoneFallback || !isGroupDevice(device)) return { members: byName, viaZone: false };
+  const byZone = lights.filter(d => d.zone === device.zone && !exclude.includes(d.id));
+  return { members: byZone, viaZone: byZone.length > 0 };
+}
+// ====== end of shared GROUPS block ======
+
 // ====== OVERRIDE LOG ======
 // One line each time a light is found at values that differ from what
 // AdaptiveLighting last applied — an override from a Hue switch, the app, voice
@@ -374,17 +414,10 @@ try {
   try {
     const allDevices = Object.values(await Homey.devices.getDevices());
 
-    // Check if primary light is a group (find members)
-    const isGroup = !device.capabilities?.includes('button.migrate_v3');
-    let members = allDevices.filter(d =>
-      d.name.startsWith(device.name + ' ') && d.name !== device.name && d.class === 'light'
-    );
-    if (members.length === 0 && isGroup) {
-      members = allDevices.filter(d =>
-        d.zone === device.zone && d.id !== device.id && d.class === 'light'
-          && !(ROOM.extraLights || []).includes(d.id) // don't double-count extra lights
-      );
-    }
+    // A group's bulbs by name, else every light in its zone except the extra
+    // lights (logged — a bulb is probably misnamed); a single light: itself
+    const { members, viaZone } = groupMembers(device, allDevices, { exclude: ROOM.extraLights || [] });
+    if (viaZone) diagLog(`WATCHDOG-ZONE-FALLBACK | ${ROOM.name} | no "${device.name} <n>" lights — using ${members.length} light(s) in its zone`);
     targets = members.length > 0 ? members : [device];
     restorePlan[0].targets = targets.slice();
 
