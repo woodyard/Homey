@@ -75,6 +75,9 @@ export function createEnv(devices = []) {
     zoneActive: false,
     failLogicUpdate: false,
     createDelayMs: 0,      // > 0 makes createVariable slow, so parallel runs overlap
+    waitAdvancesClock: false, // true: wait(ms) moves the clock forward by ms
+    onWait: null,          // async (ms) => {} called on every wait() — lets a test
+                           // make something happen during a fade (motion, a restore)
     logs: [],
   };
   for (const d of devices) env.devices[d.id] = d;
@@ -161,7 +164,11 @@ export function createEnv(devices = []) {
       src = src.replace(from, to);
     }
     const fn = new AsyncFunction('args', 'Homey', 'global', 'log', 'wait', 'setTimeout', 'setInterval', src);
-    return fn(arg, env.Homey, env.global, (...a) => env.logs.push(a.join(' ')), async () => {},
+    const wait = async (ms) => {
+      if (env.waitAdvancesClock) advance(ms);
+      if (env.onWait) await env.onWait(ms);
+    };
+    return fn(arg, env.Homey, env.global, (...a) => env.logs.push(a.join(' ')), wait,
       homeyScriptMissing('setTimeout'), homeyScriptMissing('setInterval'));
   };
 

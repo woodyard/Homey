@@ -12,6 +12,27 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.16 2026-10-28  Never leave an occupied room at ~0%
+//                  - Zone already active before the fade starts (the countdown
+//                    fired just as someone moved, so RestoreSavedSettings ran
+//                    first and skipped): FADE-ABORT, nothing is dimmed. The
+//                    countdown starts again when the room empties
+//                  - Zone active at fade end used to return FADE-HOLD at once,
+//                    trusting the zone-active flow's RestoreSavedSettings. When
+//                    none came (slow, or a flow without the card, as B7 had)
+//                    the light stayed at ~0% until the person left. Now the
+//                    restore window is kept open and the script waits up to
+//                    HOLD_WAIT_SECONDS (10 s); if no restore arrives it
+//                    restores the saved brightness/colour itself
+//                    (FADE-SELF-RESTORE), as RestoreSavedSettings would — unless
+//                    the light was switched off by hand meanwhile (onoff false;
+//                    a dim-to-0 fade leaves it true). A restore that does
+//                    arrive → FADE-HOLD as before
+//                  - Verify step: light off 3 s after the off but zone active
+//                    (someone came in between the zone check and the off — the
+//                    flow's "turn lights on" saw the lights still on) → switch
+//                    it back on; its "turned on" flow runs AdaptiveLighting
+//                  - Run time in that rare case: up to ~10 s longer
 // 6.15 2026-10-28  Strict argument checking
 //                  - Every id in the argument must look like a Homey device id
 //                    (UUID); otherwise FADE-BADARG and nothing is faded
@@ -146,6 +167,8 @@ const fadeDuration = 20;     // seconds
 const restoreBuffer = 15;    // seconds the restore window stays open after the
                              // fade ends — RestoreSavedSettings can run ~10s
                              // after the zone-active trigger under load
+const HOLD_WAIT_SECONDS = 10; // zone active at fade end: how long to wait for
+                              // RestoreSavedSettings before restoring here
 
 // ====== PERSISTENT DIAGNOSTIC LOG ======
 // Shared log across GradualFadeOut, RestoreSavedSettings, and AdaptiveLighting.
@@ -156,6 +179,9 @@ const restoreBuffer = 15;    // seconds the restore window stays open after the
 //   FADE-SKIP  (GradualFadeOut)   - light already off, no fade needed
 //   FADE-CANCELLED (GradualFadeOut) - fade aborted early because of a restore/cleared flag
 //   FADE-ABORT (GradualFadeOut)   - restore ran before the fade command was sent; fade not started
+//   FADE-HOLD  (GradualFadeOut)   - zone active at fade end, RestoreSavedSettings restored it
+//   FADE-SELF-RESTORE (GradualFadeOut) - zone active, no restore within 10 s → restored here
+//   WATCHDOG-SELF-RESTORE (Room_watchdog) - motion at fade end, no restore → restored here
 //   RESTORE    (RestoreSavedSettings) - brightness/temp restored (manual= is AL's flag)
 //   RESTORE-SKIP (RestoreSavedSettings) - fade expired, nothing to restore
 //   RESTORE-ERROR (RestoreSavedSettings) - every bulb failed, device not found, or unexpected error
@@ -273,6 +299,41 @@ async function fadeViaFlowCard(targetDevice) {
   });
 }
 
+// Wait up to HOLD_WAIT_SECONDS for RestoreSavedSettings to restore this light
+// (it sets ${deviceId}_RestoredAt). True as soon as it has
+async function waitForRestore(deviceId, since) {
+  for (let i = 0; i < HOLD_WAIT_SECONDS; i++) {
+    if ((global.get(`${deviceId}_RestoredAt`) || 0) >= since) return true;
+    await wait(1000);
+  }
+  return (global.get(`${deviceId}_RestoredAt`) || 0) >= since;
+}
+
+// Restore a faded light here, the way RestoreSavedSettings does: mark the
+// restore first (so AdaptiveLighting's restore grace applies and a late
+// RestoreSavedSettings just skips), then dim via the flow card with a 0.5 s
+// duration (interrupts a running hardware fade) and temperature in parallel.
+// Returns how many targets took the brightness
+async function selfRestore(deviceId, device, targets, dim, temp, isGroup) {
+  global.set(`${deviceId}_FadeActiveUntil`, 0);
+  global.set(`${deviceId}_RestoredAt`, Date.now());
+  const results = await Promise.all(targets.map(t => {
+    const ops = [];
+    if (dim > 0) {
+      ops.push(Homey.flow.runFlowCardAction({
+        uri: `homey:device:${t.id}`, id: `homey:device:${t.id}:dim`, args: { dim }, duration: 0.5
+      }).catch(() => t.setCapabilityValue('dim', dim)));
+    }
+    if (temp !== null) ops.push(t.setCapabilityValue('light_temperature', temp).catch(() => null));
+    return Promise.all(ops).then(() => true).catch(() => false);
+  }));
+  // Group device too, for the UI (it may lag behind its members)
+  if (isGroup && dim > 0) {
+    try { await device.setCapabilityValue('dim', dim); } catch (e) { /* ignore */ }
+  }
+  return results.filter(Boolean).length;
+}
+
 // Fades and turns off a single device. Returns a result string; never throws
 // (errors are caught and returned as part of the message so Promise.all over
 // multiple devices doesn't abort early on one failure).
@@ -371,6 +432,19 @@ async function processDevice(deviceId) {
       return `${device.name}: restore ran first, fade aborted`;
     }
 
+    // Zone already active before the fade (the countdown fired just as someone
+    // moved): the zone-active flow's RestoreSavedSettings has already run and
+    // skipped, and no new zone trigger comes while they stay. Don't dim an
+    // occupied room — the countdown starts again when it empties
+    try {
+      const zoneNow = await Homey.zones.getZone({ id: device.zone });
+      if (zoneNow?.active === true) {
+        global.set(fadeActiveUntilVar, 0);
+        diagLog(`FADE-ABORT | ${device.name} | zone active before fade — not dimming an occupied room`);
+        return `${device.name}: zone active, fade not started`;
+      }
+    } catch (e) { /* zone lookup failed — fade as before */ }
+
     if (isGroup) {
       log(`Group detected with ${members.length} members - applying hardware fade to each`);
 
@@ -411,17 +485,38 @@ async function processDevice(deviceId) {
     }
 
     // If the zone is active (someone walked in through the door / motion), skip
-    // the turn-off and leave the restore window open — the zone-active flow has
-    // already queued RestoreSavedSettings, which will restore brightness even if
-    // it runs a few seconds from now.
+    // the turn-off. The zone-active flow normally runs RestoreSavedSettings:
+    // keep its window open and wait for it. If none comes (the countdown fired
+    // just as the zone turned active, so RestoreSavedSettings ran before this
+    // fade and skipped), restore the light here — never leave an occupied room
+    // at ~0%. Safe from loops: this script runs once per inactive period
+    let zoneActive = false;
     try {
       const zone = await Homey.zones.getZone({ id: device.zone });
-      if (zone?.active === true) {
-        log(`Zone active at fade end — leaving restore window open, skipping turn-off`);
-        diagLog(`FADE-HOLD | ${device.name} | zone active at fade end — restore will handle`);
-        return `${device.name}: zone active, turn-off skipped`;
-      }
+      zoneActive = zone?.active === true;
     } catch (e) { /* zone lookup failed — fall through to turn-off */ }
+    if (zoneActive) {
+      log(`Zone active at fade end — waiting up to ${HOLD_WAIT_SECONDS}s for RestoreSavedSettings`);
+      global.set(fadeActiveUntilVar, Date.now() + restoreBuffer * 1000);
+      if (await waitForRestore(deviceId, fadeStartedAt)) {
+        diagLog(`FADE-HOLD | ${device.name} | zone active at fade end — restored by RestoreSavedSettings`);
+        return `${device.name}: zone active, restored`;
+      }
+      // Switched off by hand during the fade or the wait (Hue switch, app): a
+      // dim-to-0 fade leaves onoff true, so off here means a person did it
+      let stillOn = true;
+      try {
+        stillOn = (await Homey.devices.getDevice({ id: deviceId })).capabilitiesObj?.onoff?.value !== false;
+      } catch (e) { /* can't tell — restore */ }
+      if (!stillOn) {
+        global.set(fadeActiveUntilVar, 0);
+        diagLog(`FADE-HOLD | ${device.name} | switched off during the fade — not restoring`);
+        return `${device.name}: switched off by hand, not restored`;
+      }
+      const ok = await selfRestore(deviceId, device, turnOffTargets, currentBrightness, currentTemperature, isGroup);
+      diagLog(`FADE-SELF-RESTORE | ${device.name} | zone active, no restore within ${HOLD_WAIT_SECONDS}s — restored ${Math.round(currentBrightness * 100)}% to ${ok}/${turnOffTargets.length} light(s)`);
+      return `${device.name}: zone active, restored here`;
+    }
 
     await Promise.all(turnOffTargets.map(t =>
       t.setCapabilityValue('onoff', false)
@@ -440,13 +535,13 @@ async function processDevice(deviceId) {
     await wait(3000);
     try {
       const check = await Homey.devices.getDevice({ id: deviceId });
+      let zoneActiveNow = false;
+      try {
+        const zone = await Homey.zones.getZone({ id: device.zone });
+        zoneActiveNow = zone?.active === true;
+      } catch (e) { /* zone lookup failed — treat as inactive */ }
       if (check.capabilitiesObj?.onoff?.value === true) {
         const restoredLate = (global.get(`${deviceId}_RestoredAt`) || 0) >= fadeStartedAt;
-        let zoneActiveNow = false;
-        try {
-          const zone = await Homey.zones.getZone({ id: device.zone });
-          zoneActiveNow = zone?.active === true;
-        } catch (e) { /* zone lookup failed — treat as inactive */ }
         if (restoredLate || zoneActiveNow) {
           diagLog(`FADE-VERIFY | ${device.name} | back on but room active — leaving on`);
         } else {
@@ -456,6 +551,19 @@ async function processDevice(deviceId) {
               .catch(e => diagLog(`FADE-ERROR | ${t.name} | resend off failed: ${e.message}`))
           ));
         }
+      } else if (zoneActiveNow) {
+        // Someone came in between the zone check and the off: the zone-active
+        // flow's "turn lights on" saw the lights still on and did nothing, and
+        // the zone won't turn active again while they stay. Switch the light
+        // back on — its "turned on" flow runs AdaptiveLighting for the profile
+        try {
+          await check.setCapabilityValue('onoff', true);
+        } catch (e) {
+          diagLog(`FADE-ERROR | ${device.name} | off but zone active — switching back on failed: ${e.message}`);
+          return `${device.name}: faded and turned off, switching back on failed`;
+        }
+        diagLog(`FADE-VERIFY | ${device.name} | off but zone active — switched back on`);
+        return `${device.name}: faded, turned off, back on (zone active)`;
       }
     } catch (e) { /* verification is best-effort */ }
 

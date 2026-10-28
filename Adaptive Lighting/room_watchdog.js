@@ -13,6 +13,20 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.15 2026-10-28  Never leave an occupied room at ~0% (as GradualFadeOut 6.16)
+//                  - Motion at fade end: keep the restore window open, wait up
+//                    to HOLD_WAIT_SECONDS (10 s) for RestoreSavedSettings, and
+//                    restore what it didn't (WATCHDOG-SELF-RESTORE), each light
+//                    — primary and extra lights — to its own saved values.
+//                    No wait when the zone was already active at fade start
+//                    (E9 door open: no zone trigger, so no restore can come).
+//                    A light switched off by hand during the fade stays off
+//                  - Zone active WITHOUT motion (an open door): no restore,
+//                    turn-off skipped as before. A door left ajar keeps the
+//                    zone active; restoring would fade and restore every couple
+//                    of minutes. A later minute turns the light off
+//                  - Verify step: light off 3 s after the off and motion now →
+//                    switch it back on (motion only, for the same reason)
 // 2.14 2026-10-28  Log missing or unknown room arguments
 //                  - An unknown room returned an error string only (invisible
 //                    in flow runs); now WATCHDOG-BADARG in AL_DiagnostikLog
@@ -140,6 +154,8 @@ const RESTORE_BUFFER = 15; // Seconds the restore window stays open after the fa
                            // zone-active trigger under load
 const WATCHDOG_GRACE = 60; // Extra seconds beyond inactivity threshold before watchdog acts
                            // Prevents racing with the normal inactivity flow
+const HOLD_WAIT_SECONDS = 10; // motion at fade end: how long to wait for
+                              // RestoreSavedSettings before restoring here
 const ERROR_LOG_INTERVAL = 600; // Seconds between WATCHDOG-ERROR lines for the same
                                 // room — a permanent error would otherwise write one
                                 // line a minute and push everything else out of the log
@@ -351,8 +367,10 @@ try {
     });
   }
 
-  // Collect all lights to fade
+  // Collect all lights to fade. restorePlan: each faded light with its bulbs and
+  // the values saved before the fade, for a self-restore at fade end
   let targets = [];
+  const restorePlan = [{ id: ROOM.primaryLight, name: device.name, targets: [device], dim: currentBrightness, temp: currentTemp }];
   try {
     const allDevices = Object.values(await Homey.devices.getDevices());
 
@@ -368,6 +386,7 @@ try {
       );
     }
     targets = members.length > 0 ? members : [device];
+    restorePlan[0].targets = targets.slice();
 
     // Cache the primary light's targets so RestoreSavedSettings can restore
     // by ID without any device lookup
@@ -393,6 +412,7 @@ try {
           }));
 
           targets.push(extraDevice);
+          restorePlan.push({ id: extraId, name: extraDevice.name, targets: [extraDevice], dim: extraDim, temp: extraTemp });
         }
       }
     }
@@ -400,6 +420,14 @@ try {
     diagLog(`WATCHDOG-ERROR | ${ROOM.name} | target collection failed: ${e.message}`);
     if (targets.length === 0) targets = [device]; // fall back to primary light only
   }
+
+  // Zone already active before the fade (only E9: the door keeps it active):
+  // motion during the fade then fires no zone trigger, so no RestoreSavedSettings
+  // can come — at fade end, restore without waiting for one
+  let zoneActiveAtStart = false;
+  try {
+    zoneActiveAtStart = (await Homey.zones.getZone({ id: device.zone }))?.active === true;
+  } catch (e) { /* treat as inactive — wait for a restore as usual */ }
 
   // Fade all targets in parallel
   log(`${PREFIX}: fading ${targets.length} lights`);
@@ -430,26 +458,88 @@ try {
     return `${PREFIX}: fade cancelled by restore`;
   }
 
-  // Re-check activity right before turn-off — someone may have walked in
-  // (door/motion) during the fade. Skip the turn-off and LEAVE the restore
-  // window open: the zone-active flow has already queued RestoreSavedSettings,
-  // which will restore brightness even if it runs a few seconds from now.
-  let activityNow = false;
-  for (const sensorId of ROOM.motionSensors) {
-    try {
-      const sensor = await Homey.devices.getDevice({ id: sensorId });
-      if (sensor.capabilitiesObj?.alarm_motion?.value === true) { activityNow = true; break; }
-    } catch (e) { /* sensor unreachable — ignore */ }
+  async function anyMotion() {
+    for (const sensorId of ROOM.motionSensors) {
+      try {
+        const sensor = await Homey.devices.getDevice({ id: sensorId });
+        if (sensor.capabilitiesObj?.alarm_motion?.value === true) return true;
+      } catch (e) { /* sensor unreachable — ignore */ }
+    }
+    return false;
   }
-  if (!activityNow) {
+
+  // Restore one faded light here, the way RestoreSavedSettings does: mark the
+  // restore first (AdaptiveLighting's restore grace; a late RestoreSavedSettings
+  // just skips), then dim via the flow card with a 0.5 s duration (interrupts a
+  // running hardware fade) and temperature in parallel
+  async function selfRestore(p) {
+    global.set(`${p.id}_FadeActiveUntil`, 0);
+    global.set(`${p.id}_RestoredAt`, Date.now());
+    const done = await Promise.all(p.targets.map(t => {
+      const ops = [];
+      if (p.dim > 0) {
+        ops.push(Homey.flow.runFlowCardAction({
+          uri: `homey:device:${t.id}`, id: `homey:device:${t.id}:dim`, args: { dim: p.dim }, duration: 0.5
+        }).catch(() => t.setCapabilityValue('dim', p.dim)));
+      }
+      if (p.temp !== null) ops.push(t.setCapabilityValue('light_temperature', p.temp).catch(() => null));
+      return Promise.all(ops).then(() => true).catch(() => false);
+    }));
+    // Group device too, for the UI (it may lag behind its members)
+    if (p.id === ROOM.primaryLight && p.targets[0] !== device && p.dim > 0) {
+      try { await device.setCapabilityValue('dim', p.dim); } catch (e) { /* ignore */ }
+    }
+    return done.filter(Boolean).length;
+  }
+
+  // Re-check activity right before turn-off — someone may have walked in during
+  // the fade. Skip the turn-off.
+  // - Motion (a person): the zone-active flow normally runs RestoreSavedSettings.
+  //   Keep its window open and wait up to HOLD_WAIT_SECONDS; restore here what
+  //   it didn't — never leave an occupied room at ~0%
+  // - Zone active without motion (an open door): don't restore. A door left
+  //   ajar keeps the zone active, so restoring would fade and restore the light
+  //   every couple of minutes. It stays at ~0% and a later minute turns it off,
+  //   as before
+  const motionNow = await anyMotion();
+  let zoneActiveNow = false;
+  if (!motionNow) {
     try {
       const zone = await Homey.zones.getZone({ id: device.zone });
-      activityNow = zone?.active === true;
+      zoneActiveNow = zone?.active === true;
     } catch (e) { /* zone lookup failed — fall through to turn-off */ }
   }
-  if (activityNow) {
-    diagLog(`WATCHDOG-HOLD | ${ROOM.name} | activity at fade end — restore will handle`);
-    return `${PREFIX}: activity returned during fade, turn-off skipped`;
+  if (motionNow) {
+    const waitSeconds = zoneActiveAtStart ? 0 : HOLD_WAIT_SECONDS;
+    log(`${PREFIX}: motion at fade end — waiting up to ${waitSeconds}s for RestoreSavedSettings`);
+    for (const p of restorePlan) global.set(`${p.id}_FadeActiveUntil`, Date.now() + RESTORE_BUFFER * 1000);
+    const restored = (p) => (global.get(`${p.id}_RestoredAt`) || 0) >= fadeStartedAt;
+    for (let i = 0; i < waitSeconds && !restorePlan.every(restored); i++) await wait(1000);
+    const pending = restorePlan.filter(p => !restored(p));
+    if (pending.length === 0) {
+      diagLog(`WATCHDOG-HOLD | ${ROOM.name} | motion at fade end — restored by RestoreSavedSettings`);
+      return `${PREFIX}: motion during fade, restored`;
+    }
+    for (const p of pending) {
+      // Switched off by hand during the fade (Hue switch, app): a dim-to-0 fade
+      // leaves onoff true, so off here means a person did it — leave it off
+      let stillOn = true;
+      try {
+        stillOn = (await Homey.devices.getDevice({ id: p.id })).capabilitiesObj?.onoff?.value !== false;
+      } catch (e) { /* can't tell — restore */ }
+      if (!stillOn) {
+        global.set(`${p.id}_FadeActiveUntil`, 0);
+        diagLog(`WATCHDOG-HOLD | ${ROOM.name} | ${p.name}: switched off during the fade — not restoring`);
+        continue;
+      }
+      const ok = await selfRestore(p);
+      diagLog(`WATCHDOG-SELF-RESTORE | ${ROOM.name} | ${p.name}: motion, no restore${waitSeconds ? ` within ${waitSeconds}s` : ' (zone was already active)'} — restored ${Math.round(p.dim * 100)}% to ${ok}/${p.targets.length} light(s)`);
+    }
+    return `${PREFIX}: motion during fade, restored here`;
+  }
+  if (zoneActiveNow) {
+    diagLog(`WATCHDOG-HOLD | ${ROOM.name} | zone active without motion (door?) — turn-off skipped, not restoring`);
+    return `${PREFIX}: zone active without motion, turn-off skipped`;
   }
 
   await Promise.all(targets.map(t =>
@@ -485,6 +575,18 @@ try {
             .catch(e => diagLog(`WATCHDOG-ERROR | ${ROOM.name} | resend off ${t.name}: ${e.message}`))
         ));
       }
+    } else if (await anyMotion()) {
+      // Someone came in right as the lights went off. Motion only, not the
+      // zone: an open door keeps the zone active and would loop. Switch the
+      // light back on — its "turned on" flow runs AdaptiveLighting
+      try {
+        await check.setCapabilityValue('onoff', true);
+      } catch (e) {
+        diagLog(`WATCHDOG-ERROR | ${ROOM.name} | off but motion — switching back on failed: ${e.message}`);
+        return `${PREFIX}: fade + off, switching back on failed`;
+      }
+      diagLog(`WATCHDOG-VERIFY | ${ROOM.name} | off but motion — switched back on`);
+      return `${PREFIX}: fade + off, back on (motion)`;
     }
   } catch (e) { /* verification is best-effort */ }
 
