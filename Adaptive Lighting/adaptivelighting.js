@@ -2,12 +2,173 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.25.0
-// Date:        2026-09-05
+// Version:     2.29.0
+// Date:        2026-10-27
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.29.0 2026-10-27  Manual mode ends at Night
+//                    - Since 2.12.0 manual mode lasted until the light was
+//                      switched off and on (or force/clear/cycle), so a light
+//                      turned up in the afternoon skipped bedtime dimming
+//                    - New SETTINGS.manualExpiresInto (['Night']): a check run
+//                      that finds the schedule in one of these profiles, while
+//                      the light is manual from an earlier profile, applies the
+//                      profile with the normal 60 s transition (always — also
+//                      when the override is already near its values, so it
+//                      becomes lastProfile), then clears manual mode (group +
+//                      members) and logs AL-MANUAL-EXPIRED. If the apply fails
+//                      the light stays manual and the next full run retries
+//                    - "Earlier profile" = state.lastProfile, which is not
+//                      updated while manual, so an override made during Night
+//                      sticks. New state.manualSince: still manual more than
+//                      12 h later (left on since last night) expires again;
+//                      manual state from before 2.29 gets its clock started
+//                    - Only polled rooms (check mode); forced profiles are
+//                      checked first and unaffected. [] restores 2.28 behaviour
+// 2.28.0 2026-10-27  Publish real per-light status for the dashboard
+//                    - The dashboard guessed Auto/Manual by comparing live
+//                      values with a copied profile table, so lights scaled by
+//                      daylight or coloured by the sun showed as "Manual"
+//                    - New Logic text variable AdaptiveLightingStatus (created
+//                      on first publish): every configured light's mode
+//                      (auto/manual/forced), profile, applied and scheduled
+//                      values, daylight factor/lux, sun elevation, timestamps
+//                    - Rebuilt from the AL_Device_*.State globals each time,
+//                      not merged, so parallel runs can't drop entries (Room
+//                      Heating's read-modify-write HeatingStatus can)
+//                    - Written at the end of a run (try/finally) only when a
+//                      shown field changed, or for the first run each hour
+//                      (heartbeat). Gated/lux/button skips save no state and
+//                      make no extra API call. Signature in AL_StatusSig,
+//                      variable id cached in AL_StatusVarId; a short lock in
+//                      AL_StatusVarLock stops two runs creating it twice
+//                    - lastApplied gains scheduledTemperature, sunElevation and
+//                      via (run mode). A failed publish never affects the run;
+//                      each distinct error is logged once as AL-PUBLISH-FAIL,
+//                      and publishing pauses 10 min (AL_StatusRetryAt) so a
+//                      lasting failure doesn't add API calls to every run. A
+//                      non-text variable of the same name gets a clear error
+// 2.27.4 2026-10-27  Sun colour for the kids' rooms and the entrance
+//                    - O Loft, C Loft, C LightStrip, E9 Loft and E9 Garderobe
+//                      get sunTemperature: STUE_SUN_TEMPERATURE (same 0–35°
+//                      elevation curve). Daytime slides from the profile's own
+//                      0.5 towards the room's Evening 0.7 when the sun is low:
+//                      ~0.58 at noon in late October, ~0.64 at the December
+//                      solstice, 0.5 from March to September
+//                    - O and C follow the sun through the day via the 5-minute
+//                      check (drift gate); E9 has no poll and gets the colour at
+//                      each turn-on
+//                    - Kitchen and bathrooms stay out: their Morning is cooler
+//                      than a winter sun-adjusted Daytime, so 09:00 would step
+//                      warmer instead of cooler. C Light Svampelampe is dim-only
+// 2.27.3 2026-10-27  Weekend evenings follow the next day
+//                    - Weekend profiles were picked by today's date, so Friday
+//                      evening got the weekday bedtime (kids Night from 20:00,
+//                      bedroom from 22:00) and Sunday evening the late weekend
+//                      one (Evening until 21:00 / 23:00)
+//                    - isWeekend() → isWeekendSchedule(): before 12:00 today
+//                      decides, from 12:00 tomorrow. Fri 12:00 – Sun 12:00
+//                      runs the weekend set, Sun 12:00 – Fri 12:00 the weekday
+//                      set. Mornings are unchanged
+//                    - Noon is invisible: every weekday/weekend pair has the
+//                      same Daytime values. Kids' rooms also move the Daytime
+//                      → Evening step: 19:00 on Friday (was 18:00), 18:00 on
+//                      Sunday (was 19:00)
+//                    - Rooms with identical evenings in both sets (bathrooms,
+//                      entrance) are unaffected
+//                    - A nextBoundaryAt stored before noon on Sunday may point
+//                      at the weekend set's boundary; the 15-minute resync
+//                      recomputes it, so a switch is at most ~15 min late
+// 2.27.2 2026-10-27  Claras værelse: both lights follow the same schedule
+//                    - C LightStrip gets weekendProfiles kidsRoomWeekend like
+//                      C Loft. Before, at weekends the strip went to Night at
+//                      20:00 while the ceiling light stayed on Evening until
+//                      21:00, and the strip got Morning from 06:00 while the
+//                      ceiling light was still on Night until 07:30
+//                    - C - Light flow gained the 5-minute check poll (C Loft +
+//                      C LightStrip), like O/K/SS. Before, both lights kept
+//                      the profile they got at turn-on and never moved to
+//                      Evening or Night on their own
+// 2.27.1 2026-10-27  Errors reach AL_DiagnostikLog
+//                    - Flow runs never show the console, so a thrown error
+//                      left no trace (the setTimeout crash went unseen from
+//                      2.14 to 2.20). The top-level catch now also writes
+//                      AL-ERROR | <room> | <mode> | <message>
+//                    - AL-APPLY-FAIL when a bulb doesn't take the brightness:
+//                      group members that error or return dim=false, or a
+//                      single light whose dim write fails. Before, member
+//                      errors were swallowed and only shown with detailed
+//                      logging. Temperature failures are ignored (dim-only
+//                      bulbs always fail them); return values are unchanged
+//                    - AL-VERIFY-FAIL when clear/force verification fails after
+//                      all retries (was console + disabled notification only)
+//                    - Fix: detailed logging threw "result is not defined" on
+//                      every check/lux apply ("Temp supported" read a variable
+//                      that only exists in the clear/force branches). Now reads
+//                      the device's light_temperature capability
+// 2.27.0 2026-10-19  Override log for preset tuning (AL_OverrideLog)
+//                    - AL_DiagnostikLog holds ~1 day (500 lines, mostly E9
+//                      fade/apply noise) and never recorded manual changes, so
+//                      it could not answer "which presets do people correct?"
+//                    - New global AL_OverrideLog (max 1000 lines): one line
+//                      each time a light is found at values that differ from
+//                      what AL last applied. Written here when check mode
+//                      activates manual mode (src=check), and by GradualFadeOut
+//                      v6.12 / Room_Watchdog v2.11 when the light is switched
+//                      off (src=fade / src=watchdog) — the only place a Hue
+//                      dimmer switch override in a motion room is ever seen
+//                    - lastApplied gains `at` (epoch ms) so a line can say how
+//                      long after AL's apply the override was found
+//                    - Same override is logged once: ${deviceId}_OverrideLogged
+//                      holds the last logged signature (apply time + values)
+// 2.26.0 2026-09-18  Lux-driven colour for non-scaled profiles (Soveværelse Morning)
+//                    - Morning was fixed at 25% / warm 0.80 no matter how bright
+//                      the room; with the curtains up and daylight pouring in the
+//                      dim yellow light looked wrong. The calm level is wanted,
+//                      the warm colour is not.
+//                    - New luminance fields: coolProfiles (default []), coolProfile
+//                      (default 'Daytime'), tempStep (default 0.05). For listed
+//                      profiles the temperature slides linearly from the
+//                      profile's own value at darkBelow to coolProfile's value at
+//                      brightAbove; brightness untouched. Sun temperature still
+//                      wins for profiles listed in both blocks.
+//                    - When coolProfile is itself sun-managed, the cool end is
+//                      its sun-adjusted colour (Daytime at 09:00 in September
+//                      is ~0.62, not 0.50), so a bright Morning ends exactly
+//                      where Daytime starts. The stored cool end is a snapshot;
+//                      slow sun drift is caught by the 15-minute resync.
+//                    - SV Loft: coolProfiles ['Morning'] → 0.80 with curtains
+//                      drawn, the sun-adjusted Daytime colour in a sunlit room.
+//                      A sunlit Daytime ends at 24% anyway, so the 09:00
+//                      boundary becomes invisible in both brightness and colour.
+//                    - lastApplied gains luxDim / luxTemp; the lux gate now
+//                      compares a temperature delta (tempStep) as well as the
+//                      brightness delta, and skips outright for profiles that
+//                      follow lux in neither (Evening/Night). Before, Morning
+//                      stored factor 1 and every sensor report during a bright
+//                      morning woke a full device fetch that applied nothing.
+//                    - Check mode uses tempStep as the "already correct" colour
+//                      tolerance for lux-colour profiles; "already correct" runs
+//                      backfill the new bookkeeping without sending a command
+//                    - Diag: AL-APPLY lines gain "luxtemp=0.63 (0.8→0.5)"
+//                    - Bright room beats low sun: new luminance field
+//                      brightOverridesSun (default false). For sun-managed
+//                      profiles the colour slides from the sun-elevation value
+//                      at darkBelow to the profile's own cool value at
+//                      brightAbove. Trigger: sun blasting into the bedroom at
+//                      19° elevation while the script held SV Loft at 0.64 —
+//                      the elevation curve never reaches its cool end in
+//                      Copenhagen between September and March (max ~33°).
+//                      Drawn curtains / dull afternoons keep the warm sun
+//                      colour. Morning's cool end follows the same override.
+//                      lastApplied.sun gains blend/blendTo so the 5-minute
+//                      drift gate predicts the blended colour (otherwise every
+//                      poll during a bright morning would wake a full run).
+//                      Enabled for Soveværelse; Stue unchanged (one line to add).
+//                    - Bedroom Daytime colour 0.5 → 0.3 (~5000 K) so a sunlit
+//                      room gets a bulb that blends with the daylight
 // 2.25.0 2026-09-05  Soveværelse: daylight brightness + sun temperature
 //                    - SV Loft gets a luminance block on SV Motion and the
 //                      same sun-temperature block as Stue
@@ -518,7 +679,7 @@ const PROFILES = {
   // Bedroom - dimmer overall, very dim at night
   bedroom: [
     { name: "Morning",  startTime: "07:00", endTime: "09:00", brightness: 0.25, temperature: 0.8 },
-    { name: "Daytime",  startTime: "09:00", endTime: "20:00", brightness: 0.6,  temperature: 0.5 },
+    { name: "Daytime",  startTime: "09:00", endTime: "20:00", brightness: 0.6,  temperature: 0.3 }, // ~5000 K: blends with daylight (was 0.5)
     { name: "Evening",  startTime: "20:00", endTime: "22:00", brightness: 0.25, temperature: 0.8 },
     { name: "Night",    startTime: "22:00", endTime: "07:00", brightness: 0.05, temperature: 1.0 }
   ],
@@ -561,7 +722,7 @@ const PROFILES = {
   // Bedroom weekend - later morning, sleep in!
   bedroomWeekend: [
     { name: "Morning",  startTime: "09:00", endTime: "11:00", brightness: 0.25, temperature: 0.8 },
-    { name: "Daytime",  startTime: "11:00", endTime: "20:00", brightness: 0.6,  temperature: 0.5 },
+    { name: "Daytime",  startTime: "11:00", endTime: "20:00", brightness: 0.6,  temperature: 0.3 }, // ~5000 K: blends with daylight (was 0.5)
     { name: "Evening",  startTime: "20:00", endTime: "23:00", brightness: 0.25, temperature: 0.8 },
     { name: "Night",    startTime: "23:00", endTime: "09:00", brightness: 0.05, temperature: 1.0 }
   ],
@@ -614,7 +775,14 @@ const DAYLIGHT_DEFAULTS = {
   minFactor: 0.4,         // never dim below 40% of the profile brightness
   minBrightness: 0.05,    // absolute floor after scaling
   step: 0.04,             // smallest brightness change (absolute) worth acting on
-  profiles: ['Daytime'],  // profile names that are scaled (Evening/Night never)
+  profiles: ['Daytime'],  // profile names whose BRIGHTNESS is scaled (Evening/Night never)
+  coolProfiles: [],       // profile names whose COLOUR slides cooler with daylight:
+                          //   own temperature at darkBelow → coolProfile's at brightAbove
+  coolProfile: 'Daytime', // profile that supplies the cool end for coolProfiles
+  tempStep: 0.05,         // smallest temperature change (0–1 scale) worth acting on
+  brightOverridesSun: false, // true: for sun-managed profiles the colour slides from the
+                          //   sun-elevation value at darkBelow to the profile's own cool
+                          //   value at brightAbove — a sunlit room beats a low sun
   lampLuxAtFull: 25,      // sensor reading caused by this room's lights at 100%
   maxAgeMinutes: 60       // ignore a sensor reading older than this
 };
@@ -654,12 +822,18 @@ const STUE_LUMINANCE = {
 
 // Soveværelse: SV Motion sees 15–170 lx with the curtains open, 1–6 lx drawn;
 // SV Loft adds ~14 lx at 56% (Insights, Aug/Sep 2026). Dimmer room, lower bands.
+// Morning keeps its calm 25% but the colour slides from its warm 0.80 (curtains
+// drawn) to Daytime's 0.50 (room full of daylight) — warm dim light looks wrong
+// in a sunlit room. Brightness is untouched: a sunlit Daytime ends at 24% anyway.
 const SV_LUMINANCE = {
   sensorId: '47172014-0488-43a7-93c6-920ad01113b3', // SV Motion
   darkBelow: 15,
   brightAbove: 100,
   minFactor: 0.4,
-  profiles: ['Daytime']
+  profiles: ['Daytime'],
+  coolProfiles: ['Morning'],
+  coolProfile: 'Daytime',
+  brightOverridesSun: true   // sun blasting in at 19° elevation: bulb must go cool, not stay at 0.64
 };
 const SV_SUN_TEMPERATURE = STUE_SUN_TEMPERATURE; // same elevation curve; ends come from the bedroom profiles
 
@@ -747,13 +921,15 @@ const ROOM_CONFIG = {
   // =====================================================================
   "2656f184-8c87-4434-95a2-fdb3fc36bdd8": {
     name: "E9 Loft",
-    profiles: PROFILES.entrance,              // Weekdays
-    weekendProfiles: PROFILES.entranceWeekend // Weekends - softer morning light
+    profiles: PROFILES.entrance,               // Weekdays
+    weekendProfiles: PROFILES.entranceWeekend, // Weekends - softer morning light
+    sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
   },
   "e339c184-ea11-4413-bd90-dac726861fd0": {
     name: "E9 Garderobe",
-    profiles: PROFILES.entrance,              // Weekdays
-    weekendProfiles: PROFILES.entranceWeekend // Weekends - softer morning light
+    profiles: PROFILES.entrance,               // Weekdays
+    weekendProfiles: PROFILES.entranceWeekend, // Weekends - softer morning light
+    sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
   },
 
   // =====================================================================
@@ -770,7 +946,8 @@ const ROOM_CONFIG = {
   "1e87af68-506e-4c86-8bc9-ffc6a05f3ef0": {
     name: "O Loft",
     profiles: PROFILES.kidsRoom,
-    weekendProfiles: PROFILES.kidsRoomWeekend  // Later bedtime on weekends
+    weekendProfiles: PROFILES.kidsRoomWeekend, // Later bedtime on weekends
+    sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
   },
 
   // =====================================================================
@@ -779,11 +956,14 @@ const ROOM_CONFIG = {
   "9b15cb64-bf61-494d-be49-f3dcd9dfd0bf": {
     name: "C Loft",
     profiles: PROFILES.kidsRoom,
-    weekendProfiles: PROFILES.kidsRoomWeekend  // Later bedtime on weekends
+    weekendProfiles: PROFILES.kidsRoomWeekend, // Later bedtime on weekends
+    sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
   },
   "5acaab17-7864-4831-b6e2-72bd35588b21": {
     name: "C LightStrip",
-    profiles: PROFILES.kidsRoom
+    profiles: PROFILES.kidsRoom,
+    weekendProfiles: PROFILES.kidsRoomWeekend, // Same weekend bedtime as C Loft
+    sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
   },
   "4c34d605-334b-4207-b9a3-1796829b0caf": {
     name: "C Light Svampelampe",
@@ -840,6 +1020,8 @@ const SETTINGS = {
   checkPollMinutes: 5,           // How often the flows run "check" (every_nth minute)
                                  // Must match the flow trigger — used for the
                                  // boundary look-ahead and the cheap gate
+  manualExpiresInto: ['Night'],  // Manual mode ends (check mode) when the schedule
+                                 // reaches one of these profiles; [] = never (pre-2.29)
   checkResyncMinutes: 15,        // Force a full check run at least this often even
                                  // when no boundary is near (manual-mode detection,
                                  // recovery after restarts / config changes)
@@ -868,6 +1050,36 @@ function diagLog(entry) {
   const lines = (logText + newEntry).split('\n').filter(l => l.length > 0);
   const trimmed = lines.slice(-500).join('\n') + '\n';
   global.set('AL_DiagnostikLog', trimmed);
+}
+
+// ====== OVERRIDE LOG ======
+// One line each time a light is found at values that differ from what AL last
+// applied — an override from a Hue switch, the app, voice or a button. Input
+// for tuning the presets; kept apart from AL_DiagnostikLog so routine fade/apply
+// noise cannot push it out. Shared with GradualFadeOut (src=fade) and
+// Room_Watchdog (src=watchdog); this script writes src=check. Max 1000 lines.
+// Format: "DD.MM, HH.MM.SS | dag | OVERRIDE | Lampe | Profil | AL=40%/70 | nu=100%/1 | Δdim=+60 Δtemp=-69 | src=fade | 26m efter AL"
+// Read via: log(global.get('AL_OverrideLog'))
+function overrideLog(deviceId, name, profileName, applied, dim, temp, source, extra = '') {
+  const pct = v => (typeof v === 'number' ? Math.round(v * 100) : null);
+  // Log each override once: a fade after a restore sees the same values again
+  const signature = `${applied.at || 0}|${pct(dim)}|${pct(temp)}`;
+  const sigKey = `${deviceId}_OverrideLogged`;
+  if (global.get(sigKey) === signature) return;
+  global.set(sigKey, signature);
+
+  const nowDate = new Date();
+  const stamp = nowDate.toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen', hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
+  const day = nowDate.toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen', weekday: 'short' }).replace('.', '');
+  const signed = v => (v > 0 ? `+${v}` : `${v}`);
+  const tempStr = v => (pct(v) === null ? 'N/A' : pct(v));
+  const dTemp = (pct(temp) !== null && pct(applied.temperature) !== null) ? signed(pct(temp) - pct(applied.temperature)) : 'N/A';
+  const since = applied.at ? ` | ${Math.round((Date.now() - applied.at) / 60000)}m efter AL` : '';
+  const entry = `${stamp} | ${day} | OVERRIDE | ${name} | ${profileName || '?'} | AL=${pct(applied.brightness)}%/${tempStr(applied.temperature)} | nu=${pct(dim)}%/${tempStr(temp)} | Δdim=${signed(pct(dim) - pct(applied.brightness))} Δtemp=${dTemp} | src=${source}${since}${extra}`;
+
+  const logText = global.get('AL_OverrideLog') || '';
+  const lines = (logText + entry + '\n').split('\n').filter(l => l.length > 0);
+  global.set('AL_OverrideLog', lines.slice(-1000).join('\n') + '\n');
 }
 
 // ====== HELPER FUNCTIONS ======
@@ -1054,10 +1266,15 @@ function getCurrentDayOfWeek() {
 }
 
 /**
- * Check if current day is a weekend (Saturday or Sunday)
+ * Check if the weekend profiles apply right now
+ * Before 12:00 today decides, from 12:00 tomorrow: an evening belongs to the
+ * next morning, so Friday evening gets the weekend bedtime and Sunday evening
+ * the weekday one. Daytime is identical in every weekday/weekend pair, so the
+ * switch at noon is invisible.
  */
-function isWeekend() {
-  const day = getCurrentDayOfWeek();
+function isWeekendSchedule() {
+  const today = getCurrentDayOfWeek();
+  const day = getCurrentTimeInMinutes() >= 12 * 60 ? (today + 1) % 7 : today;
   return day === 0 || day === 6; // Sunday = 0, Saturday = 6
 }
 
@@ -1100,11 +1317,13 @@ const AL_DEVICE_INDEX_KEY = 'AL_DeviceKeys';
 
 const DEFAULT_DEVICE_STATE = {
   manual: false,          // Device in manual mode (user adjusted brightness/temp)
+  manualSince: 0,         // Epoch ms when check mode set manual (0 = unknown / before 2.29)
   lastProfile: null,      // Name of last applied profile
   fadeEndTime: 0,         // AL's own fade end timestamp (ms)
   nextBoundaryAt: 0,      // Epoch ms of the next profile start (check-mode gate)
   lastFullCheckAt: 0,     // Epoch ms of the last full (non-gated) check run
-  lastApplied: null,      // { brightness, temperature } AL last sent (daylight-scaled)
+  lastApplied: null,      // { at, brightness, temperature, factor, scheduledBrightness, lux,
+                          //   luxDim, luxTemp, sun } AL last sent (daylight-scaled)
   forcedProfile: {
     index: -1,            // -1 = auto, 0-3 = forced profile
     profiles: null        // Cached profile schedule (array of 4)
@@ -1162,7 +1381,12 @@ function getDeviceState(deviceId) {
 function saveDeviceState(deviceId, state) {
   global.set(stateKey(deviceId), JSON.stringify(state));
   registerDeviceKey(deviceId);
+  _alStateDirty = true;
 }
+
+// Set by any state save this run — the status publish at the end only looks
+// at the state when something was saved (gated skips save nothing)
+let _alStateDirty = false;
 
 // Per-run cache: avoids repeated index reads for already-registered devices
 const _registeredKeys = new Set();
@@ -1211,6 +1435,7 @@ function isManualMode(deviceId) {
 function setManualMode(deviceId, enabled) {
   const state = getDeviceState(deviceId);
   state.manual = enabled;
+  if (enabled) state.manualSince = Date.now();
   saveDeviceState(deviceId, state);
 
   if (SETTINGS.enableDetailedLogging) {
@@ -1233,19 +1458,163 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
   state.lastProfile = profileName;
   if (typeof brightness === 'number') {
     state.lastApplied = {
+      at: Date.now(),                                        // when AL applied/confirmed these values
       brightness,
       temperature: typeof temperature === 'number' ? temperature : null,
       // Daylight bookkeeping for the "lux" gate (factor 1 when not scaled)
       factor: typeof daylightMeta?.daylightFactor === 'number' ? daylightMeta.daylightFactor : 1,
       scheduledBrightness: typeof daylightMeta?.scheduledBrightness === 'number' ? daylightMeta.scheduledBrightness : brightness,
       lux: typeof daylightMeta?.lux === 'number' ? daylightMeta.lux : null,
+      luxDim: daylightMeta?.luxDim === true,                 // brightness follows lux
+      luxTemp: daylightMeta?.luxTemp
+        ? { cool: daylightMeta.luxTemp.cool, warm: daylightMeta.luxTemp.warm } // colour follows lux
+        : null,
       // Sun-temperature bookkeeping (only when the applied profile was sun-managed)
       sun: typeof daylightMeta?.sunCool === 'number'
-        ? { cool: daylightMeta.sunCool, warm: daylightMeta.sunWarm }
-        : null
+        ? {
+            cool: daylightMeta.sunCool,
+            warm: daylightMeta.sunWarm,
+            // Bright-room override snapshot (absent when not overriding)
+            ...(typeof daylightMeta.sunBlend === 'number'
+              ? { blend: daylightMeta.sunBlend, blendTo: daylightMeta.sunBlendTo }
+              : {})
+          }
+        : null,
+      // For the published status (AdaptiveLightingStatus): the profile's own
+      // colour before sun/lux adjustment, the sun elevation and the run mode
+      scheduledTemperature: typeof daylightMeta?.scheduledTemperature === 'number'
+        ? daylightMeta.scheduledTemperature
+        : (typeof temperature === 'number' ? temperature : null),
+      sunElevation: typeof daylightMeta?.sunElevation === 'number' ? daylightMeta.sunElevation : null,
+      via: MODE_ARG || 'normal'
     };
   }
   saveDeviceState(deviceId, state);
+}
+
+// ====== PUBLISHED STATUS (AdaptiveLightingStatus) ======
+// One Logic text variable holding every configured light's real state, for the
+// dashboard: mode (auto/manual/forced), profile and the values AL actually
+// applied after daylight/sun adjustment. Format:
+//   { v, schema: 1, publishedAt, weekend, lights: { <full device id>: {
+//       name, mode, forced?, profile, bri, temp, schedBri, schedTemp, factor?,
+//       lux?, sunEl?, via, at, fadeUntil, next } } }
+// Rebuilt from the AL_Device_*.State globals on every publish (never merged
+// into the old value), so parallel runs for different lights can't erase each
+// other's entries. Written only when a visible field changed, plus once an hour
+// as a heartbeat — runs that save no state make no API call at all.
+const AL_VERSION = '2.29.0';
+const AL_STATUS_VAR = 'AdaptiveLightingStatus';
+
+function buildALStatus() {
+  const round2 = v => (typeof v === 'number' ? Math.round(v * 100) / 100 : null);
+  const lights = {};
+  for (const [id, cfg] of Object.entries(ROOM_CONFIG)) {
+    let state;
+    try {
+      const raw = global.get(stateKey(id));
+      if (!raw) continue;                       // never run by AL (no flow calls it)
+      state = JSON.parse(raw);
+    } catch (e) { continue; }
+    const la = state.lastApplied || {};
+    const forcedIndex = state.forcedProfile?.index ?? -1;
+    const mode = FORCED_PROFILE_DEVICES.has(id) && forcedIndex >= 0 ? 'forced'
+               : state.manual === true ? 'manual' : 'auto';
+    const entry = {
+      name: cfg.name,
+      mode,
+      profile: state.lastProfile || null,
+      bri: round2(la.brightness),
+      temp: round2(la.temperature),
+      schedBri: round2(la.scheduledBrightness),
+      schedTemp: round2(la.scheduledTemperature),
+      via: la.via || null,
+      at: la.at || null,
+      fadeUntil: state.fadeEndTime || 0,
+      next: state.nextBoundaryAt ? Math.round(state.nextBoundaryAt / 60000) * 60000 : null
+    };
+    if (mode === 'forced') entry.forced = forcedIndex;
+    if (typeof la.factor === 'number' && la.factor !== 1) entry.factor = round2(la.factor);
+    if (typeof la.lux === 'number') entry.lux = Math.round(la.lux);
+    if (typeof la.sunElevation === 'number') entry.sunEl = Math.round(la.sunElevation * 10) / 10;
+    lights[id] = entry;
+  }
+  return lights;
+}
+
+// Returns true when written, false when deferred (another run is creating the
+// variable right now — this run's state is picked up by the next publish)
+async function writeStatusVar(value) {
+  const cachedId = global.get('AL_StatusVarId');
+  let cachedError = null;
+  if (cachedId) {
+    try {
+      await Homey.logic.updateVariable({ id: cachedId, variable: { value } });
+      return true;
+    } catch (e) { cachedError = e; /* deleted or recreated — look it up by name below */ }
+  }
+  // Several lights' runs can get here at the same moment on the first publish.
+  // global.get/set are synchronous, so this lock lets only one of them look up
+  // and create the variable — two createVariable calls would make duplicates
+  if (Date.now() < (global.get('AL_StatusVarLock') || 0)) return false;
+  global.set('AL_StatusVarLock', Date.now() + 30000);
+  try {
+    const variables = await Homey.logic.getVariables();
+    let foundId = null;
+    let foundType = null;
+    for (const [id, v] of Object.entries(variables)) {
+      if (v.name === AL_STATUS_VAR) { foundId = v.id || id; foundType = v.type; break; }
+    }
+    if (foundId && foundType && foundType !== 'string') {
+      throw new Error(`Logic variable ${AL_STATUS_VAR} exists but is a ${foundType}, not text — delete it and AL recreates it`);
+    }
+    // Same variable that just refused the update: the problem isn't a stale id
+    if (cachedError && foundId === cachedId) throw cachedError;
+    if (foundId) {
+      await Homey.logic.updateVariable({ id: foundId, variable: { value } });
+      global.set('AL_StatusVarId', foundId);
+    } else {
+      const created = await Homey.logic.createVariable({ variable: { name: AL_STATUS_VAR, type: 'string', value } });
+      if (created?.id) global.set('AL_StatusVarId', created.id);
+    }
+    return true;
+  } finally {
+    global.set('AL_StatusVarLock', 0);
+  }
+}
+
+/**
+ * Publish AdaptiveLightingStatus if this run changed something visible.
+ * Never throws: a failed publish must not affect the lighting run.
+ */
+async function publishALStatusIfChanged() {
+  if (!_alStateDirty) return;
+  // Back off after a failure, so a lasting problem doesn't add failing API
+  // calls to every full run
+  if (Date.now() < (global.get('AL_StatusRetryAt') || 0)) return;
+  try {
+    const lights = buildALStatus();
+    // Signature: only what the dashboard shows. at/fadeUntil/via change on
+    // re-applies of the same values; the hour bucket makes the hourly heartbeat
+    const visible = Object.entries(lights).map(([id, l]) => [id, l.mode, l.forced, l.profile, l.bri, l.temp, l.next]);
+    const sig = JSON.stringify([Math.floor(Date.now() / 3600000), visible]);
+    if (global.get('AL_StatusSig') === sig) return;
+    const written = await writeStatusVar(JSON.stringify({
+      v: AL_VERSION, schema: 1, publishedAt: Date.now(), weekend: isWeekendSchedule(), lights
+    }));
+    if (!written) return;
+    global.set('AL_StatusSig', sig);
+    if (global.get('AL_StatusPublishError')) global.set('AL_StatusPublishError', null);
+  } catch (e) {
+    // Retry in 10 minutes; log each distinct error once
+    try {
+      global.set('AL_StatusRetryAt', Date.now() + 10 * 60000);
+      if (global.get('AL_StatusPublishError') !== e.message) {
+        global.set('AL_StatusPublishError', e.message);
+        diagLog(`AL-PUBLISH-FAIL | ${e.message}`);
+      }
+    } catch (e2) { /* ignore */ }
+  }
 }
 
 /**
@@ -1547,22 +1916,73 @@ function daylightFactorFor(luxAdjusted, c) {
   return Math.round(factor * 100) / 100;
 }
 
+/** Lux position 0 (at/below darkBelow) … 1 (at/above brightAbove), derived from the factor */
+function daylightPositionFor(factor, c) {
+  const span = Math.max(0.01, 1 - c.minFactor);
+  return Math.max(0, Math.min(1, (1 - factor) / span));
+}
+
+/** Colour for a cool-managed profile: warm (own) at darkBelow → cool at brightAbove */
+function daylightTemperatureFor(factor, warm, cool, c) {
+  const t = daylightPositionFor(factor, c);
+  return Math.round((warm + (cool - warm) * t) * 100) / 100;
+}
+
 /**
- * Return the profile with daylight-scaled brightness, or the profile itself
- * when scaling does not apply. Temperature is never changed.
+ * Return the profile adjusted for daylight, or the profile itself when nothing
+ * applies:
+ *   - profiles in `luminance.profiles`     → brightness scaled by the factor
+ *   - profiles in `luminance.coolProfiles` → temperature slides from the
+ *     profile's own (warm) value to `coolProfile`'s value as the room brightens
+ * Both can apply to the same profile. Runs before applySunTemperature, which
+ * wins on temperature for profiles listed in both blocks.
+ * When `sun` is passed and coolProfile is itself sun-managed, the cool end is
+ * that profile's sun-adjusted colour — so a bright Morning ends exactly where
+ * Daytime will start, and the boundary is invisible.
  */
-function applyDaylight(profile, daylight) {
+function applyDaylight(profile, daylight, roomConfig, sun = null) {
   if (!profile || !daylight || !daylight.active) return profile;
-  if (!daylight.config.profiles.includes(profile.name)) return profile;
-  if (daylight.factor >= 1) return profile;
-  const scaled = Math.max(daylight.config.minBrightness, Math.round(profile.brightness * daylight.factor * 100) / 100);
-  return { ...profile, brightness: scaled, scheduledBrightness: profile.brightness, daylightFactor: daylight.factor, lux: daylight.lux };
+  const c = daylight.config;
+  let out = profile;
+
+  if (c.profiles.includes(profile.name)) {
+    // Always tag the profile (luxDim/factor feed the lux gate even at factor 1,
+    // otherwise a dark→bright swing would never wake a re-scale)
+    const scaled = daylight.factor < 1
+      ? Math.max(c.minBrightness, Math.round(profile.brightness * daylight.factor * 100) / 100)
+      : profile.brightness;
+    out = { ...out, brightness: scaled, scheduledBrightness: profile.brightness, luxDim: true, daylightFactor: daylight.factor, lux: daylight.lux };
+  }
+
+  if (c.coolProfiles.includes(profile.name) && roomConfig) {
+    const coolSrc = roomConfig.profiles.find(p => p.name === c.coolProfile);
+    if (coolSrc && typeof coolSrc.temperature === 'number' && coolSrc.name !== profile.name) {
+      const warm = profile.temperature;
+      let cool = coolSrc.temperature;
+      if (sun?.active && sun.config.profiles.includes(coolSrc.name)) {
+        const sunWarmSrc = roomConfig.profiles.find(p => p.name === sun.config.warmProfile);
+        if (sunWarmSrc && typeof sunWarmSrc.temperature === 'number') {
+          cool = sunTemperatureFor(sun.elevation, coolSrc.temperature, sunWarmSrc.temperature, sun.config);
+          if (c.brightOverridesSun) {
+            // Mirror applySunTemperature: a bright room pulls coolProfile to its own cool value
+            const pos = daylightPositionFor(daylight.factor, c);
+            cool = Math.round((cool + (coolSrc.temperature - cool) * pos) * 100) / 100;
+          }
+        }
+      }
+      const temperature = daylightTemperatureFor(daylight.factor, warm, cool, c);
+      out = { ...out, temperature, scheduledTemperature: warm, luxTemp: { cool, warm }, daylightFactor: daylight.factor, lux: daylight.lux };
+    }
+  }
+
+  return out;
 }
 
 /** Short diag suffix, e.g. " | lux=180 factor=0.62 | sun=12.3°" — empty when neither applies */
 function daylightTag(profile) {
   let tag = '';
   if (typeof profile?.daylightFactor === 'number') tag += ` | lux=${profile.lux} factor=${profile.daylightFactor}`;
+  if (profile?.luxTemp) tag += ` luxtemp=${profile.temperature} (${profile.luxTemp.warm}→${profile.luxTemp.cool})`;
   if (typeof profile?.sunElevation === 'number') tag += ` | sun=${profile.sunElevation}°`;
   return tag;
 }
@@ -1626,8 +2046,21 @@ function applySunTemperature(profile, sun, roomConfig) {
   if (!warmSrc || typeof warmSrc.temperature !== 'number') return profile;
   const cool = profile.temperature;
   const warm = warmSrc.temperature;
-  const temperature = sunTemperatureFor(sun.elevation, cool, warm, sun.config);
-  return { ...profile, temperature, scheduledTemperature: cool, sunElevation: sun.elevation, sunCool: cool, sunWarm: warm };
+  const sunTemp = sunTemperatureFor(sun.elevation, cool, warm, sun.config);
+  let temperature = sunTemp;
+  let luxMeta = {};
+  // Bright-room override: applyDaylight tagged the profile with daylightFactor
+  // when the room's luminance block is active. Slide from the sun colour at
+  // darkBelow to the profile's own cool colour at brightAbove.
+  const lc = { ...DAYLIGHT_DEFAULTS, ...(roomConfig.luminance || {}) };
+  if (lc.brightOverridesSun && typeof profile.daylightFactor === 'number') {
+    const pos = daylightPositionFor(profile.daylightFactor, lc);
+    temperature = Math.round((sunTemp + (cool - sunTemp) * pos) * 100) / 100;
+    // luxTemp lets the lux gate predict the colour from a new lux value;
+    // sunBlend/sunBlendTo let the 5-minute drift gate predict it from elevation
+    luxMeta = { luxTemp: { cool, warm: sunTemp }, sunBlend: pos, sunBlendTo: cool };
+  }
+  return { ...profile, temperature, scheduledTemperature: cool, sunElevation: sun.elevation, sunCool: cool, sunWarm: warm, ...luxMeta };
 }
 
 /**
@@ -1681,7 +2114,7 @@ function recordSchedule(deviceId, profiles, fromMinutes) {
  */
 function getRoomConfig(deviceId, deviceName) {
   const config = ROOM_CONFIG[deviceId];
-  const weekend = isWeekend();
+  const weekend = isWeekendSchedule();
   
   if (config) {
     // Check for weekend-specific profiles
@@ -1866,12 +2299,23 @@ async function applyLighting(device, brightness, temperature, useDuration = fals
         })
     );
     
-    await Promise.all(memberPromises);
+    const results = await Promise.all(memberPromises);
+
+    // Members that didn't take the brightness (unreachable bulb, Zigbee error).
+    // temperature:false is normal for dim-only bulbs and is ignored
+    const failed = members.filter((m, i) => results[i].error || results[i].brightness === false);
+    if (failed.length > 0) {
+      diagLog(`AL-APPLY-FAIL | ${device.name} | ${failed.length}/${members.length} members failed: ${failed.map(m => m.name).join(', ')}`);
+    }
     return { brightness: true, temperature: true };
-    
+
   } else {
     // Single device
-    return await applyToDevice(device, brightness, temperature, duration);
+    const result = await applyToDevice(device, brightness, temperature, duration);
+    if (result.brightness === false) {
+      diagLog(`AL-APPLY-FAIL | ${device.name} | dim not accepted`);
+    }
+    return result;
   }
 }
 
@@ -2070,11 +2514,20 @@ try {
     const last = gateState.lastApplied;
     if (!isNaN(LUX_VALUE) && last && typeof last.factor === 'number') {
       const c = { ...DAYLIGHT_DEFAULTS, ...luxCfg };
+      // A profile that follows lux in neither brightness nor colour (Evening,
+      // Night) can never need a re-scale — skip without a device fetch
+      if (!last.luxDim && !last.luxTemp) {
+        return { skipped: true, reason: 'profile_not_lux_managed', lux: LUX_VALUE };
+      }
       const luxAdjusted = Math.max(0, LUX_VALUE - c.lampLuxAtFull * (last.brightness || 0));
       const newFactor = daylightFactorFor(luxAdjusted, c);
       const sched = typeof last.scheduledBrightness === 'number' ? last.scheduledBrightness : last.brightness;
-      const brightnessDelta = Math.abs(newFactor - last.factor) * sched;
-      if (brightnessDelta < c.step) {
+      const brightnessDelta = last.luxDim ? Math.abs(newFactor - last.factor) * sched : 0;
+      const temperatureDelta = last.luxTemp
+        ? Math.abs(daylightTemperatureFor(newFactor, last.luxTemp.warm, last.luxTemp.cool, c)
+                 - daylightTemperatureFor(last.factor, last.luxTemp.warm, last.luxTemp.cool, c))
+        : 0;
+      if (brightnessDelta < c.step && temperatureDelta < c.tempStep) {
         return { skipped: true, reason: 'lux_change_too_small', lux: LUX_VALUE, factor: newFactor, lastFactor: last.factor };
       }
     }
@@ -2093,7 +2546,13 @@ try {
     if (SETTINGS.enableSunTemperature && sunCfg && sunCfg.enabled !== false && lastSun && !gateState.manual) {
       const c = { ...SUN_TEMPERATURE_DEFAULTS, ...sunCfg };
       const elevation = solarElevationDeg(new Date(), SETTINGS.latitude, SETTINGS.longitude);
-      const predicted = sunTemperatureFor(elevation, lastSun.cool, lastSun.warm, c);
+      let predicted = sunTemperatureFor(elevation, lastSun.cool, lastSun.warm, c);
+      if (typeof lastSun.blend === 'number' && typeof lastSun.blendTo === 'number') {
+        // Bright-room override was active: the applied colour sits between the
+        // sun colour and blendTo at the last lux position (lux changes are the
+        // lux trigger's job; here only the elevation drift matters)
+        predicted = Math.round((predicted + (lastSun.blendTo - predicted) * lastSun.blend) * 100) / 100;
+      }
       tempDriftDue = Math.abs(predicted - (gateState.lastApplied.temperature ?? predicted)) >= c.step;
     }
     if (!resyncDue && !boundaryNear && !tempDriftDue) {
@@ -2164,7 +2623,7 @@ try {
   // so the scaled brightness flows through normal/check/force/clear alike.
   const daylight = getDaylight(roomConfig, device);
   const sun = getSunTemperature(roomConfig);
-  const activeProfile = applySunTemperature(applyDaylight(scheduledProfile, daylight), sun, roomConfig);
+  const activeProfile = applySunTemperature(applyDaylight(scheduledProfile, daylight, roomConfig, sun), sun, roomConfig);
   if (daylight.active && SETTINGS.enableDetailedLogging) {
     log(`[${roomName}] Daylight: ${daylight.lux} lx (adj ${daylight.luxAdjusted}) → factor ${daylight.factor}`);
   }
@@ -2372,6 +2831,7 @@ try {
       
       const errorMsg = `[${roomName}] Failed to apply ${activeProfile.name}: ${result.error}`;
       log(errorMsg);
+      diagLog(`AL-VERIFY-FAIL | ${roomName} | ${activeProfile.name} | clear | ${result.error}`);
       await notify(errorMsg);
       
       // Don't set lastProfile - we don't know the actual state
@@ -2446,8 +2906,13 @@ try {
   }
 
   // Check mode logic
+  // Set when this check run ends manual mode (see manualExpiresInto below);
+  // manual is cleared only after the new profile has been applied
+  let manualExpired = false;
+  let manualExpiredFrom = null;
+
   if (CHECK_MANUAL && !FORCE_UPDATE && currentBrightness !== null) {
-    
+
     // Note: fade check for check mode is handled above (before check mode block)
 
     // Check if device has a forced profile active
@@ -2465,8 +2930,29 @@ try {
       };
     }
     
-    // First: Check if device is in manual mode (persisted)
+    // Manual mode ends when the schedule reaches a profile in manualExpiresInto
+    // (bedtime dimming still happens). Once per profile change: lastProfile is
+    // not updated while manual, so it is the profile AL last set before the
+    // override — an override made during Night itself sticks. Still manual
+    // more than 12 h later (light left on since last night) counts as a new night
     if (isManualMode(DEVICE_ID)) {
+      const manualState = getDeviceState(DEVICE_ID);
+      // Manual state from before 2.29 has no timestamp: start the 12 h clock now
+      if (!manualState.manualSince) {
+        manualState.manualSince = Date.now();
+        saveDeviceState(DEVICE_ID, manualState);
+      }
+      const expiresInto = Array.isArray(SETTINGS.manualExpiresInto) ? SETTINGS.manualExpiresInto : [];
+      const newProfile = manualState.lastProfile !== activeProfile.name;
+      const fromLastNight = Date.now() - manualState.manualSince > 12 * 3600000;
+      if (expiresInto.includes(activeProfile.name) && (newProfile || fromLastNight)) {
+        manualExpired = true;
+        manualExpiredFrom = manualState.lastProfile || '?';
+      }
+    }
+
+    // First: Check if device is in manual mode (persisted)
+    if (!manualExpired && isManualMode(DEVICE_ID)) {
       // Already in manual mode - skip silently (notification was sent when it was activated)
       if (SETTINGS.enableDetailedLogging) {
         const currentBrightnessPct = Math.round(currentBrightness * 100);
@@ -2490,13 +2976,19 @@ try {
     const daylightManaged = daylight.active && daylight.config.profiles.includes(scheduledProfile.name);
     const dimTolerance = daylightManaged ? daylight.config.step : SETTINGS.tolerance;
     const sunManaged = sun.active && sun.config.profiles.includes(scheduledProfile.name);
-    const tempTolerance = sunManaged ? sun.config.step : SETTINGS.tolerance;
+    const luxTempManaged = daylight.active && !!activeProfile.luxTemp;
+    const tempTolerance = sunManaged ? sun.config.step
+                        : luxTempManaged ? daylight.config.tempStep
+                        : SETTINGS.tolerance;
     const dimDiff = Math.abs(currentBrightness - activeProfile.brightness);
     const tempDiff = currentTemperature !== null 
       ? Math.abs(currentTemperature - activeProfile.temperature) 
       : 0;
     
-    const isCorrect = dimDiff <= dimTolerance && tempDiff <= tempTolerance;
+    // The run that ends manual mode always applies, so the new profile becomes
+    // lastProfile even when the override already sits near its values —
+    // otherwise a later override during Night would count as an earlier one
+    const isCorrect = !manualExpired && dimDiff <= dimTolerance && tempDiff <= tempTolerance;
     
     if (isCorrect) {
       // Already at the active profile. If the next boundary falls before the
@@ -2510,7 +3002,7 @@ try {
       // instant change, so leave those to the normal catch-up path.
       const supportsLongFade = await isHueDevice(device);
       if (upcoming && supportsLongFade && upcoming.msFromNow <= pollMs && upcoming.profile.name !== activeProfile.name) {
-        const next = applySunTemperature(applyDaylight(upcoming.profile, daylight), sun, roomConfig);
+        const next = applySunTemperature(applyDaylight(upcoming.profile, daylight, roomConfig, sun), sun, roomConfig);
         const sameValues = approxEqual(next.brightness, activeProfile.brightness)
           && approxEqual(next.temperature, activeProfile.temperature);
         if (sameValues) {
@@ -2549,9 +3041,12 @@ try {
       // the bookkeeping the gates rely on exists (first run after an upgrade,
       // or the light was already within tolerance so nothing was applied):
       // record what the light actually shows plus the sun ends. No command sent.
-      if ((sunManaged || daylightManaged)) {
+      if ((sunManaged || daylightManaged || luxTempManaged)) {
         const la = getDeviceState(DEVICE_ID).lastApplied;
-        const needsMeta = !la || (sunManaged && !la.sun) || (daylightManaged && typeof la.factor !== 'number');
+        const needsMeta = !la
+          || (sunManaged && !la.sun)
+          || (daylightManaged && (typeof la.factor !== 'number' || !la.luxDim))
+          || (luxTempManaged && !la.luxTemp);
         if (needsMeta) {
           setLastProfile(DEVICE_ID, activeProfile.name, currentBrightness, currentTemperature, activeProfile);
         }
@@ -2599,7 +3094,10 @@ try {
       }
       matchesLastProfile = true; // Treat as if it matches, so we update without setting manual mode
     }
-    
+    // Manual mode just ended: the light still shows the override, which must not
+    // be detected as a new one — apply the new profile
+    if (manualExpired) matchesLastProfile = true;
+
     if (matchesLastProfile) {
       // Values match last profile (or no last profile) - just needs updating to new profile
       if (SETTINGS.enableDetailedLogging && lastProfileName) {
@@ -2609,6 +3107,10 @@ try {
     } else {
       // Values don't match last profile - this is manual adjustment
       setManualMode(DEVICE_ID, true);
+      if (lastApplied && typeof lastApplied.brightness === 'number') {
+        overrideLog(DEVICE_ID, roomName, lastProfileName, lastApplied, currentBrightness, currentTemperature, 'check',
+          daylight.active ? ` | lux=${daylight.lux}` : '');
+      }
       
       const currentBrightnessPct = Math.round(currentBrightness * 100);
       const currentTempPct = currentTemperature !== null ? Math.round(currentTemperature * 100) : 'N/A';
@@ -2734,6 +3236,7 @@ try {
       
       const errorMsg = `[${roomName}] Force/reset failed: ${result.error}`;
       log(errorMsg);
+      diagLog(`AL-VERIFY-FAIL | ${roomName} | ${activeProfile.name} | force | ${result.error}`);
       await notify(errorMsg);
       
       // Don't set lastProfile - we don't know the actual state
@@ -2752,6 +3255,14 @@ try {
 
     // Remember which profile was applied (for check mode comparison)
     setLastProfile(DEVICE_ID, activeProfile.name, activeProfile.brightness, activeProfile.temperature, activeProfile);
+
+    // Manual mode ends only now that the new profile is applied — if the apply
+    // threw, the light stays manual and the next full run tries again
+    if (manualExpired) {
+      await clearManualModeForGroup(DEVICE_ID, device.name);
+      diagLog(`AL-MANUAL-EXPIRED | ${roomName} | ${manualExpiredFrom} → ${activeProfile.name}`);
+      if (SETTINGS.enableLogging) log(`[${roomName}] Manual mode ended → ${activeProfile.name}`);
+    }
   }
 
   // Logging and notifications
@@ -2780,7 +3291,7 @@ try {
       log(`[${roomName}] ├─ Brightness: ${brightnessPercent}%`);
       log(`[${roomName}] ├─ Temperature: ${tempPercent}% (${tempDesc})`);
       log(`[${roomName}] ├─ Schedule: ${startTimeStr} - ${endTimeStr}`);
-      log(`[${roomName}] └─ Temp supported: ${result.temperature ? 'Yes' : 'No'}`);
+      log(`[${roomName}] └─ Temp supported: ${device.capabilitiesObj?.light_temperature !== undefined ? 'Yes' : 'No'}`);
     }
   }
   
@@ -2809,9 +3320,18 @@ try {
   
 } catch (error) {
   log(`[AdaptiveLighting] ✗ ERROR: ${error.message}`);
+  // Flow runs never show the console — leave a trace in the shared log.
+  // Guarded so a failing log write can't replace the original error
+  try {
+    diagLog(`AL-ERROR | ${ROOM_CONFIG[DEVICE_ID]?.name || String(DEVICE_ID).substring(0, 8)} | ${MODE_ARG || 'normal'} | ${error.message}`);
+  } catch (e) { /* ignore */ }
   if (SETTINGS.enableDetailedLogging) {
     log(`[AdaptiveLighting] Device ID: ${DEVICE_ID}`);
     log(`[AdaptiveLighting] Stack: ${error.stack}`);
   }
   return false;
+} finally {
+  // Every exit path, including errors after a partial state write. Completes
+  // normally, so the run's own return value is kept
+  await publishALStatusIfChanged();
 }

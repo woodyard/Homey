@@ -7,11 +7,26 @@
 //        Each room's config (devices, sensors, variables) is defined below.
 //
 // Setup: Create a Homey flow per room:
-//        Trigger: "Every 1 minute"
-//        Action:  Run HomeyScript "Room_Watchdog" with argument "B9"
+//        Trigger:   "Every 1 minute"
+//        Condition: zone "all lights are off" (inverted) — some light is on
+//        Action:    Run HomeyScript "Room_Watchdog" with argument "B9"
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.12 2026-10-27  Errors reach AL_DiagnostikLog
+//                  - The script had no top-level catch: an unknown light or
+//                    motion-sensor id (e.g. after re-pairing for the Hue Bridge
+//                    Pro) threw on every run and left no trace, silently
+//                    disabling that room's safety net
+//                  - Main body wrapped in try/catch → WATCHDOG-ERROR | <room> |
+//                    <message>, at most once per room per ERROR_LOG_INTERVAL
+//                    (10 min; last time in AL_WatchdogErrorAt_<room>)
+//                  - The B7/B9/E9 flows now only run the watchdog while some
+//                    light in the zone is on (was every minute, ~4,300 runs/day)
+// 2.11 2026-10-19  Log overrides to AL_OverrideLog before fading
+//                  - Same check as GradualFadeOut v6.12: the primary light's
+//                    values vs AdaptiveLighting's lastApplied; a difference
+//                    gets one src=watchdog line for preset tuning
 // 2.10 2026-09-04  Cache fade targets for a faster restore
 //                  - Saves the bulbs being faded in ${deviceId}_FadeTargets
 //                    (primary light: its members; each extra light: itself)
@@ -114,6 +129,9 @@ const RESTORE_BUFFER = 15; // Seconds the restore window stays open after the fa
                            // zone-active trigger under load
 const WATCHDOG_GRACE = 60; // Extra seconds beyond inactivity threshold before watchdog acts
                            // Prevents racing with the normal inactivity flow
+const ERROR_LOG_INTERVAL = 600; // Seconds between WATCHDOG-ERROR lines for the same
+                                // room — a permanent error would otherwise write one
+                                // line a minute and push everything else out of the log
 
 // ====== GET ROOM FROM ARGUMENT ======
 const roomKey = args[0] || "B9";
@@ -133,265 +151,333 @@ function diagLog(entry) {
   global.set('AL_DiagnostikLog', trimmed);
 }
 
-// ====== 1. CHECK IF LIGHTS ARE ON ======
-const device = await Homey.devices.getDevice({ id: ROOM.primaryLight });
-const lightsOn = device.capabilitiesObj?.onoff?.value === true;
+// ====== OVERRIDE LOG ======
+// One line each time a light is found at values that differ from what
+// AdaptiveLighting last applied — an override from a Hue switch, the app, voice
+// or a button. Input for tuning the presets; kept apart from AL_DiagnostikLog
+// so routine fade/apply noise cannot push it out. Shared with AdaptiveLighting
+// (src=check), GradualFadeOut (src=fade) and Room_Watchdog (src=watchdog).
+// Max 1000 lines. Read via: log(global.get('AL_OverrideLog'))
+// Format: "DD.MM, HH.MM.SS | dag | OVERRIDE | Lampe | Profil | AL=40%/70 | nu=100%/1 | Δdim=+60 Δtemp=-69 | src=fade | 26m efter AL"
+const OVERRIDE_DIM_TOLERANCE = 0.10;   // same as AdaptiveLighting's tolerance
+const OVERRIDE_TEMP_TOLERANCE = 0.15;  // wider: Hue bulbs clamp warm requests (AL sets 1.00, bulb reads back 0.87)
 
-if (!lightsOn) {
-  return `${PREFIX}: lights off`;
+function overrideLog(deviceId, name, profileName, applied, dim, temp, source, extra = '') {
+  const pct = v => (typeof v === 'number' ? Math.round(v * 100) : null);
+  // Log each override once: a fade after a restore sees the same values again
+  const signature = `${applied.at || 0}|${pct(dim)}|${pct(temp)}`;
+  const sigKey = `${deviceId}_OverrideLogged`;
+  if (global.get(sigKey) === signature) return;
+  global.set(sigKey, signature);
+
+  const nowDate = new Date();
+  const stamp = nowDate.toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen', hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
+  const day = nowDate.toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen', weekday: 'short' }).replace('.', '');
+  const signed = v => (v > 0 ? `+${v}` : `${v}`);
+  const tempStr = v => (pct(v) === null ? 'N/A' : pct(v));
+  const dTemp = (pct(temp) !== null && pct(applied.temperature) !== null) ? signed(pct(temp) - pct(applied.temperature)) : 'N/A';
+  const since = applied.at ? ` | ${Math.round((Date.now() - applied.at) / 60000)}m efter AL` : '';
+  const entry = `${stamp} | ${day} | OVERRIDE | ${name} | ${profileName || '?'} | AL=${pct(applied.brightness)}%/${tempStr(applied.temperature)} | nu=${pct(dim)}%/${tempStr(temp)} | Δdim=${signed(pct(dim) - pct(applied.brightness))} Δtemp=${dTemp} | src=${source}${since}${extra}`;
+
+  const logText = global.get('AL_OverrideLog') || '';
+  const lines = (logText + entry + '\n').split('\n').filter(l => l.length > 0);
+  global.set('AL_OverrideLog', lines.slice(-1000).join('\n') + '\n');
 }
 
-// ====== 2. CHECK MOTION SENSORS ======
-let hasMotion = false;
-let lastMotionTime = 0;
-for (const sensorId of ROOM.motionSensors) {
-  const sensor = await Homey.devices.getDevice({ id: sensorId });
-  const motionCap = sensor.capabilitiesObj?.alarm_motion;
-  if (motionCap?.value) {
-    hasMotion = true;
-    break;
-  }
-  const ts = new Date(motionCap?.lastChanged ?? motionCap?.lastUpdated).getTime();
-  if (!isNaN(ts) && ts > lastMotionTime) lastMotionTime = ts;
+// Compare the light's current values with AdaptiveLighting's lastApplied and
+// log an override when they differ. Best-effort: never throws.
+function checkOverride(deviceId, name, dim, temp, source) {
+  try {
+    const raw = global.get(`AL_Device_${deviceId.substring(0, 8)}.State`);
+    if (!raw) return;
+    const state = JSON.parse(raw);
+    const applied = state.lastApplied;
+    if (!applied || typeof applied.brightness !== 'number') return;
+    // AL's own transition (e.g. a 6-minute early fade) still running: the light
+    // is between two AL values, not overridden
+    if (Date.now() < (state.fadeEndTime || 0)) return;
+    const dimOff = Math.abs(dim - applied.brightness) > OVERRIDE_DIM_TOLERANCE;
+    const tempOff = typeof temp === 'number' && typeof applied.temperature === 'number'
+      && Math.abs(temp - applied.temperature) > OVERRIDE_TEMP_TOLERANCE;
+    if (dimOff || tempOff) overrideLog(deviceId, name, state.lastProfile, applied, dim, temp, source);
+  } catch (e) { /* override logging is best-effort */ }
 }
 
-if (hasMotion) {
-  return `${PREFIX}: motion detected`;
-}
-
-// ====== 3. CHECK IF FADE ALREADY IN PROGRESS ======
-const fadeActiveUntil = global.get(`${ROOM.primaryLight}_FadeActiveUntil`) || 0;
-if (Date.now() < fadeActiveUntil) {
-  return `${PREFIX}: fade already in progress`;
-}
-
-// ====== 4. READ INACTIVITY THRESHOLD FROM LOGIC VARIABLE ======
-let inactivitySeconds = DEFAULT_INACTIVITY;
 try {
-  const variables = await Homey.logic.getVariables();
-  const varEntry = Object.values(variables).find(v => v.name === ROOM.inactivityVar);
-  if (varEntry) {
-    inactivitySeconds = Number(varEntry.value);
-    log(`${PREFIX}: ${ROOM.inactivityVar} = ${inactivitySeconds}`);
-  } else {
-    log(`${PREFIX}: ${ROOM.inactivityVar} not found, using default ${DEFAULT_INACTIVITY}s`);
+  // ====== 1. CHECK IF LIGHTS ARE ON ======
+  const device = await Homey.devices.getDevice({ id: ROOM.primaryLight });
+  const lightsOn = device.capabilitiesObj?.onoff?.value === true;
+
+  if (!lightsOn) {
+    return `${PREFIX}: lights off`;
   }
-} catch (e) {
-  log(`${PREFIX}: couldn't read Logic variable: ${e.message}`);
-}
 
-// ====== 5. CHECK IF IDLE LONG ENOUGH (based on sensor timestamps) ======
-const now = Date.now();
+  // ====== 2. CHECK MOTION SENSORS ======
+  let hasMotion = false;
+  let lastMotionTime = 0;
+  for (const sensorId of ROOM.motionSensors) {
+    const sensor = await Homey.devices.getDevice({ id: sensorId });
+    const motionCap = sensor.capabilitiesObj?.alarm_motion;
+    if (motionCap?.value) {
+      hasMotion = true;
+      break;
+    }
+    const ts = new Date(motionCap?.lastChanged ?? motionCap?.lastUpdated).getTime();
+    if (!isNaN(ts) && ts > lastMotionTime) lastMotionTime = ts;
+  }
 
-if (lastMotionTime <= 0) {
-  return `${PREFIX}: no motion timestamp available`;
-}
+  if (hasMotion) {
+    return `${PREFIX}: motion detected`;
+  }
 
-const idleDuration = (now - lastMotionTime) / 1000;
+  // ====== 3. CHECK IF FADE ALREADY IN PROGRESS ======
+  const fadeActiveUntil = global.get(`${ROOM.primaryLight}_FadeActiveUntil`) || 0;
+  if (Date.now() < fadeActiveUntil) {
+    return `${PREFIX}: fade already in progress`;
+  }
 
-const watchdogThreshold = inactivitySeconds + WATCHDOG_GRACE;
+  // ====== 4. READ INACTIVITY THRESHOLD FROM LOGIC VARIABLE ======
+  let inactivitySeconds = DEFAULT_INACTIVITY;
+  try {
+    const variables = await Homey.logic.getVariables();
+    const varEntry = Object.values(variables).find(v => v.name === ROOM.inactivityVar);
+    if (varEntry) {
+      inactivitySeconds = Number(varEntry.value);
+      log(`${PREFIX}: ${ROOM.inactivityVar} = ${inactivitySeconds}`);
+    } else {
+      log(`${PREFIX}: ${ROOM.inactivityVar} not found, using default ${DEFAULT_INACTIVITY}s`);
+    }
+  } catch (e) {
+    log(`${PREFIX}: couldn't read Logic variable: ${e.message}`);
+  }
 
-if (idleDuration < watchdogThreshold) {
-  const remaining = Math.round(watchdogThreshold - idleDuration);
-  return `${PREFIX}: idle ${Math.round(idleDuration)}s / ${watchdogThreshold}s (${remaining}s left)`;
-}
+  // ====== 5. CHECK IF IDLE LONG ENOUGH (based on sensor timestamps) ======
+  const now = Date.now();
 
-// ====== 6. TRIGGER FADE ======
-log(`${PREFIX}: triggering fade (idle ${Math.round(idleDuration)}s > ${watchdogThreshold}s)`);
-await Homey.flow.runFlowCardAction({
-  uri: 'homey:flowcardaction:homey:manager:notifications:create_notification',
-  id: 'homey:manager:notifications:create_notification',
-  args: { text: `${PREFIX}: lights stuck on, fading after ${Math.round(idleDuration)}s idle` }
-});
+  if (lastMotionTime <= 0) {
+    return `${PREFIX}: no motion timestamp available`;
+  }
 
-// Save current state (same as GradualFadeOut)
-const currentBrightness = device.capabilitiesObj?.dim?.value || 0;
-const currentTemp = device.capabilitiesObj?.light_temperature?.value || null;
+  const idleDuration = (now - lastMotionTime) / 1000;
 
-global.set(`${ROOM.primaryLight}_SavedDim`, currentBrightness);
-if (currentTemp !== null) {
-  global.set(`${ROOM.primaryLight}_SavedTemp`, currentTemp);
-}
+  const watchdogThreshold = inactivitySeconds + WATCHDOG_GRACE;
 
-// Set fade-active timestamp (same as GradualFadeOut)
-const fadeStartedAt = Date.now();
-const fadeUntil = fadeStartedAt + ((FADE_DURATION + RESTORE_BUFFER) * 1000);
-global.set(`${ROOM.primaryLight}_FadeActiveUntil`, fadeUntil);
+  if (idleDuration < watchdogThreshold) {
+    const remaining = Math.round(watchdogThreshold - idleDuration);
+    return `${PREFIX}: idle ${Math.round(idleDuration)}s / ${watchdogThreshold}s (${remaining}s left)`;
+  }
 
-// Save manual mode state from AdaptiveLighting per-device state (for RestoreSavedSettings coordination)
-const alDeviceKey = ROOM.primaryLight.substring(0, 8);
-let wasManualMode = false;
-try {
-  const alRaw = global.get(`AL_Device_${alDeviceKey}.State`);
-  if (alRaw) wasManualMode = JSON.parse(alRaw).manual === true;
-} catch (e) { /* parse error — treat as not manual */ }
-global.set(`${ROOM.primaryLight}_SavedManualMode`, wasManualMode);
-
-diagLog(`WATCHDOG-FADE | ${ROOM.name} | idle=${Math.round(idleDuration)}s threshold=${watchdogThreshold}s | dim=${Math.round(currentBrightness * 100)}% manual=${wasManualMode}`);
-
-// If already very dim, just turn off
-if (currentBrightness <= 0.05) {
-  await device.setCapabilityValue('onoff', false);
-  global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
-  diagLog(`WATCHDOG-SKIP | ${ROOM.name} | already very dim (${Math.round(currentBrightness * 100)}%)`);
-  return `${PREFIX}: already dim, turned off`;
-}
-
-// ====== FADE LIGHTS ======
-async function fadeDevice(targetDevice) {
-  const cardId = `homey:device:${targetDevice.id}:dim`;
+  // ====== 6. TRIGGER FADE ======
+  log(`${PREFIX}: triggering fade (idle ${Math.round(idleDuration)}s > ${watchdogThreshold}s)`);
   await Homey.flow.runFlowCardAction({
-    uri: `homey:device:${targetDevice.id}`,
-    id: cardId,
-    args: { dim: 0 },
-    duration: FADE_DURATION
+    uri: 'homey:flowcardaction:homey:manager:notifications:create_notification',
+    id: 'homey:manager:notifications:create_notification',
+    args: { text: `${PREFIX}: lights stuck on, fading after ${Math.round(idleDuration)}s idle` }
   });
-}
 
-// Collect all lights to fade
-let targets = [];
-try {
-  const allDevices = Object.values(await Homey.devices.getDevices());
+  // Save current state (same as GradualFadeOut)
+  const currentBrightness = device.capabilitiesObj?.dim?.value || 0;
+  const currentTemp = device.capabilitiesObj?.light_temperature?.value || null;
 
-  // Check if primary light is a group (find members)
-  const isGroup = !device.capabilities?.includes('button.migrate_v3');
-  let members = allDevices.filter(d =>
-    d.name.startsWith(device.name + ' ') && d.name !== device.name && d.class === 'light'
-  );
-  if (members.length === 0 && isGroup) {
-    members = allDevices.filter(d =>
-      d.zone === device.zone && d.id !== device.id && d.class === 'light'
-        && !(ROOM.extraLights || []).includes(d.id) // don't double-count extra lights
-    );
+  global.set(`${ROOM.primaryLight}_SavedDim`, currentBrightness);
+  if (currentTemp !== null) {
+    global.set(`${ROOM.primaryLight}_SavedTemp`, currentTemp);
   }
-  targets = members.length > 0 ? members : [device];
 
-  // Cache the primary light's targets so RestoreSavedSettings can restore
-  // by ID without any device lookup
-  global.set(`${ROOM.primaryLight}_FadeTargets`, JSON.stringify({
-    name: device.name,
-    targets: targets.map(t => ({ id: t.id, name: t.name }))
-  }));
+  // Set fade-active timestamp (same as GradualFadeOut)
+  const fadeStartedAt = Date.now();
+  const fadeUntil = fadeStartedAt + ((FADE_DURATION + RESTORE_BUFFER) * 1000);
+  global.set(`${ROOM.primaryLight}_FadeActiveUntil`, fadeUntil);
 
-  // Add extra lights (non-group lights in the same room)
-  if (ROOM.extraLights) {
-    for (const extraId of ROOM.extraLights) {
-      const extraDevice = await Homey.devices.getDevice({ id: extraId });
-      if (extraDevice.capabilitiesObj?.onoff?.value === true) {
-        // Save state for extra lights too
-        const extraDim = extraDevice.capabilitiesObj?.dim?.value || 0;
-        const extraTemp = extraDevice.capabilitiesObj?.light_temperature?.value || null;
-        global.set(`${extraId}_SavedDim`, extraDim);
-        if (extraTemp !== null) global.set(`${extraId}_SavedTemp`, extraTemp);
-        global.set(`${extraId}_FadeActiveUntil`, fadeUntil);
+  // Save manual mode state from AdaptiveLighting per-device state (for RestoreSavedSettings coordination)
+  const alDeviceKey = ROOM.primaryLight.substring(0, 8);
+  let wasManualMode = false;
+  try {
+    const alRaw = global.get(`AL_Device_${alDeviceKey}.State`);
+    if (alRaw) wasManualMode = JSON.parse(alRaw).manual === true;
+  } catch (e) { /* parse error — treat as not manual */ }
+  global.set(`${ROOM.primaryLight}_SavedManualMode`, wasManualMode);
 
-        const extraAlKey = extraId.substring(0, 8);
-        let extraManual = false;
-        try {
-          const extraAlRaw = global.get(`AL_Device_${extraAlKey}.State`);
-          if (extraAlRaw) extraManual = JSON.parse(extraAlRaw).manual === true;
-        } catch (e) { /* parse error — treat as not manual */ }
-        global.set(`${extraId}_SavedManualMode`, extraManual);
-        global.set(`${extraId}_FadeTargets`, JSON.stringify({
-          name: extraDevice.name,
-          targets: [{ id: extraDevice.id, name: extraDevice.name }]
-        }));
+  checkOverride(ROOM.primaryLight, device.name, currentBrightness, currentTemp, 'watchdog');
 
-        targets.push(extraDevice);
+  diagLog(`WATCHDOG-FADE | ${ROOM.name} | idle=${Math.round(idleDuration)}s threshold=${watchdogThreshold}s | dim=${Math.round(currentBrightness * 100)}% manual=${wasManualMode}`);
+
+  // If already very dim, just turn off
+  if (currentBrightness <= 0.05) {
+    await device.setCapabilityValue('onoff', false);
+    global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
+    diagLog(`WATCHDOG-SKIP | ${ROOM.name} | already very dim (${Math.round(currentBrightness * 100)}%)`);
+    return `${PREFIX}: already dim, turned off`;
+  }
+
+  // ====== FADE LIGHTS ======
+  async function fadeDevice(targetDevice) {
+    const cardId = `homey:device:${targetDevice.id}:dim`;
+    await Homey.flow.runFlowCardAction({
+      uri: `homey:device:${targetDevice.id}`,
+      id: cardId,
+      args: { dim: 0 },
+      duration: FADE_DURATION
+    });
+  }
+
+  // Collect all lights to fade
+  let targets = [];
+  try {
+    const allDevices = Object.values(await Homey.devices.getDevices());
+
+    // Check if primary light is a group (find members)
+    const isGroup = !device.capabilities?.includes('button.migrate_v3');
+    let members = allDevices.filter(d =>
+      d.name.startsWith(device.name + ' ') && d.name !== device.name && d.class === 'light'
+    );
+    if (members.length === 0 && isGroup) {
+      members = allDevices.filter(d =>
+        d.zone === device.zone && d.id !== device.id && d.class === 'light'
+          && !(ROOM.extraLights || []).includes(d.id) // don't double-count extra lights
+      );
+    }
+    targets = members.length > 0 ? members : [device];
+
+    // Cache the primary light's targets so RestoreSavedSettings can restore
+    // by ID without any device lookup
+    global.set(`${ROOM.primaryLight}_FadeTargets`, JSON.stringify({
+      name: device.name,
+      targets: targets.map(t => ({ id: t.id, name: t.name }))
+    }));
+
+    // Add extra lights (non-group lights in the same room)
+    if (ROOM.extraLights) {
+      for (const extraId of ROOM.extraLights) {
+        const extraDevice = await Homey.devices.getDevice({ id: extraId });
+        if (extraDevice.capabilitiesObj?.onoff?.value === true) {
+          // Save state for extra lights too
+          const extraDim = extraDevice.capabilitiesObj?.dim?.value || 0;
+          const extraTemp = extraDevice.capabilitiesObj?.light_temperature?.value || null;
+          global.set(`${extraId}_SavedDim`, extraDim);
+          if (extraTemp !== null) global.set(`${extraId}_SavedTemp`, extraTemp);
+          global.set(`${extraId}_FadeActiveUntil`, fadeUntil);
+
+          const extraAlKey = extraId.substring(0, 8);
+          let extraManual = false;
+          try {
+            const extraAlRaw = global.get(`AL_Device_${extraAlKey}.State`);
+            if (extraAlRaw) extraManual = JSON.parse(extraAlRaw).manual === true;
+          } catch (e) { /* parse error — treat as not manual */ }
+          global.set(`${extraId}_SavedManualMode`, extraManual);
+          global.set(`${extraId}_FadeTargets`, JSON.stringify({
+            name: extraDevice.name,
+            targets: [{ id: extraDevice.id, name: extraDevice.name }]
+          }));
+
+          targets.push(extraDevice);
+        }
       }
     }
+  } catch (e) {
+    diagLog(`WATCHDOG-ERROR | ${ROOM.name} | target collection failed: ${e.message}`);
+    if (targets.length === 0) targets = [device]; // fall back to primary light only
   }
-} catch (e) {
-  diagLog(`WATCHDOG-ERROR | ${ROOM.name} | target collection failed: ${e.message}`);
-  if (targets.length === 0) targets = [device]; // fall back to primary light only
-}
 
-// Fade all targets in parallel
-log(`${PREFIX}: fading ${targets.length} lights`);
-const results = await Promise.all(targets.map(t =>
-  fadeDevice(t)
-    .then(() => { log(`  ${t.name}: fade started`); return true; })
-    .catch(e => {
-      log(`  ${t.name}: failed: ${e.message}`);
-      diagLog(`WATCHDOG-ERROR | ${ROOM.name} | fade ${t.name}: ${e.message}`);
-      return false;
-    })
-));
-const ok = results.filter(r => r).length;
-log(`${PREFIX}: ${ok}/${targets.length} lights fading`);
+  // Fade all targets in parallel
+  log(`${PREFIX}: fading ${targets.length} lights`);
+  const results = await Promise.all(targets.map(t =>
+    fadeDevice(t)
+      .then(() => { log(`  ${t.name}: fade started`); return true; })
+      .catch(e => {
+        log(`  ${t.name}: failed: ${e.message}`);
+        diagLog(`WATCHDOG-ERROR | ${ROOM.name} | fade ${t.name}: ${e.message}`);
+        return false;
+      })
+  ));
+  const ok = results.filter(r => r).length;
+  log(`${PREFIX}: ${ok}/${targets.length} lights fading`);
 
-// Wait for fade to complete, then ensure lights are fully off
-// NOTE: HomeyScript has no setTimeout — use the built-in async wait(ms)
-await wait(FADE_DURATION * 1000);
+  // Wait for fade to complete, then ensure lights are fully off
+  // NOTE: HomeyScript has no setTimeout — use the built-in async wait(ms)
+  await wait(FADE_DURATION * 1000);
 
-// Skip turn-off only if a real restore happened (motion returned).
-// _RestoredAt is set by RestoreSavedSettings when it actually restores;
-// flag==0 alone was ambiguous (expired flags used to be zeroed as cleanup).
-const restoredAt = global.get(`${ROOM.primaryLight}_RestoredAt`) || 0;
-const flagCleared = (global.get(`${ROOM.primaryLight}_FadeActiveUntil`) || 0) === 0;
-if (restoredAt >= fadeStartedAt || flagCleared) {
-  log(`${PREFIX}: fade was cancelled (motion detected) — skipping turn-off`);
-  diagLog(`WATCHDOG-CANCELLED | ${ROOM.name} | realRestore=${restoredAt >= fadeStartedAt} flagCleared=${flagCleared}`);
-  return `${PREFIX}: fade cancelled by restore`;
-}
+  // Skip turn-off only if a real restore happened (motion returned).
+  // _RestoredAt is set by RestoreSavedSettings when it actually restores;
+  // flag==0 alone was ambiguous (expired flags used to be zeroed as cleanup).
+  const restoredAt = global.get(`${ROOM.primaryLight}_RestoredAt`) || 0;
+  const flagCleared = (global.get(`${ROOM.primaryLight}_FadeActiveUntil`) || 0) === 0;
+  if (restoredAt >= fadeStartedAt || flagCleared) {
+    log(`${PREFIX}: fade was cancelled (motion detected) — skipping turn-off`);
+    diagLog(`WATCHDOG-CANCELLED | ${ROOM.name} | realRestore=${restoredAt >= fadeStartedAt} flagCleared=${flagCleared}`);
+    return `${PREFIX}: fade cancelled by restore`;
+  }
 
-// Re-check activity right before turn-off — someone may have walked in
-// (door/motion) during the fade. Skip the turn-off and LEAVE the restore
-// window open: the zone-active flow has already queued RestoreSavedSettings,
-// which will restore brightness even if it runs a few seconds from now.
-let activityNow = false;
-for (const sensorId of ROOM.motionSensors) {
-  try {
-    const sensor = await Homey.devices.getDevice({ id: sensorId });
-    if (sensor.capabilitiesObj?.alarm_motion?.value === true) { activityNow = true; break; }
-  } catch (e) { /* sensor unreachable — ignore */ }
-}
-if (!activityNow) {
-  try {
-    const zone = await Homey.zones.getZone({ id: device.zone });
-    activityNow = zone?.active === true;
-  } catch (e) { /* zone lookup failed — fall through to turn-off */ }
-}
-if (activityNow) {
-  diagLog(`WATCHDOG-HOLD | ${ROOM.name} | activity at fade end — restore will handle`);
-  return `${PREFIX}: activity returned during fade, turn-off skipped`;
-}
-
-await Promise.all(targets.map(t =>
-  t.setCapabilityValue('onoff', false)
-    .then(() => log(`  ${t.name}: turned off`))
-    .catch(e => {
-      log(`  ${t.name}: turn-off failed: ${e.message}`);
-      diagLog(`WATCHDOG-ERROR | ${ROOM.name} | turn-off ${t.name}: ${e.message}`);
-    })
-));
-global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
-diagLog(`WATCHDOG-OFF | ${ROOM.name} | off sent to ${targets.length} light(s)`);
-
-// Verify: a lost command or a late Zigbee report can leave/flip Homey's
-// state back to on. Re-check once and resend the off if needed — unless the
-// room became active in the meantime (then the lights are wanted on).
-await wait(3000);
-try {
-  const check = await Homey.devices.getDevice({ id: ROOM.primaryLight });
-  if (check.capabilitiesObj?.onoff?.value === true) {
-    const restoredLate = (global.get(`${ROOM.primaryLight}_RestoredAt`) || 0) >= fadeStartedAt;
-    let zoneActiveNow = false;
+  // Re-check activity right before turn-off — someone may have walked in
+  // (door/motion) during the fade. Skip the turn-off and LEAVE the restore
+  // window open: the zone-active flow has already queued RestoreSavedSettings,
+  // which will restore brightness even if it runs a few seconds from now.
+  let activityNow = false;
+  for (const sensorId of ROOM.motionSensors) {
+    try {
+      const sensor = await Homey.devices.getDevice({ id: sensorId });
+      if (sensor.capabilitiesObj?.alarm_motion?.value === true) { activityNow = true; break; }
+    } catch (e) { /* sensor unreachable — ignore */ }
+  }
+  if (!activityNow) {
     try {
       const zone = await Homey.zones.getZone({ id: device.zone });
-      zoneActiveNow = zone?.active === true;
-    } catch (e) { /* zone lookup failed — treat as inactive */ }
-    if (restoredLate || zoneActiveNow) {
-      diagLog(`WATCHDOG-VERIFY | ${ROOM.name} | back on but room active — leaving on`);
-    } else {
-      diagLog(`WATCHDOG-VERIFY | ${ROOM.name} | still on 3s after off — resending`);
-      await Promise.all(targets.map(t =>
-        t.setCapabilityValue('onoff', false)
-          .catch(e => diagLog(`WATCHDOG-ERROR | ${ROOM.name} | resend off ${t.name}: ${e.message}`))
-      ));
-    }
+      activityNow = zone?.active === true;
+    } catch (e) { /* zone lookup failed — fall through to turn-off */ }
   }
-} catch (e) { /* verification is best-effort */ }
+  if (activityNow) {
+    diagLog(`WATCHDOG-HOLD | ${ROOM.name} | activity at fade end — restore will handle`);
+    return `${PREFIX}: activity returned during fade, turn-off skipped`;
+  }
 
-log(`${PREFIX}: fade complete, lights off`);
-return `${PREFIX}: fade + off after ${Math.round(idleDuration)}s idle`;
+  await Promise.all(targets.map(t =>
+    t.setCapabilityValue('onoff', false)
+      .then(() => log(`  ${t.name}: turned off`))
+      .catch(e => {
+        log(`  ${t.name}: turn-off failed: ${e.message}`);
+        diagLog(`WATCHDOG-ERROR | ${ROOM.name} | turn-off ${t.name}: ${e.message}`);
+      })
+  ));
+  global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
+  diagLog(`WATCHDOG-OFF | ${ROOM.name} | off sent to ${targets.length} light(s)`);
+
+  // Verify: a lost command or a late Zigbee report can leave/flip Homey's
+  // state back to on. Re-check once and resend the off if needed — unless the
+  // room became active in the meantime (then the lights are wanted on).
+  await wait(3000);
+  try {
+    const check = await Homey.devices.getDevice({ id: ROOM.primaryLight });
+    if (check.capabilitiesObj?.onoff?.value === true) {
+      const restoredLate = (global.get(`${ROOM.primaryLight}_RestoredAt`) || 0) >= fadeStartedAt;
+      let zoneActiveNow = false;
+      try {
+        const zone = await Homey.zones.getZone({ id: device.zone });
+        zoneActiveNow = zone?.active === true;
+      } catch (e) { /* zone lookup failed — treat as inactive */ }
+      if (restoredLate || zoneActiveNow) {
+        diagLog(`WATCHDOG-VERIFY | ${ROOM.name} | back on but room active — leaving on`);
+      } else {
+        diagLog(`WATCHDOG-VERIFY | ${ROOM.name} | still on 3s after off — resending`);
+        await Promise.all(targets.map(t =>
+          t.setCapabilityValue('onoff', false)
+            .catch(e => diagLog(`WATCHDOG-ERROR | ${ROOM.name} | resend off ${t.name}: ${e.message}`))
+        ));
+      }
+    }
+  } catch (e) { /* verification is best-effort */ }
+
+  log(`${PREFIX}: fade complete, lights off`);
+  return `${PREFIX}: fade + off after ${Math.round(idleDuration)}s idle`;
+} catch (error) {
+  // Flow runs never show the console, and an unknown device/sensor id (e.g. after
+  // re-pairing) throws on every run. Log it, at most once per room per interval
+  log(`${PREFIX}: ERROR ${error.message}`);
+  try {
+    const lastErrorKey = `AL_WatchdogErrorAt_${roomKey}`;
+    if (Date.now() - (global.get(lastErrorKey) || 0) >= ERROR_LOG_INTERVAL * 1000) {
+      global.set(lastErrorKey, Date.now());
+      diagLog(`WATCHDOG-ERROR | ${ROOM.name} | ${error.message}`);
+    }
+  } catch (e) { /* ignore */ }
+  return `${PREFIX}: ERROR ${error.message}`;
+}

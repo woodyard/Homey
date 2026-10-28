@@ -7,6 +7,15 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 4.3  2026-10-27  Errors reach AL_DiagnostikLog
+//                  - The outer catch only logged to the console, which flow
+//                    runs never show — now also RESTORE-ERROR | <id> |
+//                    unexpected: <message>
+//                  - Fallback path: "device not found" logs RESTORE-ERROR
+//                    (the light was left faded with no trace)
+//                  - RESTORE-PARTIAL | <name> | n/m failed: <bulbs> when only
+//                    some bulbs fail; RESTORE-ERROR when all fail. Cached path
+//                    logged all-failed only, fallback group path logged nothing
 // 4.2  2026-09-04  Faster restore: use fade targets cached by GradualFadeOut
 //                  - GradualFadeOut/watchdog v6.11/v2.10 now save the exact
 //                    list of bulbs they faded in ${deviceId}_FadeTargets
@@ -209,6 +218,9 @@ try {
     const okCount = results.filter(r => r).length;
     if (okCount === 0) {
       diagLog(`RESTORE-ERROR | ${displayName} | all ${cached.targets.length} cached target(s) failed`);
+    } else if (okCount < cached.targets.length) {
+      const failedNames = cached.targets.filter((t, i) => !results[i]).map(t => t.name || t.id);
+      diagLog(`RESTORE-PARTIAL | ${displayName} | ${failedNames.length}/${cached.targets.length} failed: ${failedNames.join(', ')}`);
     }
     return `${displayName}: Restored ${okCount}/${cached.targets.length} to ${Math.round(savedDim * 100)}%${savedTemp !== null ? ` / ${Math.round(savedTemp * 100)}% temp` : ''}`;
   }
@@ -218,6 +230,7 @@ try {
   try {
     device = await Homey.devices.getDevice({ id: deviceId });
   } catch (error) {
+    diagLog(`RESTORE-ERROR | ${deviceId.substring(0, 8)} | device not found: ${error.message}`);
     return `ERROR: Device not found with ID: ${deviceId}`;
   }
 
@@ -297,8 +310,14 @@ try {
         })
     );
     
-    await Promise.all(restorePromises);
-    
+    const restoreResults = await Promise.all(restorePromises);
+    const failedMembers = restoreResults.filter(r => r.error).map(r => r.name);
+    if (failedMembers.length === members.length) {
+      diagLog(`RESTORE-ERROR | ${device.name} | all ${members.length} member(s) failed`);
+    } else if (failedMembers.length > 0) {
+      diagLog(`RESTORE-PARTIAL | ${device.name} | ${failedMembers.length}/${members.length} failed: ${failedMembers.join(', ')}`);
+    }
+
     // Also set the group itself (for UI consistency)
     try {
       await restoreDevice(device, savedDim, savedTemp);
@@ -317,5 +336,9 @@ try {
 } catch (error) {
   log(`UNEXPECTED ERROR: ${error.message}`);
   log(`Stack: ${error.stack}`);
+  // Flow runs never show the console — leave a trace in the shared log
+  try {
+    diagLog(`RESTORE-ERROR | ${String(args[0] || '').substring(0, 8)} | unexpected: ${error.message}`);
+  } catch (e) { /* ignore */ }
   return `UNEXPECTED ERROR: ${error.message}`;
 }

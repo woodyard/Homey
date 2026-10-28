@@ -12,6 +12,27 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.13 2026-10-27  Don't start while another fade is running
+//                  - If countdown_to_zero fired while a watchdog fade (or an
+//                    earlier run) was still dimming the light, the save step
+//                    overwrote _SavedDim/_SavedTemp/_FadeTargets with the
+//                    half-faded values, and a following restore brought the
+//                    light back too dim. Seen as possible in E9, where the door
+//                    can hold the zone active after the last motion
+//                  - Now: _FadeActiveUntil in the future → FADE-SKIP "fade
+//                    already in progress", nothing saved, nothing sent. Same
+//                    guard Room_watchdog has had since 2.x. RestoreSavedSettings
+//                    zeroes the flag, so a restored fade never blocks
+//                  - The override check no longer needs its own mid-fade test
+// 6.12 2026-10-19  Log overrides to AL_OverrideLog before fading
+//                  - Compares the light's values with AdaptiveLighting's
+//                    lastApplied; a difference (dim > 10 points, colour > 15)
+//                    is an override — Hue dimmer switch, app, voice, button —
+//                    and gets one src=fade line for preset tuning
+//                  - Motion rooms (E9/B9/B7) never run AL's check mode, so
+//                    switch-off is the only moment their overrides are seen
+//                  - Skipped while AL's own transition or a previous fade is
+//                    still running (values are in between, not overridden)
 // 6.11 2026-09-04  Cache fade targets for a faster restore
 //                  - Saves the exact bulbs being faded (id + name) in
 //                    ${deviceId}_FadeTargets so RestoreSavedSettings v4.2
@@ -128,11 +149,14 @@ const restoreBuffer = 15;    // seconds the restore window stays open after the
 //   FADE-ABORT (GradualFadeOut)   - restore ran before the fade command was sent; fade not started
 //   RESTORE    (RestoreSavedSettings) - brightness/temp restored, manual mode preserved
 //   RESTORE-SKIP (RestoreSavedSettings) - fade expired, nothing to restore
-//   RESTORE-ERROR (RestoreSavedSettings) - every cached target failed to restore
+//   RESTORE-ERROR (RestoreSavedSettings) - every bulb failed, device not found, or unexpected error
+//   RESTORE-PARTIAL (RestoreSavedSettings) - some bulbs failed to restore (names listed)
 //   AL-SKIP-FADE (AdaptiveLighting) - skipped because fade/restore in progress
 //   AL-SKIP-RESTORE (AdaptiveLighting) - skipped because a restore just happened (restoreGraceSeconds)
-//   AL-SKIP-MANUAL (AdaptiveLighting) - skipped because ManualRestoreUntil active
 //   AL-APPLY   (AdaptiveLighting) - profile applied (brightness/temp/profile name)
+//   AL-APPLY-FAIL (AdaptiveLighting) - a bulb didn't take the brightness (group members listed)
+//   AL-VERIFY-FAIL (AdaptiveLighting) - clear/force verification failed after all retries
+//   AL-ERROR   (AdaptiveLighting) - script threw (room, mode, message)
 // Max 500 lines retained (oldest trimmed). Read via: global.get('AL_DiagnostikLog')
 function diagLog(entry) {
   const now = new Date().toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen', hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
@@ -141,6 +165,58 @@ function diagLog(entry) {
   const lines = (logText + newEntry).split('\n').filter(l => l.length > 0);
   const trimmed = lines.slice(-500).join('\n') + '\n';
   global.set('AL_DiagnostikLog', trimmed);
+}
+
+// ====== OVERRIDE LOG ======
+// One line each time a light is found at values that differ from what
+// AdaptiveLighting last applied — an override from a Hue switch, the app, voice
+// or a button. Input for tuning the presets; kept apart from AL_DiagnostikLog
+// so routine fade/apply noise cannot push it out. Shared with AdaptiveLighting
+// (src=check), GradualFadeOut (src=fade) and Room_Watchdog (src=watchdog).
+// Max 1000 lines. Read via: log(global.get('AL_OverrideLog'))
+// Format: "DD.MM, HH.MM.SS | dag | OVERRIDE | Lampe | Profil | AL=40%/70 | nu=100%/1 | Δdim=+60 Δtemp=-69 | src=fade | 26m efter AL"
+const OVERRIDE_DIM_TOLERANCE = 0.10;   // same as AdaptiveLighting's tolerance
+const OVERRIDE_TEMP_TOLERANCE = 0.15;  // wider: Hue bulbs clamp warm requests (AL sets 1.00, bulb reads back 0.87)
+
+function overrideLog(deviceId, name, profileName, applied, dim, temp, source, extra = '') {
+  const pct = v => (typeof v === 'number' ? Math.round(v * 100) : null);
+  // Log each override once: a fade after a restore sees the same values again
+  const signature = `${applied.at || 0}|${pct(dim)}|${pct(temp)}`;
+  const sigKey = `${deviceId}_OverrideLogged`;
+  if (global.get(sigKey) === signature) return;
+  global.set(sigKey, signature);
+
+  const nowDate = new Date();
+  const stamp = nowDate.toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen', hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' });
+  const day = nowDate.toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen', weekday: 'short' }).replace('.', '');
+  const signed = v => (v > 0 ? `+${v}` : `${v}`);
+  const tempStr = v => (pct(v) === null ? 'N/A' : pct(v));
+  const dTemp = (pct(temp) !== null && pct(applied.temperature) !== null) ? signed(pct(temp) - pct(applied.temperature)) : 'N/A';
+  const since = applied.at ? ` | ${Math.round((Date.now() - applied.at) / 60000)}m efter AL` : '';
+  const entry = `${stamp} | ${day} | OVERRIDE | ${name} | ${profileName || '?'} | AL=${pct(applied.brightness)}%/${tempStr(applied.temperature)} | nu=${pct(dim)}%/${tempStr(temp)} | Δdim=${signed(pct(dim) - pct(applied.brightness))} Δtemp=${dTemp} | src=${source}${since}${extra}`;
+
+  const logText = global.get('AL_OverrideLog') || '';
+  const lines = (logText + entry + '\n').split('\n').filter(l => l.length > 0);
+  global.set('AL_OverrideLog', lines.slice(-1000).join('\n') + '\n');
+}
+
+// Compare the light's current values with AdaptiveLighting's lastApplied and
+// log an override when they differ. Best-effort: never throws.
+function checkOverride(deviceId, name, dim, temp, source) {
+  try {
+    const raw = global.get(`AL_Device_${deviceId.substring(0, 8)}.State`);
+    if (!raw) return;
+    const state = JSON.parse(raw);
+    const applied = state.lastApplied;
+    if (!applied || typeof applied.brightness !== 'number') return;
+    // AL's own transition (e.g. a 6-minute early fade) still running: the light
+    // is between two AL values, not overridden
+    if (Date.now() < (state.fadeEndTime || 0)) return;
+    const dimOff = Math.abs(dim - applied.brightness) > OVERRIDE_DIM_TOLERANCE;
+    const tempOff = typeof temp === 'number' && typeof applied.temperature === 'number'
+      && Math.abs(temp - applied.temperature) > OVERRIDE_TEMP_TOLERANCE;
+    if (dimOff || tempOff) overrideLog(deviceId, name, state.lastProfile, applied, dim, temp, source);
+  } catch (e) { /* override logging is best-effort */ }
 }
 
 // Find group members
@@ -220,6 +296,16 @@ async function processDevice(deviceId) {
     const savedTempVar = `${deviceId}_SavedTemp`;
     const fadeActiveUntilVar = `${deviceId}_FadeActiveUntil`;
 
+    // Another fade (the watchdog's, or an earlier run) is still dimming this
+    // light: saving now would store a half-faded brightness for the next
+    // restore. Leave that fade and its saved values alone. A restore zeroes
+    // the flag, so a fade that was cancelled never blocks a new one
+    const previousFadeUntil = global.get(fadeActiveUntilVar) || 0;
+    if (Date.now() < previousFadeUntil) {
+      diagLog(`FADE-SKIP | ${device.name} | fade already in progress`);
+      return `${device.name}: fade already in progress`;
+    }
+
     // Save current settings to global variables
     global.set(savedDimVar, currentBrightness);
     if (currentTemperature !== null) {
@@ -239,6 +325,8 @@ async function processDevice(deviceId) {
       if (alRaw) wasManualMode = JSON.parse(alRaw).manual === true;
     } catch (e) { /* parse error — treat as not manual */ }
     global.set(`${deviceId}_SavedManualMode`, wasManualMode);
+
+    checkOverride(deviceId, device.name, currentBrightness, currentTemperature, 'fade');
 
     log(`Saved: dim=${Math.round(currentBrightness * 100)}%, temp=${currentTemperature !== null ? Math.round(currentTemperature * 100) + '%' : 'N/A'}${wasManualMode ? ' (manual mode)' : ''}`);
     log(`Fade active until: ${new Date(fadeActiveUntil).toLocaleTimeString()}`);
