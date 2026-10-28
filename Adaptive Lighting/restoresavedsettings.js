@@ -7,6 +7,11 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 4.5  2026-10-28  Strict argument checking
+//                  - The argument must look like a Homey device id (UUID);
+//                    otherwise RESTORE-BADARG and nothing happens
+//                  - No argument still restores B9 Lys (editor test runs) but
+//                    logs RESTORE-DEFAULT-ID, so an empty flow card shows up
 // 4.4  2026-10-28  Remove the dead manual-mode hand-off
 //                  - _SavedManualMode (from GradualFadeOut/watchdog) was turned
 //                    into _ManualRestoreUntil, which nothing has read since
@@ -115,11 +120,15 @@ function diagLog(entry) {
 }
 
 try {
-  // Get device ID from argument, or use default (Bathroom 9)
-  const deviceId = args[0] || "b8591f4d-a493-4de7-9745-c13cd07e033c";
+  // Device ID from the argument. No argument = B9 Lys (for test runs in the
+  // HomeyScript editor; logged so an empty flow card shows up)
+  const DEFAULT_DEVICE_ID = "b8591f4d-a493-4de7-9745-c13cd07e033c"; // B9 Lys
+  if (!args[0]) diagLog(`RESTORE-DEFAULT-ID | no argument — using B9 Lys (editor test run?)`);
+  const deviceId = String(args[0] || DEFAULT_DEVICE_ID).trim();
 
-  if (!deviceId) {
-    return 'ERROR: No device ID provided. Pass device ID as argument.';
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(deviceId)) {
+    diagLog(`RESTORE-BADARG | "${deviceId}" | not a device id`);
+    return `ERROR: bad argument "${deviceId}" — pass a device id`;
   }
 
   // Create unique variable names based on device ID

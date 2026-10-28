@@ -13,6 +13,13 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.14 2026-10-28  Log missing or unknown room arguments
+//                  - An unknown room returned an error string only (invisible
+//                    in flow runs); now WATCHDOG-BADARG in AL_DiagnostikLog
+//                  - No argument still checks B9 (editor test runs) but logs
+//                    WATCHDOG-DEFAULT. Each argument at most once per
+//                    ERROR_LOG_INTERVAL (one timestamp per argument in
+//                    AL_WatchdogArgWarningAt) — the flow runs every minute
 // 2.13 2026-10-28  Stop writing ${id}_SavedManualMode (primary and extra lights)
 //                  - Same as GradualFadeOut 6.14: its only reader turned it into
 //                    _ManualRestoreUntil, unread since AdaptiveLighting 2.17.0.
@@ -138,8 +145,28 @@ const ERROR_LOG_INTERVAL = 600; // Seconds between WATCHDOG-ERROR lines for the 
                                 // line a minute and push everything else out of the log
 
 // ====== GET ROOM FROM ARGUMENT ======
-const roomKey = args[0] || "B9";
-if (!roomKey || !ROOMS[roomKey]) {
+// No argument = B9 (for test runs in the HomeyScript editor). A missing or bad
+// argument repeats every minute from the flow, so each one is logged at most
+// once per ERROR_LOG_INTERVAL — one timestamp per argument, so a problem in one
+// room's card can't hide another's
+function diagLogArgLimited(entry) {
+  const key = String(args[0] || '');
+  const now = Date.now();
+  let seen = {};
+  try { seen = JSON.parse(global.get('AL_WatchdogArgWarningAt') || '{}'); } catch (e) { /* corrupt — start over */ }
+  if (!seen || typeof seen !== 'object' || Array.isArray(seen)) seen = {};
+  if (typeof seen[key] === 'number' && now - seen[key] < ERROR_LOG_INTERVAL * 1000) return;
+  for (const k of Object.keys(seen)) {
+    if (typeof seen[k] !== 'number' || now - seen[k] >= ERROR_LOG_INTERVAL * 1000) delete seen[k];
+  }
+  seen[key] = now;
+  global.set('AL_WatchdogArgWarningAt', JSON.stringify(seen));
+  diagLog(entry);
+}
+const roomKey = String(args[0] || 'B9').trim();
+if (!args[0]) diagLogArgLimited(`WATCHDOG-DEFAULT | no argument — using B9 (editor test run?)`);
+if (!ROOMS[roomKey]) {
+  diagLogArgLimited(`WATCHDOG-BADARG | "${roomKey}" | unknown room (${Object.keys(ROOMS).join(', ')})`);
   return `Error: pass room name as argument (${Object.keys(ROOMS).join(', ')})`;
 }
 const ROOM = ROOMS[roomKey];

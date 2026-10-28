@@ -12,6 +12,11 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.15 2026-10-28  Strict argument checking
+//                  - Every id in the argument must look like a Homey device id
+//                    (UUID); otherwise FADE-BADARG and nothing is faded
+//                  - No argument still fades B9 Lys (editor test runs) but logs
+//                    FADE-DEFAULT-ID, so an empty flow card shows up
 // 6.14 2026-10-28  Stop writing ${deviceId}_SavedManualMode
 //                  - RestoreSavedSettings only turned it into _ManualRestoreUntil,
 //                    which nothing has read since AdaptiveLighting 2.17.0. The
@@ -463,12 +468,19 @@ async function processDevice(deviceId) {
 
 // ====== ENTRY POINT ======
 // args[0]: single device ID, or a comma-separated list of device IDs to fade
-// in parallel within this one script run (default: Bathroom 9)
-const rawArg = args[0] || "b8591f4d-a493-4de7-9745-c13cd07e033c";
+// in parallel within this one script run. No argument = B9 Lys (for test runs
+// in the HomeyScript editor; logged so an empty flow card shows up)
+const DEFAULT_DEVICE_ID = "b8591f4d-a493-4de7-9745-c13cd07e033c"; // B9 Lys
+const DEVICE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+if (!args[0]) diagLog(`FADE-DEFAULT-ID | no argument — using B9 Lys (editor test run?)`);
+const rawArg = String(args[0] || DEFAULT_DEVICE_ID);
 const deviceIds = rawArg.split(',').map(s => s.trim()).filter(s => s.length > 0);
 
-if (deviceIds.length === 0) {
-  return 'ERROR: No device ID provided. Pass device ID as argument.';
+const badIds = deviceIds.filter(id => !DEVICE_ID_PATTERN.test(id));
+if (deviceIds.length === 0 || badIds.length > 0) {
+  const what = deviceIds.length === 0 ? 'no device id' : `not a device id: ${badIds.join(', ')}`;
+  diagLog(`FADE-BADARG | "${rawArg}" | ${what}`);
+  return `ERROR: bad argument "${rawArg}" (${what}) — pass a device id or a comma-separated list`;
 }
 
 log(`Device ID(s): ${deviceIds.join(', ')} ${args[0] ? '(from argument)' : '(default)'}`);

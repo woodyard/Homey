@@ -2,12 +2,27 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.29.1
+// Version:     2.29.2
 // Date:        2026-10-28
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.29.2 2026-10-28  Strict argument checking
+//                    - An unknown mode (a typo in a flow card) matched no mode
+//                      and ran as normal mode: clear manual, re-apply, switch
+//                      the light on — silently, every poll. Now checked against
+//                      KNOWN_MODES; anything else logs AL-BADARG and stops
+//                      before any API call
+//                    - The device id must look like a Homey id (UUID), else
+//                      AL-BADARG instead of a Not Found error later
+//                    - Removed the undocumented 'off' alias for clear (it
+//                      cleared manual mode and left the light on)
+//                    - No argument still uses ST Standerlampe (editor test
+//                      runs) but logs AL-DEFAULT-ID, so an empty flow card shows
+//                    - Each broken card (device id + mode; a lux value doesn't
+//                      count) is logged at most once an hour — one timestamp per
+//                      card in AL_LastArgWarning — so polls can't flood the log
 // 2.29.1 2026-10-28  Remove dead code and a dormant risk
 //                    - isDeviceFading no longer reads the legacy ${id}_FadeActive
 //                      flag: nothing has written it since GradualFadeOut 5.0, and
@@ -1512,7 +1527,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.29.1';
+const AL_VERSION = '2.29.2';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -2416,14 +2431,22 @@ async function applyLightingWithRetry(device, brightness, temperature, profileNa
 const argString = typeof args === 'string' ? args : 
                   (Array.isArray(args) ? args[0] : args?.[0]) || '';
 const argParts = argString.toString().trim().split(/\s+/);
-const DEVICE_ID = argParts[0] || "3f4e2391-3be6-44ee-b340-fcc3219853b2"; // Default: ST Standerlampe
+const DEFAULT_DEVICE_ID = "3f4e2391-3be6-44ee-b340-fcc3219853b2"; // ST Standerlampe — for test runs in the HomeyScript editor
+const DEVICE_ID = argParts[0] || DEFAULT_DEVICE_ID;
 const MODE_ARG = (argParts[1] || '').toLowerCase();
+
+// Every mode the script understands, aliases included. Anything else is a typo
+// in a flow card: logged and ignored — never run as normal mode
+const KNOWN_MODES = new Set(['', 'check', 'hourly', 'lux', 'force', 'reset', 'clear',
+  'cycle-profile', 'cycle', 'brighten', 'button-brighten', 'dim-down', 'dim', 'button-dim',
+  'max', 'button-max', 'toggle', 'button-toggle']);
+const DEVICE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const LUX_MODE = MODE_ARG === 'lux';
 const LUX_VALUE = LUX_MODE ? parseFloat(argParts[2]) : NaN;   // NaN = not passed → full run
 const CHECK_MANUAL = MODE_ARG === 'check' || MODE_ARG === 'hourly' || LUX_MODE;
 const FORCE_UPDATE = MODE_ARG === 'force' || MODE_ARG === 'reset';
-const CLEAR_MANUAL = MODE_ARG === 'clear' || MODE_ARG === 'off';
+const CLEAR_MANUAL = MODE_ARG === 'clear';
 const CYCLE_PROFILE = MODE_ARG === 'cycle-profile' || MODE_ARG === 'cycle';
 const BUTTON_BRIGHTEN = MODE_ARG === 'brighten' || MODE_ARG === 'button-brighten';
 const BUTTON_DIM = MODE_ARG === 'dim-down' || MODE_ARG === 'dim' || MODE_ARG === 'button-dim';
@@ -2438,10 +2461,35 @@ if (SETTINGS.enableDetailedLogging) {
   log(`[AdaptiveLighting] MODE_ARG: "${MODE_ARG}"`);
 }
 
-if (!DEVICE_ID) {
-  log(`[AdaptiveLighting] ✗ ERROR: No device ID provided.`);
+// A flow card polling every 5 minutes with the same mistake would otherwise
+// fill AL_DiagnostikLog — log each broken card at most once an hour. Keyed on
+// device id + mode (a lux card's third word changes on every trigger), one entry
+// per key so two broken cards don't keep evicting each other
+function diagLogArgOnce(entry) {
+  const key = `${argParts[0] || ''} ${MODE_ARG}`;
+  const now = Date.now();
+  let seen = {};
+  try { seen = JSON.parse(global.get('AL_LastArgWarning') || '{}'); } catch (e) { /* corrupt — start over */ }
+  if (!seen || typeof seen !== 'object' || Array.isArray(seen)) seen = {};
+  if (typeof seen[key] === 'number' && now - seen[key] < 3600000) return;
+  for (const k of Object.keys(seen)) {
+    if (typeof seen[k] !== 'number' || now - seen[k] >= 3600000) delete seen[k];
+  }
+  seen[key] = now;
+  global.set('AL_LastArgWarning', JSON.stringify(seen));
+  diagLog(entry);
+}
+
+if (!argParts[0]) {
+  diagLogArgOnce(`AL-DEFAULT-ID | no argument — using ST Standerlampe (editor test run?)`);
+}
+const badArg = !DEVICE_ID_PATTERN.test(DEVICE_ID) ? 'not a device id'
+  : !KNOWN_MODES.has(MODE_ARG) ? 'unknown mode' : null;
+if (badArg) {
+  log(`[AdaptiveLighting] ✗ Bad argument "${argString}": ${badArg} — nothing changed`);
   log(`[AdaptiveLighting] Usage: "deviceId [mode]"`);
-  log(`[AdaptiveLighting] Modes: check, force/reset, cycle-profile, brighten, dim-down, max, toggle, clear`);
+  log(`[AdaptiveLighting] Modes: check, lux, force/reset, clear, cycle-profile, brighten, dim-down, max, toggle`);
+  diagLogArgOnce(`AL-BADARG | "${argString}" | ${badArg}`);
   return false;
 }
 
