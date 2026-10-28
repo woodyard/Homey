@@ -1,0 +1,16 @@
+services:
+  homey-dashboard:
+    build: .
+    container_name: homey-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # From your Homey OAuth client (tools.developer.homey.app/api/clients)
+      - ATHOM_CLIENT_ID=${ATHOM_CLIENT_ID}
+      - ATHOM_CLIENT_SECRET=${ATHOM_CLIENT_SECRET}
+      # Any long random string; encrypts the session cookie.
+      - COOKIE_SECRET=${COOKIE_SECRET}
+      # Public base URL the browser reaches this at — MUST be https and match the
+      # OAuth redirect URI you register, e.g. https://homey.your-nas.example
+      - APP_BASE_URL=${APP_BASE_URL}
