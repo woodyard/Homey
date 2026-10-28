@@ -2,12 +2,21 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.30.0
+// Version:     2.30.1
 // Date:        2026-10-28
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.30.1 2026-10-28  FREE DAYS is a shared block (no change in behaviour)
+//                    - The same block is in the new AL_FreeDay script
+//                      (al_free_day.js), the flow condition B9 and E9 - Light
+//                      flow use for their inactivity-timeout cards, so the
+//                      flows switch when the weekend profiles do. The platform
+//                      test checks the two copies are identical
+//                    - scheduleDay() reads date and hour from one clock reading
+//                      (Intl formatToParts, h23) instead of two, so it no
+//                      longer needs getCurrentTimeInMinutes()
 // 2.30.0 2026-10-28  Holidays use the weekend schedule
 //                    - Weekend profiles only knew Saturday and Sunday, so the
 //                      kids got the school-night bedtime all through the autumn
@@ -1333,11 +1342,13 @@ function getCurrentDayOfWeek() {
   return copenhagenDate.getDay();
 }
 
-// ====== FREE DAYS (weekends and holidays) ======
-// The holiday calendar Room Heating keeps (room_heating_config.js → global
-// Config.Global): schoolHolidays [{ from, to, name }] and publicHolidaysFixed
-// ['MM-DD']; the Easter-based public holidays are computed as room_heating.js
-// does. Missing or unreadable Config.Global → plain Saturday/Sunday.
+// ====== FREE DAYS — same block in adaptivelighting.js and al_free_day.js;
+// change both together ======
+// Weekends and holidays, from the calendar Room Heating keeps
+// (room_heating_config.js → global Config.Global, a JSON string):
+// schoolHolidays [{ from, to, name }] and publicHolidaysFixed ['MM-DD']; the
+// Easter-based public holidays are computed as room_heating.js does. Missing or
+// unreadable Config.Global → plain Saturday/Sunday.
 
 let _holidayConfig;  // read once per run
 function holidayConfig() {
@@ -1381,21 +1392,25 @@ function easterBasedHolidays(year) {
  * tomorrow — an evening belongs to the next morning, so Friday evening gets the
  * weekend bedtime and Sunday evening the weekday one. Daytime is identical in
  * every weekday/weekend pair, so the switch at noon is invisible.
- * @returns {{ iso: string, dow: number }} Copenhagen date, 0 = Sunday
+ * Date and hour come from one clock reading in Copenhagen time.
+ * @returns {{ iso: string, dow: number }} 0 = Sunday
  */
 function scheduleDay() {
-  const [m, d, y] = new Date().toLocaleDateString('en-US', {
-    timeZone: 'Europe/Copenhagen', year: 'numeric', month: '2-digit', day: '2-digit'
-  }).split('/').map(Number);
-  const offset = getCurrentTimeInMinutes() >= 12 * 60 ? 1 : 0;
-  const date = new Date(Date.UTC(y, m - 1, d + offset));
+  const now = {};
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Copenhagen', year: 'numeric', month: 'numeric', day: 'numeric',
+    hour: 'numeric', hourCycle: 'h23'
+  }).formatToParts(new Date());
+  for (const p of parts) now[p.type] = Number(p.value);
+  const offset = now.hour >= 12 ? 1 : 0;
+  const date = new Date(Date.UTC(now.year, now.month - 1, now.day + offset));
   return { iso: date.toISOString().slice(0, 10), dow: date.getUTCDay() };
 }
 
 /**
  * Why the schedule day is a free day ('Weekend', a holiday's name), or null.
  * Public holidays count for every room; school holidays only when asked
- * (rooms with schoolHolidays: true — the kids' rooms)
+ * (AL: rooms with schoolHolidays: true — the kids' rooms)
  */
 function freeDayReason(includeSchoolHolidays = false) {
   const day = scheduleDay();
@@ -1414,6 +1429,7 @@ function freeDayReason(includeSchoolHolidays = false) {
   }
   return null;
 }
+// ====== end of shared FREE DAYS block ======
 
 /** Log tag for a room on its weekend set: ' [Weekend]', ' [Weekend: Juleaften]', or '' */
 function weekendTag(roomConfig) {
@@ -1651,7 +1667,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.30.0';
+const AL_VERSION = '2.30.1';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {

@@ -31,6 +31,7 @@ export const scenarios = {
     // [time, O Loft profile, SV Loft profile, weekend set?]
     const cases = [
       ['Fri 11:30', '2026-10-30T11:30:00+01:00', 'Daytime', 'Daytime', false],
+      ['Fri 12:30', '2026-10-30T12:30:00+01:00', 'Daytime', 'Daytime', true],    // 11:30 in UTC
       ['Fri 18:30', '2026-10-30T18:30:00+01:00', 'Daytime', 'Daytime', true],
       ['Fri 20:30', '2026-10-30T20:30:00+01:00', 'Evening', 'Evening', true],
       ['Fri 22:30', '2026-10-30T22:30:00+01:00', 'Night', 'Evening', true],

@@ -30,6 +30,18 @@ export const scenarios = {
     for (const f of files.slice(1)) t.check(blockOf(f) === ref, `${f} has the same block`);
   },
 
+  async 'the shared FREE DAYS block is identical in AdaptiveLighting and AL_FreeDay'(t) {
+    const blockOf = (f) => {
+      const s = fs.readFileSync(scriptPath(f), 'utf8').replace(/\r\n/g, '\n');
+      const a = s.indexOf('// ====== FREE DAYS — same block');
+      const e = s.indexOf('// ====== end of shared FREE DAYS block ======');
+      return a >= 0 && e > a ? s.slice(a, e) : null;
+    };
+    const ref = blockOf('adaptivelighting.js');
+    t.check(ref, 'adaptivelighting.js has the block');
+    t.check(blockOf('al_free_day.js') === ref, 'al_free_day.js has the same block');
+  },
+
   async 'no setTimeout or setInterval calls'(t) {
     for (const f of scriptFiles()) {
       const code = stripComments(fs.readFileSync(scriptPath(f), 'utf8'));
