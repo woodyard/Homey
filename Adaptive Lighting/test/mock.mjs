@@ -80,6 +80,12 @@ export function createEnv(devices = []) {
     zoneActive: false,
     failLogicUpdate: false,
     createDelayMs: 0,      // > 0 makes createVariable slow, so parallel runs overlap
+    deviceListDelayMs: 0,  // > 0: getDevices (the slow call on a busy Homey) answers
+                           // after this many real ms, and getDevice/getDevices return
+                           // copies of the devices as they were when asked, as
+                           // Homey's API does — two runs for one light then overlap
+    commandDelayMs: 0,     // > 0: a device command lands (value changes) this many
+                           // real ms after it is sent, as on a real bulb
     waitAdvancesClock: false, // true: wait(ms) moves the clock forward by ms
     onWait: null,          // async (ms) => {} called on every wait() — lets a test
                            // make something happen during a fade (motion, a restore)
@@ -92,6 +98,7 @@ export function createEnv(devices = []) {
     if (!d) throw new Error(`Not Found: Device with ID ${deviceId}`);
     if (env.unreachable.has(deviceId)) throw new Error(`${d.name} unreachable`);
     if (!d.capabilitiesObj[cap]) throw new Error(`${d.name} has no ${cap}`);
+    if (env.commandDelayMs) await new Promise((r) => setTimeout(r, env.commandDelayMs));
     d.capabilitiesObj[cap].value = value;
     env.commands.push(`${d.name} ${cap}=${value}`);
   };
@@ -100,6 +107,13 @@ export function createEnv(devices = []) {
     if (!d.setCapabilityValue) d.setCapabilityValue = (cap, value) => setCap(d.id, cap, value);
     return d;
   };
+  // With deviceListDelayMs: the device as it is now; its commands still reach the live device
+  const snapshot = (d) => ({
+    ...d,
+    capabilities: [...d.capabilities],
+    capabilitiesObj: JSON.parse(JSON.stringify(d.capabilitiesObj)),
+    setCapabilityValue: (cap, value) => setCap(d.id, cap, value),
+  });
 
   // set(key, undefined) removes the key; env.emptiedStaysListed = true makes it
   // stay listed with value null instead (HomeyScript may keep emptied keys)
@@ -119,9 +133,14 @@ export function createEnv(devices = []) {
       getDevice: async ({ id }) => {
         const d = env.devices[id];
         if (!d) throw new Error(`Not Found: Device with ID ${id}`);
-        return withMethods(d);
+        return env.deviceListDelayMs ? snapshot(d) : withMethods(d);
       },
       getDevices: async () => {
+        if (env.deviceListDelayMs) {
+          const copies = Object.fromEntries(Object.entries(env.devices).map(([id, d]) => [id, snapshot(d)]));
+          await new Promise((r) => setTimeout(r, env.deviceListDelayMs));
+          return copies;
+        }
         for (const d of Object.values(env.devices)) withMethods(d);
         return env.devices;
       },

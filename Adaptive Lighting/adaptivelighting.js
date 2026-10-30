@@ -2,12 +2,39 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.30.1
-// Date:        2026-10-28
+// Version:     2.31.0
+// Date:        2026-10-29
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.31.0 2026-10-29  Overlapping runs for one light no longer undo each other
+//                    - A run read a light's state once and wrote the whole
+//                      object back on every save. A check poll still waiting
+//                      for Homey's device list when the light was turned on
+//                      put the old state back: manual mode returned (K Bord
+//                      stayed at 100 % until Night, the dashboard said
+//                      Manual), a forced profile was wiped and the next check
+//                      logged a false OVERRIDE
+//                    - Saves re-read the stored state and write only the
+//                      fields they change (patchDeviceState). Each save that
+//                      changes what the light shows or how AL treats it adds
+//                      one to the state's new rev field; bookkeeping
+//                      (schedule times, fullRunDue, a lease released) doesn't
+//                    - Turn-on, clear, reset and cycle-profile runs hold a
+//                      lease on their light (state.busy) from their first
+//                      line to their last; a check or lux run that starts
+//                      meanwhile backs off at its gate, before any API call
+//                      (AL-SKIP-BUSY, reason user_run_active). Its device
+//                      values could predate their commands
+//                    - A check or lux run whose light another run saved after
+//                      it read the state stops at its next save (the first
+//                      comes right after the device fetch): AL-SKIP-STALE,
+//                      reason state_changed
+//                    - A run that backs off sets fullRunDue, so the next
+//                      check poll is a full run — a lux run that backed off
+//                      may have held the newer reading
+//                    - Turn-on, clear, reset and cycle-profile runs always act
 // 2.30.1 2026-10-28  FREE DAYS is a shared block (no change in behaviour)
 //                    - The same block is in the new AL_FreeDay script
 //                      (al_free_day.js), the flow condition B9 and E9 - Light
@@ -1474,6 +1501,23 @@ function getDeviceKey(deviceId) {
 // One state object per device, stored in its own global variable.
 // Key format: AL_Device_<deviceKey>.State (e.g. AL_Device_1e87af68.State)
 // Each call only parses/serializes one device — no wasted work on other devices.
+//
+// Several AL runs for one light can be in flight at once (a turn-on while a
+// check poll waits for the device list). So:
+// - A save re-reads the stored state and writes only the fields it changes —
+//   no await between the read and the write, so nothing can slip in. A save
+//   that changes what the light shows or how AL treats it (manual, profile,
+//   forced, fade end, a lease taken) adds one to rev; bookkeeping (schedule
+//   times, fullRunDue, a lease released) doesn't, so it can't make another
+//   run back off after that run has already sent its commands.
+// - Turn-on, clear, reset and cycle-profile runs hold a lease (busy) on their
+//   light from their first line until they finish: a check or lux run that
+//   starts meanwhile backs off at its gate (AL-SKIP-BUSY), since its device
+//   values could predate their commands.
+// - A check or lux run whose light has a newer rev than the one it read stops
+//   at its next save (AL-SKIP-STALE).
+// - A run that backs off sets fullRunDue, so the next check poll is a full run
+//   (it may have held a newer lux reading).
 
 const AL_STATE_PREFIX = 'AL_Device_';
 const AL_STATE_SUFFIX = '.State';
@@ -1491,7 +1535,10 @@ const DEFAULT_DEVICE_STATE = {
   forcedProfile: {
     index: -1,            // -1 = auto, 0-3 = forced profile
     profiles: null        // Cached profile schedule (array of 4)
-  }
+  },
+  rev: 0,                 // +1 on every save that isn't bookkeeping (check/lux runs back off when it moved)
+  busy: {},               // Leases of turn-on/clear/reset/cycle runs in flight: { token: until ms }
+  fullRunDue: false       // A check/lux run backed off: the next check poll is a full run
 };
 
 /**
@@ -1504,23 +1551,13 @@ function stateKey(deviceId) {
 // Per-run cache: avoids repeated global.get + JSON.parse for the same device
 const _stateRunCache = new Map();
 
-/**
- * Get state for a single device (with default-merge for forward compat)
- * Only parses this one device's JSON — O(1) regardless of total device count
- * Cached per script run: subsequent reads for the same device return the cached object
- */
-function getDeviceState(deviceId) {
-  const key = stateKey(deviceId);
-  if (_stateRunCache.has(key)) {
-    return _stateRunCache.get(key);
-  }
-
-  let state;
+/** The stored state merged over the defaults (forward compat); defaults when missing or corrupt */
+function readStoredState(key) {
   try {
     const raw = global.get(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      state = {
+      return {
         ...DEFAULT_DEVICE_STATE,
         ...parsed,
         forcedProfile: { ...DEFAULT_DEVICE_STATE.forcedProfile, ...(parsed.forcedProfile || {}) }
@@ -1529,23 +1566,75 @@ function getDeviceState(deviceId) {
   } catch (e) {
     // Parse error — return defaults
   }
-
-  if (!state) {
-    state = { ...DEFAULT_DEVICE_STATE, forcedProfile: { ...DEFAULT_DEVICE_STATE.forcedProfile } };
-  }
-
-  _stateRunCache.set(key, state);
-  return state;
+  return { ...DEFAULT_DEVICE_STATE, forcedProfile: { ...DEFAULT_DEVICE_STATE.forcedProfile } };
 }
 
 /**
- * Save state for a single device
- * Only serializes this one device's JSON — O(1)
+ * Get state for a single device (read-only: change it with patchDeviceState)
+ * Only parses this one device's JSON — O(1) regardless of total device count
+ * Cached per script run: later reads return the state as this run last read or saved it
  */
-function saveDeviceState(deviceId, state) {
-  global.set(stateKey(deviceId), JSON.stringify(state));
+function getDeviceState(deviceId) {
+  const key = stateKey(deviceId);
+  if (!_stateRunCache.has(key)) _stateRunCache.set(key, readStoredState(key));
+  return _stateRunCache.get(key);
+}
+
+/**
+ * Save some fields of a device's state: re-reads the stored state, so fields
+ * another run saved since this run read it are kept. `fields` is an object, or
+ * a function of the stored state returning one. Returns the saved state.
+ * In a check or lux run, throws (alStale) instead when this run's light has
+ * been saved by another run since this run read it (unless evenIfStale).
+ * bookkeeping: true leaves rev alone (see UNIFIED DEVICE STATE)
+ */
+function patchDeviceState(deviceId, fields, { evenIfStale = false, bookkeeping = false } = {}) {
+  const key = stateKey(deviceId);
+  const stored = readStoredState(key);
+  const storedRev = Number(stored.rev) || 0;
+  const seen = _stateRunCache.get(key);
+  if (!evenIfStale && CHECK_MANUAL && deviceId === DEVICE_ID && seen && (Number(seen.rev) || 0) !== storedRev) {
+    const stale = new Error('state changed by another AL run');
+    stale.alStale = true;
+    throw stale;
+  }
+  const changes = typeof fields === 'function' ? fields(stored) : fields;
+  const state = { ...stored, ...changes, rev: bookkeeping ? storedRev : storedRev + 1 };
+  global.set(key, JSON.stringify(state));
+  _stateRunCache.set(key, state);
   registerDeviceKey(deviceId);
   _alStateDirty = true;
+  return state;
+}
+
+// A lease outlives its run only if HomeyScript killed the run before its
+// finally (a minute of skipped polls at most); runs take a few seconds
+const BUSY_LEASE_MS = 60000;
+
+/** The leases in a state that haven't run out: { token: until } */
+function activeLeases(state) {
+  const now = Date.now();
+  const leases = {};
+  for (const [token, until] of Object.entries(state.busy || {})) {
+    if (typeof until === 'number' && until > now) leases[token] = until;
+  }
+  return leases;
+}
+
+function userRunActive(state) {
+  return Object.keys(activeLeases(state)).length > 0;
+}
+
+/**
+ * A check or lux run steps back for another run on its light: it decides and
+ * sends nothing, and the next check poll is a full run. Returns the run's result
+ */
+function backOff(tag, reason, detail) {
+  const room = ROOM_CONFIG[DEVICE_ID]?.name || String(DEVICE_ID).substring(0, 8);
+  patchDeviceState(DEVICE_ID, { fullRunDue: true }, { evenIfStale: true, bookkeeping: true });
+  if (SETTINGS.enableLogging) log(`[${room}] ⸏ Skipping ${MODE_ARG} - ${detail}`);
+  diagLog(`${tag} | ${room} | mode=${MODE_ARG} | ${detail}`);
+  return { room, skipped: true, reason };
 }
 
 // Set by any state save this run — the status publish at the end only looks
@@ -1597,10 +1686,7 @@ function isManualMode(deviceId) {
  * Set manual mode for a device
  */
 function setManualMode(deviceId, enabled) {
-  const state = getDeviceState(deviceId);
-  state.manual = enabled;
-  if (enabled) state.manualSince = Date.now();
-  saveDeviceState(deviceId, state);
+  patchDeviceState(deviceId, enabled ? { manual: true, manualSince: Date.now() } : { manual: false });
 
   if (SETTINGS.enableDetailedLogging) {
     log(`[AdaptiveLighting] Manual mode ${enabled ? 'enabled' : 'disabled'} for ${getDeviceKey(deviceId)}`);
@@ -1618,10 +1704,9 @@ function getLastProfile(deviceId) {
  * Set last applied profile for a device
  */
 function setLastProfile(deviceId, profileName, brightness = null, temperature = null, daylightMeta = null) {
-  const state = getDeviceState(deviceId);
-  state.lastProfile = profileName;
+  const fields = { lastProfile: profileName };
   if (typeof brightness === 'number') {
-    state.lastApplied = {
+    fields.lastApplied = {
       at: Date.now(),                                        // when AL applied/confirmed these values
       brightness,
       temperature: typeof temperature === 'number' ? temperature : null,
@@ -1653,7 +1738,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
       via: MODE_ARG || 'normal'
     };
   }
-  saveDeviceState(deviceId, state);
+  patchDeviceState(deviceId, fields);
 }
 
 // ====== PUBLISHED STATUS (AdaptiveLightingStatus) ======
@@ -1667,7 +1752,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.30.1';
+const AL_VERSION = '2.31.0';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -1787,9 +1872,7 @@ async function publishALStatusIfChanged() {
  * @param {number} duration - Fade duration in seconds
  */
 function setDeviceFading(deviceId, duration) {
-  const state = getDeviceState(deviceId);
-  state.fadeEndTime = Date.now() + (duration * 1000) + 5000; // Add 5sec buffer
-  saveDeviceState(deviceId, state);
+  patchDeviceState(deviceId, { fadeEndTime: Date.now() + (duration * 1000) + 5000 }); // Add 5sec buffer
 
   if (SETTINGS.enableDetailedLogging) {
     log(`[AdaptiveLighting] Fade started for ${getDeviceKey(deviceId)} - ${duration}s + 5s buffer`);
@@ -1869,23 +1952,22 @@ function setForcedProfile(deviceId, profileIndex, profileData = null) {
     return; // Device not configured for forced profiles
   }
 
-  const state = getDeviceState(deviceId);
-
+  let forcedProfile;
   if (profileIndex === -1) {
-    state.forcedProfile = {
+    forcedProfile = {
       index: -1,
       profiles: Array.isArray(profileData) ? profileData : null
     };
   } else if (Array.isArray(profileData)) {
-    state.forcedProfile = {
+    forcedProfile = {
       index: profileIndex,
       profiles: profileData
     };
   } else {
-    state.forcedProfile = { index: profileIndex, profiles: null };
+    forcedProfile = { index: profileIndex, profiles: null };
   }
 
-  saveDeviceState(deviceId, state);
+  patchDeviceState(deviceId, { forcedProfile });
 
   if (SETTINGS.enableDetailedLogging) {
     const mode = profileIndex === -1 ? 'auto' : `forced profile ${profileIndex}`;
@@ -2244,11 +2326,11 @@ function findNextBoundary(profiles, currentMinutes) {
  */
 function recordSchedule(deviceId, profiles, fromMinutes) {
   const next = findNextBoundary(profiles, fromMinutes);
-  const state = getDeviceState(deviceId);
-  state.lastFullCheckAt = Date.now();
-  // msFromNow is relative to fromMinutes; shift it back to real "now"
-  state.nextBoundaryAt = next ? Date.now() + next.msFromNow + ((fromMinutes - getCurrentTimeInMinutes()) * 60000) : 0;
-  saveDeviceState(deviceId, state);
+  patchDeviceState(deviceId, {
+    lastFullCheckAt: Date.now(),
+    // msFromNow is relative to fromMinutes; shift it back to real "now"
+    nextBoundaryAt: next ? Date.now() + next.msFromNow + ((fromMinutes - getCurrentTimeInMinutes()) * 60000) : 0
+  }, { bookkeeping: true });
   return next;
 }
 
@@ -2318,15 +2400,11 @@ async function clearManualModeForGroup(deviceId, device) {
   const members = await findGroupMembers(device);
 
   // Clear main device
-  const state = getDeviceState(deviceId);
-  state.manual = false;
-  saveDeviceState(deviceId, state);
+  patchDeviceState(deviceId, { manual: false });
 
   // Clear group members
   for (const member of members) {
-    const memberState = getDeviceState(member.id);
-    memberState.manual = false;
-    saveDeviceState(member.id, memberState);
+    patchDeviceState(member.id, { manual: false });
   }
 
   if (members.length > 0 && SETTINGS.enableDetailedLogging) {
@@ -2674,11 +2752,21 @@ if (badArg) {
   return false;
 }
 
+let leaseToken = null;   // this run's lease on its light (released in finally)
 try {
   // Get the device from Homey
   // For button actions: only fetch the device (fast path)
   // For all other modes: fetch device, sun times, and device list in parallel
   const isButtonMode = BUTTON_BRIGHTEN || BUTTON_DIM || BUTTON_MAX || BUTTON_TOGGLE;
+
+  // Turn-on, clear, reset and cycle-profile take a lease on their light before
+  // their first await, so a check or lux poll stays away until their commands
+  // have landed (see UNIFIED DEVICE STATE). Button modes save no state
+  if (!CHECK_MANUAL && !isButtonMode) {
+    const token = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    patchDeviceState(DEVICE_ID, s => ({ busy: { ...activeLeases(s), [token]: Date.now() + BUSY_LEASE_MS } }));
+    leaseToken = token;
+  }
 
   // CHECK-MODE GATE: the flows poll every checkPollMinutes. Nothing can change
   // between profile boundaries, so skip the (expensive) device fetch unless the
@@ -2692,6 +2780,7 @@ try {
       return { skipped: true, reason: 'luminance_not_enabled' };
     }
     const gateState = getDeviceState(DEVICE_ID);
+    if (userRunActive(gateState)) return backOff('AL-SKIP-BUSY', 'user_run_active', 'a turn-on, clear, reset or cycle-profile run is in progress');
     if (gateState.manual) return { skipped: true, reason: 'manual_mode' };
     if (Date.now() < gateState.fadeEndTime) return { skipped: true, reason: 'fade_in_progress' };
     const last = gateState.lastApplied;
@@ -2717,6 +2806,7 @@ try {
     // Significant change (or nothing to compare against) → fall through to a full check run
   } else if (CHECK_MANUAL) {
     const gateState = getDeviceState(DEVICE_ID);
+    if (userRunActive(gateState)) return backOff('AL-SKIP-BUSY', 'user_run_active', 'a turn-on, clear, reset or cycle-profile run is in progress');
     const gateNow = Date.now();
     const pollMs = SETTINGS.checkPollMinutes * 60000;
     const resyncDue = gateNow - (gateState.lastFullCheckAt || 0) >= SETTINGS.checkResyncMinutes * 60000;
@@ -2738,7 +2828,7 @@ try {
       }
       tempDriftDue = Math.abs(predicted - (gateState.lastApplied.temperature ?? predicted)) >= c.step;
     }
-    if (!resyncDue && !boundaryNear && !tempDriftDue) {
+    if (!resyncDue && !boundaryNear && !tempDriftDue && !gateState.fullRunDue) {
       return {
         skipped: true,
         reason: 'not_due',
@@ -2759,6 +2849,9 @@ try {
     device = _device;
     CACHED_ALL_DEVICES = _allDevices;
   }
+  // The lease read this light's state before the fetch: decide from it as it
+  // is now (a second cycle-profile press must see the first one's profile)
+  if (leaseToken) _stateRunCache.delete(stateKey(DEVICE_ID));
 
   // FAST PATH: Handle button actions immediately (no room config, no time calc, minimal overhead)
   if (isButtonMode) {
@@ -3051,6 +3144,12 @@ try {
     };
   }
 
+  // A check/lux run past the fade check decides from fresh values: the full
+  // run owed by a run that backed off is done (one skipped for a fade still owes it)
+  if (CHECK_MANUAL && getDeviceState(DEVICE_ID).fullRunDue) {
+    patchDeviceState(DEVICE_ID, { fullRunDue: false }, { bookkeeping: true });
+  }
+
   // Normal mode: skip if a fade is in progress OR a restore just happened.
   // During a fade, RestoreSavedSettings handles the restore — AL stays out of the way.
   // RestoreSavedSettings clears _FadeActiveUntil and sets _RestoredAt in the same
@@ -3118,11 +3217,10 @@ try {
     // override — an override made during Night itself sticks. Still manual
     // more than 12 h later (light left on since last night) counts as a new night
     if (isManualMode(DEVICE_ID)) {
-      const manualState = getDeviceState(DEVICE_ID);
+      let manualState = getDeviceState(DEVICE_ID);
       // Manual state from before 2.29 has no timestamp: start the 12 h clock now
       if (!manualState.manualSince) {
-        manualState.manualSince = Date.now();
-        saveDeviceState(DEVICE_ID, manualState);
+        manualState = patchDeviceState(DEVICE_ID, { manualSince: Date.now() });
       }
       const expiresInto = Array.isArray(SETTINGS.manualExpiresInto) ? SETTINGS.manualExpiresInto : [];
       const newProfile = manualState.lastProfile !== activeProfile.name;
@@ -3501,11 +3599,17 @@ try {
   };
   
 } catch (error) {
+  if (error && error.alStale) {
+    // Another run saved this light while this check/lux run waited on Homey;
+    // what this run fetched may predate it
+    return backOff('AL-SKIP-STALE', 'state_changed', 'another AL run saved this light during this one');
+  }
+  const room = ROOM_CONFIG[DEVICE_ID]?.name || String(DEVICE_ID).substring(0, 8);
   log(`[AdaptiveLighting] ✗ ERROR: ${error.message}`);
   // Flow runs never show the console — leave a trace in the shared log.
   // Guarded so a failing log write can't replace the original error
   try {
-    diagLog(`AL-ERROR | ${ROOM_CONFIG[DEVICE_ID]?.name || String(DEVICE_ID).substring(0, 8)} | ${MODE_ARG || 'normal'} | ${error.message}`);
+    diagLog(`AL-ERROR | ${room} | ${MODE_ARG || 'normal'} | ${error.message}`);
   } catch (e) { /* ignore */ }
   if (SETTINGS.enableDetailedLogging) {
     log(`[AdaptiveLighting] Device ID: ${DEVICE_ID}`);
@@ -3515,5 +3619,15 @@ try {
 } finally {
   // Every exit path, including errors after a partial state write. Completes
   // normally, so the run's own return value is kept
+  if (leaseToken) {
+    // Only this run's lease: another run on the light keeps its own
+    try {
+      patchDeviceState(DEVICE_ID, s => {
+        const busy = activeLeases(s);
+        delete busy[leaseToken];
+        return { busy };
+      }, { bookkeeping: true });
+    } catch (e) { /* the lease runs out by itself */ }
+  }
   await publishALStatusIfChanged();
 }

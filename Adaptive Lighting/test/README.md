@@ -19,7 +19,11 @@ functions that throw, because HomeyScript has neither (that crashed three script
 
 - **Homey**: lights whose values change when a command reaches them, motion and lux sensors,
   device flow cards (dim/temperature with duration), zones, and Logic variables with every call
-  recorded. Devices can be made unreachable (`env.unreachable.add(id)`).
+  recorded. Devices can be made unreachable (`env.unreachable.add(id)`). With
+  `env.deviceListDelayMs = 50`, `getDevices` answers 50 real ms later and `getDevice`/`getDevices`
+  return copies of the devices as they were when asked (as Homey's API does), so two runs for
+  one light overlap the way they do on a busy Homey. `env.commandDelayMs = 40` makes each device
+  command land 40 real ms after it is sent.
 - **global**: one in-memory store shared by all script runs in a scenario, like HomeyScript's
   (`get`, `set`, `keys`; `set(key, undefined)` removes the key).
 - **Clock**: `setClock('2026-10-27T21:00:00+01:00')` sets what `new Date()` and `Date.now()`
@@ -47,6 +51,7 @@ functions that throw, because HomeyScript has neither (that crashed three script
 | `arguments.mjs` | Strict arguments: unknown mode / `off` / malformed id → BADARG and nothing changes, logged once an hour; no argument → default light + DEFAULT-ID line; every mode the live flows use still runs; GradualFadeOut/RestoreSavedSettings/Room_watchdog checks |
 | `groups.mjs` | Group/Hue detection from the device driver: a Hue bulb without `button.migrate_v3` stays a single light (E9 Loft still turned off), renamed B9 bulbs found by name, zone fallback logged in GradualFadeOut/RestoreSavedSettings/Room_watchdog, AL-GROUP-NO-MEMBERS once an hour, Hue early start from the driver |
 | `self_restore.mjs` | Occupied room: GradualFadeOut doesn't start a fade when the zone is already active, restores itself at fade end when no RestoreSavedSettings arrives (not when switched off by hand), no double restore, switch back on when someone comes in right after the off (failure logged); Room_watchdog restores each E9 light on motion (no wait when the door was already open), not on an open door alone, not a light switched off by hand |
+| `overlapping_runs.mjs` | Two runs for one light at once (AL 2.31.0): a check or lux poll that starts during a turn-on, clear or cycle-profile backs off at its gate (AL-SKIP-BUSY), also when the other run's commands are still on their way; one already waiting stops at its first save (AL-SKIP-STALE) and the next poll is a full run (a newer lux reading is applied then); a check and a lux run at once: the winner's fade is recorded and the loser backs off, in both orders, and a check that changes nothing doesn't stop a lux run; a poll during the winner's fade still owes the full run; two cycle-profile presses step through two profiles; manual stays cleared, the button's forced profile and light stay, no false OVERRIDE line; a clear keeps what a turn-on saved during it; a dead lease expires after a minute; fade end and group bulbs still saved; runs one after another never back off |
 | `cleanup.mjs` | Dead flags gone (a leftover `_FadeActive` no longer blocks check mode; no `_SavedManualMode`/`_ManualRestoreUntil` writes) and `al_cleanup_globals.js`: dry run, real run keeps other scripts' keys, index rebuild, batches, empty device list |
 | `platform.mjs` | Every script parses as a HomeyScript body and never calls `setTimeout`/`setInterval`; the shared GROUPS block is identical in all four scripts; the shared FREE DAYS block is identical in AdaptiveLighting and AL_FreeDay |
 
