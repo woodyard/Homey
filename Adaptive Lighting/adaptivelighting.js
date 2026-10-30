@@ -2,12 +2,30 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.31.0
-// Date:        2026-10-29
+// Version:     2.31.1
+// Date:        2026-10-30
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.31.1 2026-10-30  Profile changes ramp in early again
+//                    - The check poll before a profile change (19:55 for
+//                      Evening at 20:00) is meant to start a 6-minute ramp
+//                      that lands on schedule. It usually found the change
+//                      "not due": the stored boundary had whole seconds plus
+//                      the milliseconds of the run that saved it, and that
+//                      run saves after the device fetch, later in its second
+//                      than the next poll's gate. The change then came at the
+//                      next poll as a 60 s fade (16 of 25 in two days of
+//                      AL_DiagnostikLog, every evening dimming on 29.10)
+//                    - findNextBoundary is exact to the millisecond, and the
+//                      look-ahead allows checkPollSlackSeconds (10) more, so a
+//                      poll that fires a moment early still counts
+//                    - An instant apply (turn-on, clear, reset) ends AL's
+//                      own running ramp (fadeEndTime). A light
+//                      switched off and on during the ramp got the old
+//                      profile, and the next poll skipped it as still fading,
+//                      so the new profile waited for the 15-min resync
 // 2.31.0 2026-10-29  Overlapping runs for one light no longer undo each other
 //                    - A run read a light's state once and wrote the whole
 //                      object back on every save. A check poll still waiting
@@ -1124,6 +1142,8 @@ const SETTINGS = {
   checkPollMinutes: 5,           // How often the flows run "check" (every_nth minute)
                                  // Must match the flow trigger — used for the
                                  // boundary look-ahead and the cheap gate
+  checkPollSlackSeconds: 10,     // The look-ahead reaches this much further, so a
+                                 // poll that fires a moment early still counts
   manualExpiresInto: ['Night'],  // Manual mode ends (check mode) when the schedule
                                  // reaches one of these profiles; [] = never (pre-2.29)
   checkResyncMinutes: 15,        // Force a full check run at least this often even
@@ -1752,7 +1772,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.31.0';
+const AL_VERSION = '2.31.1';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -2314,8 +2334,9 @@ function findNextBoundary(profiles, currentMinutes) {
   }
   if (!best && earliest) best = { minutes: earliest.minutes + 1440, profile: earliest.profile };
   if (!best) return null;
-  const secondsIntoMinute = new Date().getSeconds();
-  best.msFromNow = ((best.minutes - currentMinutes) * 60 - secondsIntoMinute) * 1000;
+  // To the millisecond: whole seconds put the stored boundary up to 1 s late,
+  // and the poll checkPollMinutes before it then didn't count as near
+  best.msFromNow = (best.minutes - currentMinutes) * 60000 - (Date.now() % 60000);
   return best;
 }
 
@@ -2497,6 +2518,11 @@ async function applyLighting(device, brightness, temperature, useDuration = fals
   // This ensures check mode knows to skip during the transition
   if (duration > 0) {
     setDeviceFading(device.id, duration);
+  } else if (Date.now() < getDeviceState(device.id).fadeEndTime) {
+    // An instant apply replaces AL's running transition (e.g. the early ramp
+    // into the next profile). End it, or check mode would keep skipping until
+    // the old fade end and the next profile would wait for the resync
+    patchDeviceState(device.id, { fadeEndTime: 0 });
   }
   
   // Find group members (if any)
@@ -2810,7 +2836,7 @@ try {
     const gateNow = Date.now();
     const pollMs = SETTINGS.checkPollMinutes * 60000;
     const resyncDue = gateNow - (gateState.lastFullCheckAt || 0) >= SETTINGS.checkResyncMinutes * 60000;
-    const boundaryNear = !gateState.nextBoundaryAt || gateNow >= gateState.nextBoundaryAt - pollMs;
+    const boundaryNear = !gateState.nextBoundaryAt || gateNow >= gateState.nextBoundaryAt - pollMs - SETTINGS.checkPollSlackSeconds * 1000;
     // Sun-temperature drift: predict from elevation (pure math) and wake a full
     // run when the colour should have moved by >= step since the last apply
     let tempDriftDue = false;
@@ -3281,7 +3307,7 @@ try {
       // transitions; for anything else an early start would just be an early
       // instant change, so leave those to the normal catch-up path.
       const supportsLongFade = await isHueDevice(device);
-      if (upcoming && supportsLongFade && upcoming.msFromNow <= pollMs && upcoming.profile.name !== activeProfile.name) {
+      if (upcoming && supportsLongFade && upcoming.msFromNow <= pollMs + SETTINGS.checkPollSlackSeconds * 1000 && upcoming.profile.name !== activeProfile.name) {
         const next = applySunTemperature(applyDaylight(upcoming.profile, daylight, roomConfig, sun), sun, roomConfig);
         const sameValues = approxEqual(next.brightness, activeProfile.brightness)
           && approxEqual(next.temperature, activeProfile.temperature);
