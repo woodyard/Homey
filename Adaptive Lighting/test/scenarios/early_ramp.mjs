@@ -6,7 +6,7 @@
 import { createEnv, light, setClock, advance, ID } from '../mock.mjs';
 
 const AL = 'adaptivelighting.js';
-const K = ID.K_BORD;    // kitchen, weekday: Daytime 09-20 100 % / 0.4, Evening 20-22 50 % / 0.6
+const K = ID.K_BORD;    // kitchen, weekday: Daytime 09-20 100 % / 0.4, Evening 20-23 70 % / 0.6
 const at = (iso) => Date.parse(iso);
 const eveningApplies = (env) => env.diag().filter((l) => l.includes('AL-APPLY | K Bord | Evening'));
 
@@ -41,7 +41,7 @@ export const scenarios = {
       t.equal(quiet.map((r) => r.reason), ['not_due', 'not_due'], `19:45 and 19:50 are not due ${when}`);
       const ramp = await poll(env, '19:55:00', gateMs);
       t.equal([ramp.early, ramp.profile, ramp.fadeSeconds], [true, 'Evening', 360], `19:55 starts Evening with a 6 min ramp ${when}`);
-      t.equal(env.dev(K).dim.value, 0.5, `the light was sent 50 % ${when}`);
+      t.equal(env.dev(K).dim.value, 0.7, `the light was sent 70 % ${when}`);
       const after = await poll(env, '20:00:00', gateMs);
       t.check(after.skipped === true, `the 20:00 poll leaves the ramp alone ${when}`, JSON.stringify(after));
       t.equal(eveningApplies(env).length, 1, `Evening applied once, early ${when}`);
@@ -62,7 +62,7 @@ export const scenarios = {
     const elevenEarly = await poll(env, '19:55:00', -11000);
     t.equal(elevenEarly.reason, 'not_due', 'a poll at 19:54:49 is not due');
     const evening = await poll(env, '20:00:00');
-    t.equal([evening.profile, env.dev(K).dim.value], ['Evening', 0.5], 'Evening then comes at the 20:00 poll');
+    t.equal([evening.profile, env.dev(K).dim.value], ['Evening', 0.7], 'Evening then comes at the 20:00 poll');
   },
 
   async 'switched off and on during the ramp: the 20:00 poll applies Evening'(t) {
@@ -78,7 +78,7 @@ export const scenarios = {
     t.equal(env.state(K).fadeEndTime, 0, 'the turn-on ended the ramp marker');
     const evening = await poll(env, '20:00:00');
     t.equal([evening.skipped === true, evening.profile], [false, 'Evening'], 'the 20:00 poll applies Evening instead of waiting for the resync');
-    t.equal(env.dev(K).dim.value, 0.5, 'K Bord at 50 % from 20:00');
+    t.equal(env.dev(K).dim.value, 0.7, 'K Bord at 70 % from 20:00');
   },
 
   async 'switched on after 19:55 (no ramp): Evening at the 20:00 poll, as before'(t) {
@@ -89,6 +89,6 @@ export const scenarios = {
     const on = await env.run(AL, K);
     t.equal(on.profile, 'Daytime', 'the turn-on applies Daytime');
     const evening = await poll(env, '20:00:00');
-    t.equal([evening.profile, env.dev(K).dim.value], ['Evening', 0.5], 'the 20:00 poll applies Evening');
+    t.equal([evening.profile, env.dev(K).dim.value], ['Evening', 0.7], 'the 20:00 poll applies Evening');
   },
 };

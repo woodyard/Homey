@@ -8,7 +8,7 @@ import { createEnv, light, setClock, advance, clock, ID, HUE_DRIVER, GROUP_DRIVE
 const AL = 'adaptivelighting.js';
 const GFO = 'gradualfadeout.js';
 const RSS = 'restoresavedsettings.js';
-const KB = ID.K_BORD;   // kitchen: Morning 06-09 100/0.3, Daytime 09-20 100/0.4, Evening 20-22 50/0.6, Night 22-06 15/0.9
+const KB = ID.K_BORD;   // kitchen: Morning 06-09 100/0.3, Daytime 09-20 100/0.4, Evening 20-23 70/0.6, Night 23-06 15/0.9
 const KL = ID.K_LOFT;
 const ZONE = 'koekken-zone';
 const FETCH_MS = 50;
@@ -218,10 +218,10 @@ export const scenarios = {
     t.equal([env.state(KB).idle.level, env.state(KB).manual], [{ brightness: 0.35, temperature: 0.9 }, false], 'idle level follows, still auto');
   },
 
-  async 'D3: ratchet through the night — 21:00 → 10 %, stays 10 % at 22:00 and 06:00; polls stay quiet'(t) {
+  async 'D3: ratchet through the night — 21:00 → 10 %, stays 10 % at 23:00 and 06:00; polls stay quiet'(t) {
     const { env } = await idleKitchen();
     const seen = {};
-    const want = { '20:50': 0.35, '21:05': 0.1, '22:30': 0.1, '06:30': 0.1, '08:30': 0.1, '09:30': 0.1 };
+    const want = { '20:50': 0.35, '21:05': 0.1, '23:30': 0.1, '06:30': 0.1, '08:30': 0.1, '09:30': 0.1 };
     let applies = 0;
     for (let m = 16 * 60 + 5; m <= (24 + 9) * 60 + 30; m += 5) {
       const day = m >= 24 * 60 ? '03' : '02';
@@ -232,7 +232,7 @@ export const scenarios = {
       if (env.commands.length > before) applies += 1;
       if (want[hhmm] !== undefined) seen[hhmm] = dims(env, KB)[0];
     }
-    t.equal(seen, want, 'K Bord: 35 % until 21:00, then 10 % through 22:00, 06:00 (stue/kitchen Morning) and 09:00');
+    t.equal(seen, want, 'K Bord: 35 % until 21:00, then 10 % through 23:00 (kitchen Night), 06:00 (stue/kitchen Morning) and 09:00');
     t.equal(applies, 1, 'one change all night (the ramp into the stue Night at 21:00)');
     t.equal(temps(env, KB), [0.9, 0.9, 0.9], 'temperature 0.9 throughout');
     t.check(lines(env, 'boundary 21:00').some((l) => l.includes('dim=10%')), 'the 20:55 poll ramps into the stue Night (boundary 21:00)', lines(env, 'AL-APPLY').join(' / '));
@@ -434,13 +434,13 @@ export const scenarios = {
 
   async 'idle where nothing changes (reference = own) → no command; wake → "no change"; status still shows idle'(t) {
     const same = [['  profiles: PROFILES.stue\n};', '  profiles: PROFILES.kitchen\n};']];
-    const env = kitchen({ dim: 0.5, temp: 0.6 });
+    const env = kitchen({ dim: 0.7, temp: 0.6 });
     at('20:30:00');
     await env.run(AL, KB, { patch: same });
     env.commands.length = 0; env.logicCalls.length = 0;
     const i = await env.run(AL, `${KB} idle`, { patch: same });
     t.equal([i.dimmed, env.commands], [false, []], 'idle at Evening with an Evening reference: no command');
-    t.check(lines(env, 'AL-IDLE | K Bord | Evening | already dim=50% temp=60% — no change').length === 1, 'AL-IDLE no change');
+    t.check(lines(env, 'AL-IDLE | K Bord | Evening | already dim=70% temp=60% — no change').length === 1, 'AL-IDLE no change');
     t.equal([env.status().lights[KB].idle, env.logicCalls.includes('update')], [true, true], 'the idle flag alone is published (signature)');
     at('20:40:00');
     const w = await env.run(AL, `${KB} wake`, { patch: same });
@@ -667,16 +667,16 @@ export const scenarios = {
     t.check(lines(env, 'AL-WAKE | K Bord | manual').some((l) => l.includes('took over GradualFadeOut fade')), 'AL-WAKE took over the fade');
   },
 
-  async 'D4/D3: manual and idle across 22:00 → manual ends into the idle rule (10 %), idle stays; wake then restores Night, not the scene'(t) {
+  async 'D4/D3: manual and idle across 23:00 → manual ends into the idle rule (10 %), idle stays; wake then restores Night, not the scene'(t) {
     const env = await manualScene([0.8, 0.3, 0.6]);
     at('16:00:00');
     await env.run(AL, `${KB} idle`);
-    at('22:00:00');
+    at('23:00:00');
     const p = await env.run(AL, `${KB} check`);
-    t.equal([p.profile, dims(env, KB)], ['Night', [0.1, 0.1, 0.1]], '22:00: Night under the idle rule (stue Night 10 %)');
+    t.equal([p.profile, dims(env, KB)], ['Night', [0.1, 0.1, 0.1]], '23:00: Night under the idle rule (stue Night 10 %)');
     t.check(lines(env, 'AL-MANUAL-EXPIRED | K Bord').length === 1, 'AL-MANUAL-EXPIRED');
     t.equal([env.state(KB).manual, !!env.state(KB).idle, env.state(KB).idle.level], [false, true, { brightness: 0.1, temperature: 0.9 }], 'auto, still idle, level 10 %');
-    at('23:00:00');
+    at('23:30:00');
     const w = await env.run(AL, `${KB} wake`);
     t.equal([w.profile, dims(env, KB)], ['Night', [0.15, 0.15, 0.15]], 'wake: the kitchen Night 15 % (the old scene is not restored)');
   },

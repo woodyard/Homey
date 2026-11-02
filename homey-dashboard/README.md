@@ -92,6 +92,9 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.18.1** (2026-11-02) — Lighting follows AdaptiveLighting 2.32.1: the kitchen (K Loft, K Bord)
+  has Evening 20:00–23:00 at 70 % and Night from 23:00; B9 Lys has its own schedule — Daytime until
+  23:00, Evening 23:00–00:00, Night from midnight (weekend Night until 07:30). B7 is unchanged.
 - **1.18.0** (2026-11-02) — Lighting follows AdaptiveLighting 2.32.0: a light the script has
   dimmed because its room is empty (kitchen idle) shows **Auto · idle** (or **Manual · idle**) on
   its badge and in the Rooms 2.0 tile text, and the tooltip adds "idle: dimmed while the room is

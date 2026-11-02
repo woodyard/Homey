@@ -162,6 +162,28 @@ export const scenarios = {
     }
   },
 
+  async 'kitchen Evening 20-23 at 70 %, Night from 23:00; B9 bright until 23:00, Night from midnight; B7 unchanged'(t) {
+    const cases = [
+      [ID.K_BORD, 'K Bord', 'Mon 20:30', '2026-11-02T20:30:00+01:00', ['Evening', 0.7]],
+      [ID.K_BORD, 'K Bord', 'Mon 22:30', '2026-11-02T22:30:00+01:00', ['Evening', 0.7]],
+      [ID.K_BORD, 'K Bord', 'Mon 23:00', '2026-11-02T23:00:00+01:00', ['Night', 0.15]],
+      [ID.B9_LYS, 'B9 Lys', 'Mon 21:30', '2026-11-02T21:30:00+01:00', ['Daytime', 0.9]],
+      [ID.B9_LYS, 'B9 Lys', 'Mon 23:00', '2026-11-02T23:00:00+01:00', ['Evening', 0.25]],
+      [ID.B9_LYS, 'B9 Lys', 'Mon 23:59', '2026-11-02T23:59:00+01:00', ['Evening', 0.25]],
+      [ID.B9_LYS, 'B9 Lys', 'Tue 00:00', '2026-11-03T00:00:00+01:00', ['Night', 0.08]],
+      [ID.B9_LYS, 'B9 Lys', 'Tue 05:59', '2026-11-03T05:59:00+01:00', ['Night', 0.08]],
+      [ID.B9_LYS, 'B9 Lys', 'Sat 22:30', '2026-10-31T22:30:00+01:00', ['Daytime', 0.9]],
+      [ID.B9_LYS, 'B9 Lys', 'Sun 00:30', '2026-11-01T00:30:00+01:00', ['Night', 0.08]],
+      [ID.B9_LYS, 'B9 Lys', 'Sun 07:00', '2026-11-01T07:00:00+01:00', ['Night', 0.08]],
+      [ID.B7_LYS, 'B7 Lys', 'Mon 21:30', '2026-11-02T21:30:00+01:00', ['Evening', 0.25]],
+      [ID.B7_LYS, 'B7 Lys', 'Mon 23:30', '2026-11-02T23:30:00+01:00', ['Night', 0.08]],
+    ];
+    for (const [id, name, label, iso, expected] of cases) {
+      const r = await turnOn(id, name, iso);
+      t.equal([r.profile, r.brightness], expected, `${label}: ${name} ${expected[0]} ${Math.round(expected[1] * 100)} %`);
+    }
+  },
+
   async "Claras værelse: both lights pick the same profile"(t) {
     for (const [label, iso] of [['Fri 20:30', '2026-10-30T20:30:00+01:00'], ['Sat 06:30', '2026-10-31T06:30:00+01:00'], ['Sun 20:30', '2026-11-01T20:30:00+01:00']]) {
       const loft = await turnOn(ID.C_LOFT, 'C Loft', iso);

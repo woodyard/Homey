@@ -49,7 +49,7 @@ export const scenarios = {
     t.check(env.state(O).manualSince > 0, 'its 12 h clock starts now');
   },
 
-  async 'forced profile is unaffected; kitchen Night at 22:00 ends manual'(t) {
+  async 'forced profile is unaffected; kitchen Night at 23:00 ends manual'(t) {
     const env = createEnv([light(ID.O_LOFT, 'O Loft'), light(ID.K_BORD, 'K Bord')]);
     await at(env, '2026-10-29T16:00:00+01:00', ID.O_LOFT);
     await at(env, '2026-10-29T16:01:00+01:00', `${ID.O_LOFT} cycle-profile`);
@@ -60,7 +60,7 @@ export const scenarios = {
     await at(env, '2026-10-29T17:20:00+01:00', `${ID.K_BORD} check`, () => { env.dev(ID.K_BORD).dim.value = 0.6; });
     r = await at(env, '2026-10-29T20:05:00+01:00', `${ID.K_BORD} check`);
     t.equal(r.reason, 'manual_mode', 'kitchen Evening keeps manual');
-    await at(env, '2026-10-29T22:05:00+01:00', `${ID.K_BORD} check`);
+    await at(env, '2026-10-29T23:05:00+01:00', `${ID.K_BORD} check`);
     t.equal([env.state(ID.K_BORD).manual, env.dev(ID.K_BORD).dim.value], [false, 0.15], 'kitchen Night ends manual at 15%');
   },
 

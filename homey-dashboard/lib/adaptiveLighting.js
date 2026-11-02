@@ -36,6 +36,12 @@ const P = {
     { name: 'Evening',  startTime: '21:00', endTime: '23:00', brightness: 0.25, temperature: 0.8 },
     { name: 'Night',    startTime: '23:00', endTime: '06:00', brightness: 0.08, temperature: 1.0 },
   ],
+  bathroom9: [
+    { name: 'Morning',  startTime: '06:00', endTime: '09:00', brightness: 1.0,  temperature: 0.3 },
+    { name: 'Daytime',  startTime: '09:00', endTime: '23:00', brightness: 0.9,  temperature: 0.4 },
+    { name: 'Evening',  startTime: '23:00', endTime: '00:00', brightness: 0.25, temperature: 0.8 },
+    { name: 'Night',    startTime: '00:00', endTime: '06:00', brightness: 0.08, temperature: 1.0 },
+  ],
   bedroom: [
     { name: 'Morning',  startTime: '07:00', endTime: '09:00', brightness: 0.25, temperature: 0.8 },
     { name: 'Daytime',  startTime: '09:00', endTime: '20:00', brightness: 0.6,  temperature: 0.5 },
@@ -51,8 +57,8 @@ const P = {
   kitchen: [
     { name: 'Morning',  startTime: '06:00', endTime: '09:00', brightness: 1.0,  temperature: 0.3 },
     { name: 'Daytime',  startTime: '09:00', endTime: '20:00', brightness: 1.0,  temperature: 0.4 },
-    { name: 'Evening',  startTime: '20:00', endTime: '22:00', brightness: 0.5,  temperature: 0.6 },
-    { name: 'Night',    startTime: '22:00', endTime: '06:00', brightness: 0.15, temperature: 0.9 },
+    { name: 'Evening',  startTime: '20:00', endTime: '23:00', brightness: 0.7,  temperature: 0.6 },
+    { name: 'Night',    startTime: '23:00', endTime: '06:00', brightness: 0.15, temperature: 0.9 },
   ],
   entrance: [
     { name: 'Morning',  startTime: '06:00', endTime: '07:00', brightness: 0.40, temperature: 0.7 },
@@ -79,11 +85,11 @@ const P = {
     { name: 'Evening',  startTime: '19:00', endTime: '21:00', brightness: 0.35, temperature: 0.7 },
     { name: 'Night',    startTime: '21:00', endTime: '07:30', brightness: 0.05, temperature: 1.0 },
   ],
-  bathroomWeekend: [
+  bathroom9Weekend: [
     { name: 'Morning',  startTime: '07:30', endTime: '10:00', brightness: 0.6,  temperature: 0.5 },
-    { name: 'Daytime',  startTime: '10:00', endTime: '21:00', brightness: 0.9,  temperature: 0.4 },
-    { name: 'Evening',  startTime: '21:00', endTime: '23:00', brightness: 0.25, temperature: 0.8 },
-    { name: 'Night',    startTime: '23:00', endTime: '07:30', brightness: 0.08, temperature: 1.0 },
+    { name: 'Daytime',  startTime: '10:00', endTime: '23:00', brightness: 0.9,  temperature: 0.4 },
+    { name: 'Evening',  startTime: '23:00', endTime: '00:00', brightness: 0.25, temperature: 0.8 },
+    { name: 'Night',    startTime: '00:00', endTime: '07:30', brightness: 0.08, temperature: 1.0 },
   ],
   entranceWeekend: [
     { name: 'Morning',  startTime: '07:30', endTime: '10:00', brightness: 0.35, temperature: 0.8 },
@@ -105,7 +111,7 @@ export const AL_ROOMS = [
   { area: 'Soveværelse',     name: 'SV Loft',            id: 'cbbd7c60-dc84-43c7-8f0f-790556fc9b14', weekday: P.bedroom,  weekend: P.bedroomWeekend },
   { area: 'Køkken',          name: 'K Loft',             id: 'f097b38c-cfb0-4b83-8124-59e35f82cd0f', weekday: P.kitchen },
   { area: 'Køkken',          name: 'K Bord',             id: '0e5d845d-d8ea-4db6-8096-663b0a311e07', weekday: P.kitchen },
-  { area: 'Badeværelse 9',   name: 'B9 Lys',             id: 'b8591f4d-a493-4de7-9745-c13cd07e033c', weekday: P.bathroom, weekend: P.bathroomWeekend },
+  { area: 'Badeværelse 9',   name: 'B9 Lys',             id: 'b8591f4d-a493-4de7-9745-c13cd07e033c', weekday: P.bathroom9, weekend: P.bathroom9Weekend },
   { area: 'Badeværelse 7',   name: 'B7 Lys',             id: '1ab9ca1f-60ca-44f9-8221-a03e10f005bf', weekday: P.bathroom },
   { area: 'Entre 9',         name: 'E9 Loft',            id: '2656f184-8c87-4434-95a2-fdb3fc36bdd8', weekday: P.entrance, weekend: P.entranceWeekend },
   { area: 'Entre 9',         name: 'E9 Garderobe',       id: 'e339c184-ea11-4413-bd90-dac726861fd0', weekday: P.entrance, weekend: P.entranceWeekend },

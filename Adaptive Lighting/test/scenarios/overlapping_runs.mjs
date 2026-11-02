@@ -4,7 +4,7 @@
 import { createEnv, light, luxSensor, setClock, advance, clock, ID, HUE_DRIVER, GROUP_DRIVER } from '../mock.mjs';
 
 const AL = 'adaptivelighting.js';
-const K = ID.K_BORD;    // kitchen: Daytime 09-20 100 %, Evening 20-22 50 %
+const K = ID.K_BORD;    // kitchen: Daytime 09-20 100 %, Evening 20-23 70 %
 const O = ID.O_LOFT;    // forced profiles; kids: Evening 18-20 35 %, Night 20-06 5 %
 const ST = ID.ST_STANDERLAMPE; // lux-managed (ST Motion)
 const FETCH_MS = 50;    // how long getDevices takes on this "busy Homey"
@@ -70,7 +70,7 @@ async function kitchenRecovered(t, env, overridesBefore) {
   t.equal(env.state(K).busy, {}, 'no lease left behind');
   setClock('2026-10-27T20:01:00+01:00');
   const evening = await env.run(AL, `${K} check`);
-  t.equal([evening.profile, env.dev(K).dim.value], ['Evening', 0.5], 'Evening dims to 50 % at 20:01');
+  t.equal([evening.profile, env.dev(K).dim.value], ['Evening', 0.7], 'Evening dims to 70 % at 20:01');
 }
 
 export const scenarios = {

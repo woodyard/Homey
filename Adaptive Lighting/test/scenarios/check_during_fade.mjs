@@ -5,7 +5,7 @@
 import { createEnv, light, setClock, advance, clock, ID } from '../mock.mjs';
 
 const AL = 'adaptivelighting.js';
-const K = ID.K_BORD;    // kitchen: Daytime 09-20 100 %, Evening 20-22 50 %
+const K = ID.K_BORD;    // kitchen: Daytime 09-20 100 %, Evening 20-23 70 %
 const FETCH_MS = 50;    // how long getDevices takes on this "busy Homey"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -44,7 +44,7 @@ async function stillAuto(t, env) {
   t.equal([next.reason ?? 'applied', env.state(K).manual], ['already_correct', false], 'the next poll finds Daytime as it should be');
   setClock('2026-11-02T20:01:00+01:00');
   const evening = await env.run(AL, `${K} check`);
-  t.equal([evening.profile, env.dev(K).dim.value], ['Evening', 0.5], 'Evening dims to 50 % at 20:01');
+  t.equal([evening.profile, env.dev(K).dim.value], ['Evening', 0.7], 'Evening dims to 70 % at 20:01');
 }
 
 export const scenarios = {
@@ -109,7 +109,7 @@ export const scenarios = {
     await env.run(AL, `${K} check`);
     setClock('2026-11-02T20:01:00+01:00');
     await env.run(AL, `${K} check`);
-    t.equal([env.state(K).lastProfile, env.dev(K).dim.value], ['Evening', 0.5], 'Evening comes as usual');
+    t.equal([env.state(K).lastProfile, env.dev(K).dim.value], ['Evening', 0.7], 'Evening comes as usual');
     t.check(!logged(env, 'AL-SKIP-'), 'no skip lines', env.diag().filter((l) => l.includes('AL-SKIP')).join(' / '));
     setClock('2026-11-02T20:30:00+01:00');
     env.store.set(`${K}_RestoredAt`, clock() - 29000);            // restored 29 s ago

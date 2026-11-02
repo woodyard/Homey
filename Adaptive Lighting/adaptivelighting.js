@@ -2,12 +2,25 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.32.0
+// Version:     2.32.1
 // Date:        2026-11-02
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.32.1 2026-11-02  Kitchen brighter in the evening, B9 bright until 23:00
+//                    - AL_OverrideLog (19.10-02.11): the kitchen was turned up
+//                      on 12 of 15 evenings (Night 15 % on 9, Evening 50 % on 3)
+//                      and B9 to 100 % most evenings 21-24. The kitchen now
+//                      dims itself when empty (2.32.0), so its profile only has
+//                      to suit people in it
+//                    - PROFILES.kitchen: Evening 20:00-23:00 at 70 % (was
+//                      20-22 at 50 %), Night from 23:00 (was 22:00)
+//                    - B9 Lys gets its own sets, bathroom9/bathroom9Weekend:
+//                      Daytime until 23:00, Evening 23:00-00:00, Night from
+//                      midnight (weekend Night until 07:30 as before).
+//                      bathroomWeekend is gone (B9 was its only user); B7 keeps
+//                      PROFILES.bathroom (Evening 21, Night 23)
 // 2.32.0 2026-11-02  Kitchen idle/wake: dim while the room is empty after dark
 //                    - New modes "<id> idle" (zone inactive 5 min while Mørkt,
 //                      or Mørkt turns true while the kitchen is empty) and
@@ -867,7 +880,16 @@ const PROFILES = {
     { name: "Evening",  startTime: "21:00", endTime: "23:00", brightness: 0.25, temperature: 0.8 },
     { name: "Night",    startTime: "23:00", endTime: "06:00", brightness: 0.08, temperature: 1.0 }
   ],
-  
+
+  // Badeværelse 9 - bright until 23:00 (AL_OverrideLog: B9 turned up to 100 %
+  // most evenings 21-24), Evening 23-24, Night from midnight
+  bathroom9: [
+    { name: "Morning",  startTime: "06:00", endTime: "09:00", brightness: 1.0,  temperature: 0.3 },
+    { name: "Daytime",  startTime: "09:00", endTime: "23:00", brightness: 0.9,  temperature: 0.4 },
+    { name: "Evening",  startTime: "23:00", endTime: "00:00", brightness: 0.25, temperature: 0.8 },
+    { name: "Night",    startTime: "00:00", endTime: "06:00", brightness: 0.08, temperature: 1.0 }
+  ],
+
   // Bedroom - dimmer overall, very dim at night
   bedroom: [
     { name: "Morning",  startTime: "07:00", endTime: "09:00", brightness: 0.25, temperature: 0.8 },
@@ -888,8 +910,8 @@ const PROFILES = {
   kitchen: [
     { name: "Morning",  startTime: "06:00", endTime: "09:00", brightness: 1.0,  temperature: 0.3 },
     { name: "Daytime",  startTime: "09:00", endTime: "20:00", brightness: 1.0,  temperature: 0.4 },
-    { name: "Evening",  startTime: "20:00", endTime: "22:00", brightness: 0.5,  temperature: 0.6 },
-    { name: "Night",    startTime: "22:00", endTime: "06:00", brightness: 0.15, temperature: 0.9 }
+    { name: "Evening",  startTime: "20:00", endTime: "23:00", brightness: 0.7,  temperature: 0.6 },
+    { name: "Night",    startTime: "23:00", endTime: "06:00", brightness: 0.15, temperature: 0.9 }
   ],
   
   // Entrance/hallway - motion-triggered, functional
@@ -935,12 +957,12 @@ const PROFILES = {
     { name: "Night",    startTime: "23:00", endTime: "07:30", brightness: 0.15, temperature: 0.9 }
   ],
   
-  // Bathroom weekend - gentler morning light, later start
-  bathroomWeekend: [
+  // Badeværelse 9 weekend - gentler morning light, later start; evening as weekdays
+  bathroom9Weekend: [
     { name: "Morning",  startTime: "07:30", endTime: "10:00", brightness: 0.6,  temperature: 0.5 },
-    { name: "Daytime",  startTime: "10:00", endTime: "21:00", brightness: 0.9,  temperature: 0.4 },
-    { name: "Evening",  startTime: "21:00", endTime: "23:00", brightness: 0.25, temperature: 0.8 },
-    { name: "Night",    startTime: "23:00", endTime: "07:30", brightness: 0.08, temperature: 1.0 }
+    { name: "Daytime",  startTime: "10:00", endTime: "23:00", brightness: 0.9,  temperature: 0.4 },
+    { name: "Evening",  startTime: "23:00", endTime: "00:00", brightness: 0.25, temperature: 0.8 },
+    { name: "Night",    startTime: "00:00", endTime: "07:30", brightness: 0.08, temperature: 1.0 }
   ],
 
   // Entrance weekend - softer morning light, later start
@@ -1124,8 +1146,8 @@ const ROOM_CONFIG = {
   // =====================================================================
   "b8591f4d-a493-4de7-9745-c13cd07e033c": {
     name: "B9 Lys",
-    profiles: PROFILES.bathroom,              // Weekdays
-    weekendProfiles: PROFILES.bathroomWeekend // Weekends - gentler morning light
+    profiles: PROFILES.bathroom9,              // Weekdays - bright until 23:00
+    weekendProfiles: PROFILES.bathroom9Weekend // Weekends - gentler morning light
   },
 
   // =====================================================================
@@ -1885,7 +1907,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.32.0';
+const AL_VERSION = '2.32.1';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
