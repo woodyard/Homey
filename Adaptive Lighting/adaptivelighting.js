@@ -2,12 +2,29 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.31.2
+// Version:     2.31.3
 // Date:        2026-11-02
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.31.3 2026-11-02  A check that overlaps the end of a fade is no override
+//                    - A check poll reads the light, then waits for the slow
+//                      device list before its fade test. When a GradualFadeOut
+//                      fade ended in between (RestoreSavedSettings restored the
+//                      light, or it was switched off), the poll compared the
+//                      half-faded reading with what AL applied, set manual mode
+//                      and logged an OVERRIDE; a restored light then skipped
+//                      Evening until Night. Not reachable yet (B9/B7/E9 fade but
+//                      run no check), but the kitchen will do both
+//                    - Check mode also skips when such a fade was running as
+//                      the run started (AL-SKIP-FADE), and for
+//                      restoreGraceSeconds (30 s) after a restore, whose
+//                      commands can still be on their way (AL-SKIP-RESTORE …
+//                      mode=check), as normal mode already did
+//                    - Either skip makes the next poll a full run, so a real
+//                      change right after a restore is seen 5 min later, not
+//                      at the 15-min resync
 // 2.31.2 2026-11-02  Entrance Daytime from 07:00 on weekdays
 //                    - PROFILES.entrance (E9 Loft, E9 Garderobe, E7 Lys):
 //                      Morning 06:00-07:00 (was -09:00), Daytime 07:00-18:00
@@ -1141,9 +1158,11 @@ const SETTINGS = {
   verificationDelay: 1500,       // Wait time before verification (ms)
   verificationTolerance: 0.10,   // Tolerance for verification (10%)
   failedVerificationBuffer: 60,  // Fade buffer duration if verification fails (seconds)
-  restoreGraceSeconds: 30,       // Normal mode skips profile apply this long after
-                                 // RestoreSavedSettings restored the light (the
-                                 // "turned on" trigger can arrive several seconds late)
+  restoreGraceSeconds: 30,       // Normal and check/lux runs skip this long after a
+                                 // restore (RestoreSavedSettings, GradualFadeOut,
+                                 // watchdog): the "turned on" trigger can arrive
+                                 // several seconds late, and the restore's commands
+                                 // can still be on their way
   checkPollMinutes: 5,           // How often the flows run "check" (every_nth minute)
                                  // Must match the flow trigger — used for the
                                  // boundary look-ahead and the cheap gate
@@ -1542,7 +1561,8 @@ function getDeviceKey(deviceId) {
 // - A check or lux run whose light has a newer rev than the one it read stops
 //   at its next save (AL-SKIP-STALE).
 // - A run that backs off sets fullRunDue, so the next check poll is a full run
-//   (it may have held a newer lux reading).
+//   (it may have held a newer lux reading). So does a check or lux run skipped
+//   for another script's fade or a recent restore.
 
 const AL_STATE_PREFIX = 'AL_Device_';
 const AL_STATE_SUFFIX = '.State';
@@ -1563,7 +1583,8 @@ const DEFAULT_DEVICE_STATE = {
   },
   rev: 0,                 // +1 on every save that isn't bookkeeping (check/lux runs back off when it moved)
   busy: {},               // Leases of turn-on/clear/reset/cycle runs in flight: { token: until ms }
-  fullRunDue: false       // A check/lux run backed off: the next check poll is a full run
+  fullRunDue: false       // A check/lux run backed off, or skipped for another script's
+                          // fade/restore: the next check poll is a full run
 };
 
 /**
@@ -1777,7 +1798,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.31.2';
+const AL_VERSION = '2.31.3';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -2868,6 +2889,11 @@ try {
     }
   }
 
+  // A GradualFadeOut/watchdog fade running as a check starts: the device read
+  // below can show the half-faded light even when the fade has ended (restored
+  // or switched off) by the time the fade test runs after the slow device list
+  const externalFadeAtStart = CHECK_MANUAL && Date.now() < (global.get(`${DEVICE_ID}_FadeActiveUntil`) || 0);
+
   let device;
   if (isButtonMode) {
     device = await Homey.devices.getDevice({ id: DEVICE_ID });
@@ -3159,20 +3185,46 @@ try {
   
   // Skip if device is in a fade/restore operation
   // Check mode: uses isDeviceFading() — AL's own transition (state.fadeEndTime)
-  //   or a GradualFadeOut/watchdog fade (_FadeActiveUntil)
+  //   or a GradualFadeOut/watchdog fade (_FadeActiveUntil), also one that was
+  //   running when this run started (externalFadeAtStart), and the restore marker
   // Normal mode (below) only looks at the external fade and the restore marker:
   //   AL's own fadeEndTime must NOT block it, since a check-mode transition
   //   (60 s + 5 s) would otherwise prevent the profile when entering the room
-  if (!FORCE_UPDATE && !CLEAR_MANUAL && CHECK_MANUAL && isDeviceFading(DEVICE_ID)) {
+  if (!FORCE_UPDATE && !CLEAR_MANUAL && CHECK_MANUAL && (isDeviceFading(DEVICE_ID) || externalFadeAtStart)) {
     if (SETTINGS.enableLogging) {
       log(`[${roomName}] ⸏ Skipping check - fade/restore in progress`);
     }
     diagLog(`AL-SKIP-FADE | ${roomName} | currentDim=${Math.round((currentBrightness ?? 0) * 100)}% | mode=check`);
+    // Another script's fade: the light is restored or off soon, so the next
+    // poll looks again instead of waiting for the resync
+    if (externalFadeAtStart || Date.now() < (global.get(`${DEVICE_ID}_FadeActiveUntil`) || 0)) {
+      patchDeviceState(DEVICE_ID, { fullRunDue: true }, { evenIfStale: true, bookkeeping: true });
+    }
     return {
       room: roomName,
       skipped: true,
       reason: 'fade_in_progress'
     };
+  }
+
+  // RestoreSavedSettings (and GradualFadeOut restoring itself) clear the fade
+  // flag and set _RestoredAt before their commands land: a check that read the
+  // light in between sees the faded values. Same grace as normal mode below
+  if (!FORCE_UPDATE && !CLEAR_MANUAL && CHECK_MANUAL) {
+    const restoredAt = global.get(`${DEVICE_ID}_RestoredAt`) || 0;
+    const restoredAgoMs = Date.now() - restoredAt;
+    if (restoredAt > 0 && restoredAgoMs >= 0 && restoredAgoMs < SETTINGS.restoreGraceSeconds * 1000) {
+      if (SETTINGS.enableLogging) {
+        log(`[${roomName}] ⸏ Skipping check - restored ${Math.round(restoredAgoMs / 1000)}s ago`);
+      }
+      diagLog(`AL-SKIP-RESTORE | ${roomName} | currentDim=${Math.round((currentBrightness ?? 0) * 100)}% | restored ${Math.round(restoredAgoMs / 1000)}s ago | mode=check`);
+      patchDeviceState(DEVICE_ID, { fullRunDue: true }, { evenIfStale: true, bookkeeping: true });
+      return {
+        room: roomName,
+        skipped: true,
+        reason: 'recently_restored'
+      };
+    }
   }
 
   // A check/lux run past the fade check decides from fresh values: the full
