@@ -2,12 +2,25 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.32.1
+// Version:     2.32.2
 // Date:        2026-11-02
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.32.2 2026-11-02  Kitchen idle never below 20 %
+//                    - The living room's Night is 10 %, but it has more lamps
+//                      (Standerlampe, five filament bulbs, light chain, TV), so
+//                      the kitchen at 10 % looked darker. Idle blocks get
+//                      minBrightness (default 0); the kitchen's is 0.2. Never
+//                      above the light's own profile (kitchen Night 15 % stays
+//                      15 %). The AL-IDLE line says "ref Night, min 20%"
+//                    - A manual light's per-bulb cap has the same floor
+//                    - Idle always sends its level while an AL transition runs:
+//                      a check that backed off after sending its 05:55 ramp to
+//                      Morning leaves only fadeEndTime, and with the floor the
+//                      idle level could equal lastApplied — the empty kitchen
+//                      then ended at 100 %
 // 2.32.1 2026-11-02  Kitchen brighter in the evening, B9 bright until 23:00
 //                    - AL_OverrideLog (19.10-02.11): the kitchen was turned up
 //                      on 12 of 15 evenings (Night 15 % on 9, Evening 50 % on 3)
@@ -1060,20 +1073,24 @@ const SV_SUN_TEMPERATURE = STUE_SUN_TEMPERATURE; // same elevation curve; ends c
 //   - the active profile of the reference set `profiles` (plain values: no lux,
 //     no sun colour), and
 //   - the level idle last set (a light only goes down until wake).
-// The chosen candidate's temperature goes with it. Lights in manual mode keep
-// their scene: each bulb gets min(its dim, the cap), colour untouched.
+// The chosen candidate's temperature goes with it, but never below
+// `minBrightness` (unless the light's own profile is lower). Lights in manual
+// mode keep their scene: each bulb gets min(its dim, the cap), colour untouched.
 // Not for FORCED_PROFILE_DEVICES.
 const IDLE_DEFAULTS = {
   enabled: true,
   profiles: null,         // reference profile set (required), e.g. PROFILES.stue
+  minBrightness: 0,       // floor: idle never dims below this (own profile lower → own)
   fadeSeconds: 30,        // idle: fade down
   wakeFadeSeconds: 1      // wake: fade back up
 };
 
 // Køkken: dims to what the living room shows when nobody is in the kitchen
-// (ST Standerlampe's set: Evening from sunset-60, Night from 21:00)
+// (ST Standerlampe's set: Evening from sunset-60, Night from 21:00), but not
+// below 20 %: the living room's 10 % at night has more lamps than the kitchen
 const KITCHEN_IDLE = {
-  profiles: PROFILES.stue
+  profiles: PROFILES.stue,
+  minBrightness: 0.2
 };
 
 // ====== ROOM CONFIGURATION ======
@@ -1907,7 +1924,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.32.1';
+const AL_VERSION = '2.32.2';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -2599,6 +2616,9 @@ function idleTarget(own, idleCfg, level, minutes) {
   for (const c of candidates.slice(1)) {
     if (c.brightness < best.brightness - 0.001) best = c;
   }
+  // The floor, but never above the light's own profile
+  const floor = Math.min(idleCfg.minBrightness || 0, own.brightness);
+  if (best.brightness < floor - 0.001) best = { ...best, brightness: floor, floor: true };
   if (best.source === 'own'
       || (approxEqual(best.brightness, own.brightness, 0.005) && approxEqual(best.temperature ?? 0, own.temperature ?? 0, 0.005))) {
     return own;
@@ -2610,14 +2630,16 @@ function idleTarget(own, idleCfg, level, minutes) {
     brightness: best.brightness,
     temperature: typeof best.temperature === 'number' ? best.temperature : own.temperature,
     idleSource: best.source,
-    idleRef: ref ? ref.name : null
+    idleRef: ref ? ref.name : null,
+    idleFloor: best.floor === true
   };
 }
 
-/** Log text for where an idle target came from: "ref Evening", "idle level", "own profile" */
+/** Log text for where an idle target came from: "ref Evening", "ref Night, min 20%", "idle level", "own profile" */
 function idleSourceTag(target) {
-  if (target?.idleSource === 'reference') return `ref ${target.idleRef}`;
-  if (target?.idleSource === 'level') return 'idle level';
+  const floor = target?.idleFloor ? `, min ${pctOf(target.brightness)}%` : '';
+  if (target?.idleSource === 'reference') return `ref ${target.idleRef}${floor}`;
+  if (target?.idleSource === 'level') return `idle level${floor}`;
   return 'own profile';
 }
 
@@ -3055,7 +3077,8 @@ async function runIdle(ctx) {
     // command. The snapshot of every bulb that is on is taken either way, so a
     // wake after a GradualFadeOut takeover or a restore can put each bulb back
     const ref = findActiveProfile(idleCfg.profiles, currentMinutes);
-    const cap = Math.min(ref.brightness, activeProfile.brightness);
+    const cap = Math.max(Math.min(ref.brightness, activeProfile.brightness),
+      Math.min(idleCfg.minBrightness || 0, activeProfile.brightness));
     const groupAtCap = typeof dim === 'number' && dim <= cap + 0.005;
     // From the cached device list (no await); bulbs that are on only
     const { members } = groupMembers(device, CACHED_ALL_DEVICES, { zoneFallback: false });
@@ -3097,10 +3120,12 @@ async function runIdle(ctx) {
   const target = idleTarget(activeProfile, idleCfg, null, currentMinutes);
   const level = { brightness: target.brightness, temperature: target.temperature };
   const la = state.lastApplied;
-  // Nothing to send only when AL last sent this level and the light shows it.
-  // AL's own ramp heading elsewhere (an early ramp into the next profile) has
-  // recorded its target as lastApplied, so it is always replaced
-  const alreadyThere = !!la && matchesValues(la.brightness, la.temperature, level, 0.005)
+  // Nothing to send only when AL last sent this level, the light shows it and
+  // no AL transition is running. AL's own ramp heading elsewhere (an early ramp
+  // into the next profile) is always replaced: it has recorded its target as
+  // lastApplied, or — a check that backed off after sending — only fadeEndTime
+  const alreadyThere = !!la && now >= (state.fadeEndTime || 0)
+    && matchesValues(la.brightness, la.temperature, level, 0.005)
     && matchesValues(dim, temp, level);
   // Level saved before the commands: a wake during them must not take the
   // "no change" shortcut

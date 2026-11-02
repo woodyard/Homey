@@ -87,8 +87,9 @@ async function manualScene(values, { colourBulb3 = false, temp = 0.4 } = {}) {
   return env;
 }
 
-// Both kitchen lights idle-capped through the night: on at 05:00 (Night), idle
-// at 05:10 → stue Night 10/0.9, kept by the ratchet into the morning
+// Both kitchen lights idle through the night: on at 05:00 (Night 15/0.9), idle
+// at 05:10 keeps the kitchen Night (the stue 10 % is under the 20 % floor, and the
+// floor never goes above the own profile), kept by the ratchet into the morning
 async function morningIdle() {
   const env = kitchen({ dim: 0.15, temp: 0.9 });
   at('05:00:00');
@@ -218,10 +219,10 @@ export const scenarios = {
     t.equal([env.state(KB).idle.level, env.state(KB).manual], [{ brightness: 0.35, temperature: 0.9 }, false], 'idle level follows, still auto');
   },
 
-  async 'D3: ratchet through the night — 21:00 → 10 %, stays 10 % at 23:00 and 06:00; polls stay quiet'(t) {
+  async 'D3: ratchet through the night — 21:00 → 20 % (floor), stays 20 % at 23:00 and 06:00; polls stay quiet'(t) {
     const { env } = await idleKitchen();
     const seen = {};
-    const want = { '20:50': 0.35, '21:05': 0.1, '23:30': 0.1, '06:30': 0.1, '08:30': 0.1, '09:30': 0.1 };
+    const want = { '20:50': 0.35, '21:05': 0.2, '23:30': 0.2, '06:30': 0.2, '08:30': 0.2, '09:30': 0.2 };
     let applies = 0;
     for (let m = 16 * 60 + 5; m <= (24 + 9) * 60 + 30; m += 5) {
       const day = m >= 24 * 60 ? '03' : '02';
@@ -232,13 +233,29 @@ export const scenarios = {
       if (env.commands.length > before) applies += 1;
       if (want[hhmm] !== undefined) seen[hhmm] = dims(env, KB)[0];
     }
-    t.equal(seen, want, 'K Bord: 35 % until 21:00, then 10 % through 23:00 (kitchen Night), 06:00 (stue/kitchen Morning) and 09:00');
-    t.equal(applies, 1, 'one change all night (the ramp into the stue Night at 21:00)');
+    t.equal(seen, want, 'K Bord: 35 % until 21:00, then the 20 % floor through 23:00 (kitchen Night 15 % is within tolerance), 06:00 (stue/kitchen Morning) and 09:00');
+    t.equal(applies, 1, 'one change all night (the ramp to the floor at 21:00)');
     t.equal(temps(env, KB), [0.9, 0.9, 0.9], 'temperature 0.9 throughout');
-    t.check(lines(env, 'boundary 21:00').some((l) => l.includes('dim=10%')), 'the 20:55 poll ramps into the stue Night (boundary 21:00)', lines(env, 'AL-APPLY').join(' / '));
+    t.check(lines(env, 'boundary 21:00').some((l) => l.includes('dim=20%') && l.includes('ref Night, min 20%')), 'the 20:55 poll ramps to the floor under the stue Night (boundary 21:00)', lines(env, 'AL-APPLY').join(' / '));
     t.equal([env.state(KB).manual, overrides(env).length, lines(env, 'AL-SKIP').length], [false, 0, 0], 'never manual, no OVERRIDE, no skip');
-    t.equal(env.state(KB).idle.level, { brightness: 0.1, temperature: 0.9 }, 'idle level 10/0.9');
+    t.equal(env.state(KB).idle.level, { brightness: 0.2, temperature: 0.9 }, 'idle level 20/0.9');
     t.equal(env.state(KB).lastProfile, 'Daytime', 'lastProfile follows the kitchen schedule');
+  },
+
+  async 'floor: never below 20 % (stue Night 10 %), not above the own profile; a manual scene is capped at 20 % too'(t) {
+    const { env, r } = await idleKitchen('21:30:00');
+    t.equal([r.dimmed, dims(env, KB), temps(env, KB)], [true, [0.2, 0.2, 0.2], [0.9, 0.9, 0.9]], '21:30: 20 % with the stue colour, not the stue 10 %');
+    t.check(lines(env, 'AL-IDLE | K Bord | Evening → ref Night, min 20% | dim=20% temp=90%').length === 1, 'AL-IDLE names the floor', env.diag().slice(-2).join(' / '));
+    const late = kitchen({ dim: 0.15, temp: 0.9 });
+    at('23:10:00');
+    await late.run(AL, KB);
+    at('23:30:00');
+    const own = await late.run(AL, `${KB} idle`);
+    t.equal([own.dimmed, dims(late, KB)], [false, [0.15, 0.15, 0.15]], '23:30: the kitchen Night 15 % is below the floor → stays 15 % (never raised)');
+    const scene = await manualScene([1.0, 0.6, 0.3]);
+    at('21:30:00');
+    await scene.run(AL, `${KB} idle`);
+    t.equal([dims(scene, KB), scene.state(KB).manual], [[0.2, 0.2, 0.2], true], 'manual scene: each bulb capped at the 20 % floor, still manual');
   },
 
   async 'D3: AL\'s own ramp running UP when idle starts (05:55 Night → Morning 100 %) is replaced'(t) {
@@ -250,12 +267,12 @@ export const scenarios = {
     t.equal([ramp.early, ramp.brightness], [true, 1], 'setup: the 05:55 poll ramps to Morning 100 %');
     at('05:57:00');
     const r = await env.run(AL, `${KB} idle`);
-    t.equal([r.dimmed, dims(env, KB)], [true, [0.1, 0.1, 0.1]], 'idle sends stue Night 10 %, replacing the ramp');
+    t.equal([r.dimmed, dims(env, KB)], [true, [0.15, 0.15, 0.15]], 'idle sends the kitchen Night 15 % (the floor stops at the own profile), replacing the ramp');
     for (const time of ['06:00:00', '06:05:00', '06:15:00', '06:30:00']) {
       at(time);
       await env.run(AL, `${KB} check`);
     }
-    t.equal([dims(env, KB)[0], env.state(KB).manual, overrides(env).length], [0.1, false, 0], 'stays 10 % into Morning, auto, no OVERRIDE');
+    t.equal([dims(env, KB)[0], env.state(KB).manual, overrides(env).length], [0.15, false, 0], 'stays 15 % into Morning, auto, no OVERRIDE');
   },
 
   async 'D3: idle reads the bulbs part-way up AL\'s own ramp → not a change by hand (auto, no OVERRIDE)'(t) {
@@ -267,7 +284,7 @@ export const scenarios = {
     setBulbs(env, KB, [0.6, 0.6, 0.6], 0.5);               // part-way up: neither Night nor Morning
     at('05:57:00');
     const r = await env.run(AL, `${KB} idle`);
-    t.equal([r.from, r.dimmed, dims(env, KB), env.state(KB).manual, overrides(env)], ['profile', true, [0.1, 0.1, 0.1], false, []], 'idle dims to stue Night 10 %, auto, no OVERRIDE src=idle');
+    t.equal([r.from, r.dimmed, dims(env, KB), env.state(KB).manual, overrides(env)], ['profile', true, [0.15, 0.15, 0.15], false, []], 'idle dims to the kitchen Night 15 %, auto, no OVERRIDE src=idle');
   },
 
   async 'D2: idle shortly before a reference boundary records it → the next poll ramps on time'(t) {
@@ -298,7 +315,7 @@ export const scenarios = {
     const [c, i] = await Promise.all([check, idle]);
     env.commandDelayMs = 0;
     t.equal([c.reason, i.dimmed], ['state_changed', true], 'the check stops at its save (AL-SKIP-STALE), idle dims');
-    t.equal([dims(env, KB), env.state(KB).lastApplied.brightness, env.state(KB).lastApplied.via], [[0.1, 0.1, 0.1], 0.1, 'idle'], 'bulbs and lastApplied at the idle level');
+    t.equal([dims(env, KB), env.state(KB).lastApplied.brightness, env.state(KB).lastApplied.via], [[0.15, 0.15, 0.15], 0.15, 'idle'], 'bulbs and lastApplied at the idle level (kitchen Night 15 %)');
     at('06:05:00');
     const next = await env.run(AL, `${KB} check`);
     t.equal([next.reason, env.state(KB).manual, overrides(env).length], ['already_correct', false, 0], 'the owed full run finds it correct: no false manual');
@@ -433,7 +450,7 @@ export const scenarios = {
   },
 
   async 'idle where nothing changes (reference = own) → no command; wake → "no change"; status still shows idle'(t) {
-    const same = [['  profiles: PROFILES.stue\n};', '  profiles: PROFILES.kitchen\n};']];
+    const same = [['  profiles: PROFILES.stue,\n  minBrightness', '  profiles: PROFILES.kitchen,\n  minBrightness']];
     const env = kitchen({ dim: 0.7, temp: 0.6 });
     at('20:30:00');
     await env.run(AL, KB, { patch: same });
@@ -511,7 +528,7 @@ export const scenarios = {
       }
       const how = polls.length > 1 ? '20:55 early ramp' : '21:05 apply';
       t.check(!env.commands.some((c) => c.startsWith('K Bord 2 ')), `${how}: no command to the off bulb`, env.commands.join(', '));
-      t.equal([ons(env, KB), dims(env, KB)[0], dims(env, KB)[2]], [[true, false, true], 0.1, 0.1], `${how}: the others at stue Night 10 %, bulb 2 stays off`);
+      t.equal([ons(env, KB), dims(env, KB)[0], dims(env, KB)[2]], [[true, false, true], 0.2, 0.2], `${how}: the others at the 20 % floor, bulb 2 stays off`);
     }
   },
 
@@ -667,15 +684,15 @@ export const scenarios = {
     t.check(lines(env, 'AL-WAKE | K Bord | manual').some((l) => l.includes('took over GradualFadeOut fade')), 'AL-WAKE took over the fade');
   },
 
-  async 'D4/D3: manual and idle across 23:00 → manual ends into the idle rule (10 %), idle stays; wake then restores Night, not the scene'(t) {
+  async 'D4/D3: manual and idle across 23:00 → manual ends into the idle rule (kitchen Night 15 %), idle stays; wake then restores Night, not the scene'(t) {
     const env = await manualScene([0.8, 0.3, 0.6]);
     at('16:00:00');
     await env.run(AL, `${KB} idle`);
     at('23:00:00');
     const p = await env.run(AL, `${KB} check`);
-    t.equal([p.profile, dims(env, KB)], ['Night', [0.1, 0.1, 0.1]], '23:00: Night under the idle rule (stue Night 10 %)');
+    t.equal([p.profile, dims(env, KB)], ['Night', [0.15, 0.15, 0.15]], '23:00: Night under the idle rule (the floor stops at the kitchen Night 15 %)');
     t.check(lines(env, 'AL-MANUAL-EXPIRED | K Bord').length === 1, 'AL-MANUAL-EXPIRED');
-    t.equal([env.state(KB).manual, !!env.state(KB).idle, env.state(KB).idle.level], [false, true, { brightness: 0.1, temperature: 0.9 }], 'auto, still idle, level 10 %');
+    t.equal([env.state(KB).manual, !!env.state(KB).idle, env.state(KB).idle.level], [false, true, { brightness: 0.15, temperature: 0.9 }], 'auto, still idle, level 15 %');
     at('23:30:00');
     const w = await env.run(AL, `${KB} wake`);
     t.equal([w.profile, dims(env, KB)], ['Night', [0.15, 0.15, 0.15]], 'wake: the kitchen Night 15 % (the old scene is not restored)');
@@ -799,7 +816,7 @@ export const scenarios = {
     const env = await morningIdle();
     const r = await gfoMorning(env, null);
     t.check(String(r).includes('K Bord: Faded and turned off') && String(r).includes('K Loft: Faded and turned off'), 'both faded off', String(r));
-    t.check(lines(env, 'FADE-SAVE | K Bord | dim=10% temp=90%').length === 1, 'FADE-SAVE at the idle level');
+    t.check(lines(env, 'FADE-SAVE | K Bord | dim=15% temp=90%').length === 1, 'FADE-SAVE at the idle level');
     t.equal(overrides(env), [], 'no OVERRIDE line');
     t.equal([!!env.state(KB).idle, !!env.state(KL).idle], [true, true], 'idle still set on the off lights');
     at('12:00:00');
