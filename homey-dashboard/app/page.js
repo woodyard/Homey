@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AL_ROOMS, getSunTimes, phaseList, isActive, activePhase, tempColor, fmtMinutes,
-  copenhagenMinutesNow, isWeekendNow, isWeekendScheduleNow, resolveLightMode, describeLightStatus,
+  copenhagenMinutesNow, isWeekendNow, isWeekendScheduleNow, resolveLightMode, describeLightStatus, isIdle,
 } from '../lib/adaptiveLighting';
 import TemperatureTab from './TemperatureTab';
 import RoomsV2Tab from './RoomsV2Tab';
@@ -26,7 +26,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '1.17.1';
+const APP_VERSION = '1.18.0';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).
@@ -1576,6 +1576,8 @@ function ModeBadge({ mode, guess = false, st = null }) {
     unknown: { label: '—', bg: '#f1f2f4', color: '#9ca3af' },
   };
   const s = map[mode] || map.unknown;
+  // AL dimmed it for an empty room: "Auto · idle" (the mode underneath stays)
+  const idle = !guess && mode !== 'off' && isIdle(st);
   const title = guess
     ? 'Guessed from the schedule — the script has not reported this light'
     : mode === 'drift'
@@ -1586,7 +1588,7 @@ function ModeBadge({ mode, guess = false, st = null }) {
       fontSize: 11, padding: '2px 8px', borderRadius: 6, background: s.bg, color: s.color, fontWeight: 600,
       opacity: guess ? 0.7 : 1,
     }}>
-      {guess ? '~' : ''}{s.label}
+      {guess ? '~' : ''}{s.label}{idle ? ' · idle' : ''}
     </span>
   );
 }

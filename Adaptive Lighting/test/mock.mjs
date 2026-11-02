@@ -76,6 +76,8 @@ export function createEnv(devices = []) {
     vars: {},              // Logic variables by id
     logicCalls: [],        // 'get' | 'update' | 'create', in order
     commands: [],          // device commands, e.g. 'K Bord dim=1'
+    cards: [],             // dim/temperature flow cards: { id, card, value, duration }
+                           // (their values also land in commands)
     unreachable: new Set(),// device ids whose commands throw
     zoneActive: false,
     failLogicUpdate: false,
@@ -152,6 +154,7 @@ export function createEnv(devices = []) {
         const m = /^homey:device:([^:]+):(dim|temperature)$/.exec(a.id || '');
         if (!m) return;
         const [, id, card] = m;
+        env.cards.push({ id, card, value: card === 'dim' ? a.args.dim : a.args.temperature, duration: a.duration });
         if (env.unreachable.has(id)) throw new Error('unreachable');
         if (card === 'dim') await setCap(id, 'dim', a.args.dim);
         else await setCap(id, 'light_temperature', a.args.temperature);

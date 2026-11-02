@@ -2,12 +2,49 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.31.3
+// Version:     2.32.0
 // Date:        2026-11-02
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.32.0 2026-11-02  Kitchen idle/wake: dim while the room is empty after dark
+//                    - New modes "<id> idle" (zone inactive 5 min while Mørkt,
+//                      or Mørkt turns true while the kitchen is empty) and
+//                      "<id> wake" (zone became active, wired in parallel with
+//                      RestoreSavedSettings). Per room (ROOM_CONFIG[id].idle),
+//                      K Loft and K Bord only; SETTINGS.enableIdle switches it
+//                      off everywhere (check mode ignores a stored flag;
+//                      wake still undoes it)
+//                    - Idle follows the living room: the target is the lowest
+//                      brightness of the light's own profile, the reference set's
+//                      profile now (idle.profiles = PROFILES.stue, plain values)
+//                      and the level idle last set. While idle a light only goes
+//                      down, never up, until wake (16:00 Daytime 100 % → 35 %,
+//                      21:00 → 10 %, stays 10 % through 22:00 and 06:00). 30 s fade
+//                    - Check/lux/hourly runs keep the same rule while idle, also
+//                      across profile boundaries (the reference's boundaries are
+//                      polled for too), and still detect a change by hand: back
+//                      at the light's own profile = woken (idle cleared, auto),
+//                      anything else = manual + OVERRIDE "| while idle"
+//                    - A manual light keeps its scene: if the group is above the
+//                      cap, each bulb that is on gets min(dim, cap); colour and
+//                      temperature untouched. Every bulb that is on is noted,
+//                      also below the cap. Wake puts each bulb's dim back
+//                      (temperature/colour only after a restore flattened them)
+//                    - Wake: the light's own profile, uncapped, 1 s fade (or the
+//                      snapshot for a manual light). It takes over a running
+//                      GradualFadeOut fade right after its first save, before
+//                      any await, so RestoreSavedSettings and wake can run in
+//                      either order (a takeover that finds the light off puts
+//                      _RestoredAt back; a manual light with no bulb snapshot
+//                      leaves the fade to RestoreSavedSettings). The idle level
+//                      is AL's own, not a change by hand. Logs its run time
+//                    - Idle and wake never switch anything on: only bulbs that
+//                      are on are commanded (check runs while idle too), and an
+//                      off light only loses the flag
+//                    - Turn-on, clear, force/reset and cycle-profile end idle
+//                    - Status: idle: true on the light's entry (schema stays 1)
 // 2.31.3 2026-11-02  A check that overlaps the end of a fade is no override
 //                    - A check poll reads the light, then waits for the slow
 //                      device list before its fade test. When a GradualFadeOut
@@ -734,6 +771,13 @@
 // Configure device IDs in FORCED_PROFILE_DEVICES.
 // Uses unified device state (no manual variable setup required).
 //
+// IDLE / WAKE (dim a room while it is empty after dark):
+// 1. Add an `idle` block to the light's ROOM_CONFIG entry (see IDLE_DEFAULTS)
+// 2. Trigger: zone inactive for 5 min (and the room's "dark" condition)
+//    → Argument: "device-id idle"
+// 3. Trigger: zone became active → Argument: "device-id wake" (no "is on"
+//    condition: a wake on an off light only clears the idle flag)
+//
 // BUTTON ACTIONS (for physical button controls):
 // "device-id brighten"  → Increase brightness by 20%
 // "device-id dim-down"  → Decrease brightness by 20%
@@ -748,6 +792,8 @@
 //   "device-id reset"        Same as force
 //   "device-id clear"        Clear manual mode and forced profile, apply time-based profile
 //   "device-id cycle-profile" Cycle to next forced profile (for button controls)
+//   "device-id idle"         Room empty: dim to the idle target (lights that are on only)
+//   "device-id wake"         Room active again: undo idle (no-op when not idle)
 //   "device-id brighten"     Increase brightness by 20% (for button controls)
 //   "device-id dim-down"     Decrease brightness by 20% (for button controls)
 //   "device-id max"          Set to 100% brightness (for button controls)
@@ -983,6 +1029,31 @@ const SV_LUMINANCE = {
 };
 const SV_SUN_TEMPERATURE = STUE_SUN_TEMPERATURE; // same elevation curve; ends come from the bedroom profiles
 
+// ====== IDLE (ROOM EMPTY AFTER DARK) ======
+// Per-room opt-in: add an `idle` block to a ROOM_CONFIG entry. Missing fields
+// take these defaults; `profiles` is required. "<id> idle" (the room's flow, when
+// it has been empty a while) dims the light, "<id> wake" (zone active) undoes it.
+// While idle, the light shows the LOWEST brightness of:
+//   - its own active profile (as without idle),
+//   - the active profile of the reference set `profiles` (plain values: no lux,
+//     no sun colour), and
+//   - the level idle last set (a light only goes down until wake).
+// The chosen candidate's temperature goes with it. Lights in manual mode keep
+// their scene: each bulb gets min(its dim, the cap), colour untouched.
+// Not for FORCED_PROFILE_DEVICES.
+const IDLE_DEFAULTS = {
+  enabled: true,
+  profiles: null,         // reference profile set (required), e.g. PROFILES.stue
+  fadeSeconds: 30,        // idle: fade down
+  wakeFadeSeconds: 1      // wake: fade back up
+};
+
+// Køkken: dims to what the living room shows when nobody is in the kitchen
+// (ST Standerlampe's set: Evening from sunset-60, Night from 21:00)
+const KITCHEN_IDLE = {
+  profiles: PROFILES.stue
+};
+
 // ====== ROOM CONFIGURATION ======
 // Only groups and standalone devices - individual bulbs in groups are excluded.
 // A group's bulbs are found by name prefix: group "ST Loft" → "ST Loft 1",
@@ -1039,11 +1110,13 @@ const ROOM_CONFIG = {
   // =====================================================================
   "f097b38c-cfb0-4b83-8124-59e35f82cd0f": {
     name: "K Loft",
-    profiles: PROFILES.kitchen  // Gruppe med 3 pærer
+    profiles: PROFILES.kitchen, // Gruppe med 3 pærer
+    idle: KITCHEN_IDLE          // Dims to the living room's level while the kitchen is empty
   },
   "0e5d845d-d8ea-4db6-8096-663b0a311e07": {
     name: "K Bord",
-    profiles: PROFILES.kitchen  // Gruppe med 3 pærer
+    profiles: PROFILES.kitchen, // Gruppe med 3 pærer
+    idle: KITCHEN_IDLE          // Dims to the living room's level while the kitchen is empty
   },
 
   // =====================================================================
@@ -1176,9 +1249,12 @@ const SETTINGS = {
   enableLuminance: true,         // Master switch for luminance-based daylight scaling.
                                  // false = ignore every room's luminance block and
                                  // behave exactly like v2.21 (pure schedule)
-  enableSunTemperature: true     // Master switch for sun-elevation colour temperature.
+  enableSunTemperature: true,    // Master switch for sun-elevation colour temperature.
                                  // false = ignore every room's sunTemperature block
                                  // and use the profile temperatures as-is
+  enableIdle: true               // Master switch for idle/wake (rooms with an idle
+                                 // block). false = "idle" does nothing and check
+                                 // mode ignores any stored idle flag
 };
 
 // ====== SUN TIMES CACHE ======
@@ -1205,7 +1281,9 @@ function diagLog(entry) {
 // applied — an override from a Hue switch, the app, voice or a button. Input
 // for tuning the presets; kept apart from AL_DiagnostikLog so routine fade/apply
 // noise cannot push it out. Shared with GradualFadeOut (src=fade) and
-// Room_Watchdog (src=watchdog); this script writes src=check. Max 1000 lines.
+// Room_Watchdog (src=watchdog); this script writes src=check, src=idle (a change
+// no check had seen yet when idle ran) and src=wake (changed while idle, seen at
+// wake). Max 1000 lines.
 // Format: "DD.MM, HH.MM.SS | dag | OVERRIDE | Lampe | Profil | AL=40%/70 | nu=100%/1 | Δdim=+60 Δtemp=-69 | src=fade | 26m efter AL"
 // Read via: log(global.get('AL_OverrideLog'))
 function overrideLog(deviceId, name, profileName, applied, dim, temp, source, extra = '') {
@@ -1554,8 +1632,8 @@ function getDeviceKey(deviceId) {
 //   forced, fade end, a lease taken) adds one to rev; bookkeeping (schedule
 //   times, fullRunDue, a lease released) doesn't, so it can't make another
 //   run back off after that run has already sent its commands.
-// - Turn-on, clear, reset and cycle-profile runs hold a lease (busy) on their
-//   light from their first line until they finish: a check or lux run that
+// - Turn-on, clear, reset, cycle-profile, idle and wake runs hold a lease (busy)
+//   on their light from their first line until they finish: a check or lux run that
 //   starts meanwhile backs off at its gate (AL-SKIP-BUSY), since its device
 //   values could predate their commands.
 // - A check or lux run whose light has a newer rev than the one it read stops
@@ -1582,9 +1660,16 @@ const DEFAULT_DEVICE_STATE = {
     profiles: null        // Cached profile schedule (array of 4)
   },
   rev: 0,                 // +1 on every save that isn't bookkeeping (check/lux runs back off when it moved)
-  busy: {},               // Leases of turn-on/clear/reset/cycle runs in flight: { token: until ms }
-  fullRunDue: false       // A check/lux run backed off, or skipped for another script's
+  busy: {},               // Leases of turn-on/clear/reset/cycle/idle/wake runs in flight: { token: until ms }
+  fullRunDue: false,      // A check/lux run backed off, or skipped for another script's
                           // fade/restore: the next check poll is a full run
+  idle: null              // Room empty ("idle" run): { token, since, level, bulbs }
+                          //   token: the idle run's lease token (a wake clears idle,
+                          //          so a still-running idle run sees it is gone)
+                          //   level: { brightness, temperature } last set while idle
+                          //          (null until decided; never raised until wake)
+                          //   bulbs: manual light only — per bulb that was on:
+                          //          { dim, set, temp, mode, hue?, sat? }
 };
 
 /**
@@ -1793,12 +1878,14 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // applied after daylight/sun adjustment. Format:
 //   { v, schema: 1, publishedAt, weekend, lights: { <full device id>: {
 //       name, mode, forced?, profile, bri, temp, schedBri, schedTemp, factor?,
-//       lux?, sunEl?, via, at, fadeUntil, next } } }
+//       lux?, sunEl?, via, at, fadeUntil, next, idle? } } }
+// idle: true while the light is dimmed for an empty room (2.32.0, additive —
+// schema stays 1); mode still says auto/manual underneath.
 // Rebuilt from the AL_Device_*.State globals on every publish (never merged
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.31.3';
+const AL_VERSION = '2.32.0';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -1832,6 +1919,8 @@ function buildALStatus() {
     if (typeof la.factor === 'number' && la.factor !== 1) entry.factor = round2(la.factor);
     if (typeof la.lux === 'number') entry.lux = Math.round(la.lux);
     if (typeof la.sunElevation === 'number') entry.sunEl = Math.round(la.sunElevation * 10) / 10;
+    // A flag left while idle is switched off means nothing (check ignores it)
+    if (state.idle && idleConfigFor(id)) entry.idle = true;
     lights[id] = entry;
   }
   return lights;
@@ -1891,7 +1980,8 @@ async function publishALStatusIfChanged() {
     const lights = buildALStatus();
     // Signature: only what the dashboard shows. at/fadeUntil/via change on
     // re-applies of the same values; the hour bucket makes the hourly heartbeat
-    const visible = Object.entries(lights).map(([id, l]) => [id, l.mode, l.forced, l.profile, l.bri, l.temp, l.next]);
+    // idle is in it: idle on a light whose values don't change still shows
+    const visible = Object.entries(lights).map(([id, l]) => [id, l.mode, l.forced, l.profile, l.bri, l.temp, l.next, l.idle || false]);
     const sig = JSON.stringify([Math.floor(Date.now() / 3600000), visible]);
     if (global.get('AL_StatusSig') === sig) return;
     const written = await writeStatusVar(JSON.stringify({
@@ -2084,6 +2174,27 @@ function formatMinutesToTime(minutes) {
  */
 function approxEqual(a, b, tolerance = SETTINGS.tolerance) {
   return Math.abs(a - b) <= tolerance;
+}
+
+/**
+ * The one comparison check, idle and wake use to tell AL's own values from a
+ * change by hand: live dim (and temperature, when both have one) within
+ * tolerance of ref ({ brightness, temperature })
+ */
+function matchesValues(dim, temp, ref, tolerance = SETTINGS.tolerance) {
+  if (!ref || typeof ref.brightness !== 'number' || typeof dim !== 'number') return false;
+  const tempOk = typeof temp !== 'number' || typeof ref.temperature !== 'number'
+    || Math.abs(temp - ref.temperature) <= tolerance;
+  return Math.abs(dim - ref.brightness) <= tolerance && tempOk;
+}
+
+/**
+ * Changed by hand since AL last applied: the live values match neither what AL
+ * last sent nor the target AL would send now. False without lastApplied
+ */
+function changedByHand(dim, temp, lastApplied, target) {
+  if (!lastApplied || typeof lastApplied.brightness !== 'number') return false;
+  return !matchesValues(dim, temp, lastApplied) && !matchesValues(dim, temp, target);
 }
 
 /**
@@ -2416,6 +2527,119 @@ function getRoomConfig(deviceId, deviceName) {
   };
 }
 
+// ====== IDLE HELPERS ======
+
+/** A device as Homey reported it is switched on */
+function isOn(device) {
+  return device?.capabilitiesObj?.onoff?.value === true;
+}
+
+/**
+ * The light's idle setup ({ ...IDLE_DEFAULTS, ...block }), or null when idle
+ * is off for it: SETTINGS.enableIdle false, no idle block, enabled: false, no
+ * reference profiles, or a forced-profile light. Reads ROOM_CONFIG only (no API
+ * call), never throws — so a stored idle flag is simply ignored when null
+ */
+function idleConfigFor(deviceId) {
+  if (!SETTINGS.enableIdle || FORCED_PROFILE_DEVICES.has(deviceId)) return null;
+  const block = ROOM_CONFIG[deviceId]?.idle;
+  if (!block || block.enabled === false) return null;
+  const c = { ...IDLE_DEFAULTS, ...block };
+  return Array.isArray(c.profiles) && c.profiles.length > 0 ? c : null;
+}
+
+/** Why idleConfigFor(deviceId) is null, for the AL-IDLE-OFF line */
+function idleOffReason(deviceId) {
+  if (!SETTINGS.enableIdle) return 'idle switched off (SETTINGS.enableIdle)';
+  if (FORCED_PROFILE_DEVICES.has(deviceId)) return 'forced-profile light — idle not supported';
+  const block = ROOM_CONFIG[deviceId]?.idle;
+  if (!block) return 'no idle block for this light';
+  if (block.enabled === false) return 'idle block disabled';
+  return 'idle block has no reference profiles';
+}
+
+/**
+ * What a light shows while idle (see IDLE (ROOM EMPTY AFTER DARK)): the lowest
+ * brightness of the idle level, its own profile and the reference set's profile
+ * at `minutes`; the chosen one's temperature goes with it. A tie keeps the
+ * earlier of level → own → reference (nothing visible changes).
+ * Returns `own` itself when that is the answer (its lux/sun meta stays valid);
+ * otherwise a plain profile under own's name (lastProfile keeps meaning the
+ * light's own schedule) with idleSource 'level' | 'reference' and idleRef
+ */
+function idleTarget(own, idleCfg, level, minutes) {
+  const ref = findActiveProfile(idleCfg.profiles, minutes);
+  const candidates = [];
+  if (level && typeof level.brightness === 'number') candidates.push({ ...level, source: 'level' });
+  candidates.push({ brightness: own.brightness, temperature: own.temperature, source: 'own' });
+  if (ref && typeof ref.brightness === 'number') candidates.push({ brightness: ref.brightness, temperature: ref.temperature, source: 'reference' });
+  let best = candidates[0];
+  for (const c of candidates.slice(1)) {
+    if (c.brightness < best.brightness - 0.001) best = c;
+  }
+  if (best.source === 'own'
+      || (approxEqual(best.brightness, own.brightness, 0.005) && approxEqual(best.temperature ?? 0, own.temperature ?? 0, 0.005))) {
+    return own;
+  }
+  return {
+    name: own.name,
+    startTime: own.startTime,
+    endTime: own.endTime,
+    brightness: best.brightness,
+    temperature: typeof best.temperature === 'number' ? best.temperature : own.temperature,
+    idleSource: best.source,
+    idleRef: ref ? ref.name : null
+  };
+}
+
+/** Log text for where an idle target came from: "ref Evening", "idle level", "own profile" */
+function idleSourceTag(target) {
+  if (target?.idleSource === 'reference') return `ref ${target.idleRef}`;
+  if (target?.idleSource === 'level') return 'idle level';
+  return 'own profile';
+}
+
+/**
+ * Save `fields` only while this idle run still owns the idle flag. global.get
+ * and global.set are synchronous, so nothing can slip in between the read and
+ * the write. False when a wake (or turn-on, clear …) has cleared it: the caller
+ * must stop before setting a fading flag or sending a command
+ */
+function saveWhileIdle(token, fields) {
+  const stored = readStoredState(stateKey(DEVICE_ID));
+  if (stored.idle?.token !== token) return false;
+  patchDeviceState(DEVICE_ID, typeof fields === 'function' ? fields(stored) : fields);
+  return true;
+}
+
+/**
+ * Dim only (flow card with duration, setCapabilityValue as fallback) — no
+ * temperature, saturation or light_mode, so a scene's colours stay. For bulbs of
+ * a manual light. dimById: { <id>: dim }. Returns how many took it
+ */
+async function dimTargets(targets, dimById, seconds, label) {
+  const results = await Promise.all(targets.map(t => {
+    const dim = dimById[t.id];
+    return Homey.flow.runFlowCardAction({
+      uri: `homey:flowcardaction:homey:device:${t.id}:dim`,
+      id: `homey:device:${t.id}:dim`,
+      args: { dim },
+      duration: seconds
+    }).catch(() => Homey.devices.setCapabilityValue({ deviceId: t.id, capabilityId: 'dim', value: dim }))
+      .then(() => true, () => false);
+  }));
+  const failed = targets.filter((t, i) => !results[i]);
+  if (failed.length > 0) {
+    diagLog(`AL-APPLY-FAIL | ${label} | ${failed.length}/${targets.length} bulb(s) failed: ${failed.map(t => t.name).join(', ')}`);
+  }
+  return results.filter(Boolean).length;
+}
+
+/** "12m" since idle began (log lines) */
+function idleAge(since) {
+  return typeof since === 'number' && since > 0 ? `${Math.max(0, Math.round((Date.now() - since) / 60000))}m` : '?';
+}
+
 /**
  * A group's bulbs by name ("SV Loft" → "SV Loft 1", "SV Loft 2", "SV Loft 3").
  * No zone fallback here: a group without name-matched bulbs gets the commands
@@ -2532,8 +2756,11 @@ async function applyToDevice(deviceOrId, brightness, temperature, duration) {
  * @param {number} temperature - Target color temperature (0-1)
  * @param {boolean} useDuration - Whether to use fade duration (false for instant)
  * @param {number} customDuration - Optional custom duration in seconds (overrides useDuration)
+ * @param {object} options - onlyOn: command only bulbs that are on (idle, wake
+ *   and check runs while idle: a dim card can switch an off bulb on). From the
+ *   cached device list; a single light that is off gets nothing
  */
-async function applyLighting(device, brightness, temperature, useDuration = false, customDuration = null) {
+async function applyLighting(device, brightness, temperature, useDuration = false, customDuration = null, { onlyOn = false } = {}) {
   const duration = customDuration !== null ? customDuration : (useDuration ? SETTINGS.transitionDuration : 0); // seconds
   
   if (SETTINGS.enableDetailedLogging) {
@@ -2552,9 +2779,10 @@ async function applyLighting(device, brightness, temperature, useDuration = fals
   }
   
   // Find group members (if any)
-  const members = await findGroupMembers(device);
-  const isGroup = members.length > 0;
-  
+  const allMembers = await findGroupMembers(device);
+  const isGroup = allMembers.length > 0;
+  const members = onlyOn ? allMembers.filter(isOn) : allMembers;
+
   if (isGroup) {
     // Mark all group members as fading
     if (duration > 0) {
@@ -2591,6 +2819,7 @@ async function applyLighting(device, brightness, temperature, useDuration = fals
 
   } else {
     // Single device
+    if (onlyOn && !isOn(device)) return { brightness: false, temperature: false };
     const result = await applyToDevice(device, brightness, temperature, duration);
     if (result.brightness === false) {
       diagLog(`AL-APPLY-FAIL | ${device.name} | dim not accepted`);
@@ -2735,6 +2964,243 @@ async function applyLightingWithRetry(device, brightness, temperature, profileNa
   };
 }
 
+// ====== IDLE / WAKE RUNS ======
+// Both run after the device fetch and return before the normal-mode skips, the
+// clears and the off→on path: manual stays manual, nothing is switched on.
+
+const pctOf = v => Math.round((v ?? 0) * 100);
+
+/** Record the level a check run set while idle (the ratchet: never above it until wake) */
+function rememberIdleLevel(brightness, temperature) {
+  if (!readStoredState(stateKey(DEVICE_ID)).idle) return;
+  patchDeviceState(DEVICE_ID, s => ({ idle: { ...s.idle, level: { brightness, temperature } } }));
+}
+
+/**
+ * "<id> idle": the room is empty. The lease save already set
+ * idle = { token, since, level: null, bulbs: null }.
+ * ctx: { device, roomName, activeProfile (own, uncapped), idleCfg, token, currentMinutes }
+ */
+async function runIdle(ctx) {
+  const { device, roomName, activeProfile, idleCfg, token, currentMinutes } = ctx;
+  const fade = idleCfg.fadeSeconds;
+  const stillIdle = () => readStoredState(stateKey(DEVICE_ID)).idle?.token === token;
+  const woken = () => {
+    diagLog(`AL-IDLE-SKIP | ${roomName} | woken before dimming`);
+    return { room: roomName, skipped: true, reason: 'woken' };
+  };
+
+  // A wake (or a turn-on, clear …) during the fetch has cleared idle
+  if (!stillIdle()) return woken();
+  // Off: nothing to dim, and a dim card could switch it on
+  if (!isOn(device)) {
+    saveWhileIdle(token, { idle: null });
+    diagLog(`AL-IDLE-SKIP | ${roomName} | light off`);
+    return { room: roomName, skipped: true, reason: 'light_off' };
+  }
+  // Someone moved just as the inactive trigger fired: the wake ran first and
+  // found nothing to do, and no new zone trigger comes while they stay
+  try {
+    const zone = await Homey.zones.getZone({ id: device.zone });
+    if (zone?.active === true) {
+      saveWhileIdle(token, { idle: null });
+      diagLog(`AL-IDLE-SKIP | ${roomName} | zone active`);
+      return { room: roomName, skipped: true, reason: 'zone_active' };
+    }
+  } catch (e) { /* zone lookup failed — dim as planned */ }
+
+  // From here to the first command there is no await: a wake clears idle in
+  // one synchronous save, so each guarded save below sees it
+  if (!stillIdle()) return woken();
+  const state = readStoredState(stateKey(DEVICE_ID));
+  const dim = device.capabilitiesObj?.dim?.value ?? null;
+  const temp = device.capabilitiesObj?.light_temperature?.value ?? null;
+  const now = Date.now();
+  let manual = state.manual === true;
+
+  // A change by hand no check has seen yet (AL's own ramp not running): the
+  // same rule as check mode — it becomes manual, and its scene is kept
+  if (!manual && now >= (state.fadeEndTime || 0) && changedByHand(dim, temp, state.lastApplied, activeProfile)) {
+    patchDeviceState(DEVICE_ID, { manual: true, manualSince: now });
+    overrideLog(DEVICE_ID, roomName, state.lastProfile, state.lastApplied, dim, temp, 'idle');
+    diagLog(`AL-IDLE | ${roomName} | changed by hand before idle (${pctOf(dim)}%) — manual`);
+    manual = true;
+  }
+
+  if (manual) {
+    // Manual light: cap each bulb's dim, keep colour and temperature (a scene
+    // stays a scene). Decided on the group first: at or below the cap → no
+    // command. The snapshot of every bulb that is on is taken either way, so a
+    // wake after a GradualFadeOut takeover or a restore can put each bulb back
+    const ref = findActiveProfile(idleCfg.profiles, currentMinutes);
+    const cap = Math.min(ref.brightness, activeProfile.brightness);
+    const groupAtCap = typeof dim === 'number' && dim <= cap + 0.005;
+    // From the cached device list (no await); bulbs that are on only
+    const { members } = groupMembers(device, CACHED_ALL_DEVICES, { zoneFallback: false });
+    const targets = (members.length > 0 ? members : [device]).filter(isOn);
+    const bulbs = {};
+    const changed = [];
+    for (const b of targets) {
+      const c = b.capabilitiesObj || {};
+      const before = c.dim?.value;
+      if (typeof before !== 'number') continue;
+      const set = groupAtCap ? before : Math.min(before, cap);
+      const snap = { dim: before, set, temp: c.light_temperature?.value ?? null, mode: c.light_mode?.value ?? null };
+      if (snap.mode === 'color') {
+        snap.hue = c.light_hue?.value ?? null;
+        snap.sat = c.light_saturation?.value ?? null;
+      }
+      bulbs[b.id] = snap;
+      if (snap.set < before - 0.01) changed.push(b);
+    }
+    // Snapshot saved before the commands, so a wake during them knows what idle did
+    if (!saveWhileIdle(token, s => ({ idle: { ...s.idle, bulbs } }))) return woken();
+    if (groupAtCap) {
+      diagLog(`AL-IDLE | ${roomName} | manual | at ${pctOf(dim)}% ≤ ${pctOf(cap)}% — no change`);
+      return { room: roomName, idle: true, from: 'manual', dimmed: false };
+    }
+    if (changed.length === 0) {
+      diagLog(`AL-IDLE | ${roomName} | manual | all bulbs ≤ ${pctOf(cap)}% — no change`);
+      return { room: roomName, idle: true, from: 'manual', dimmed: false };
+    }
+    setDeviceFading(DEVICE_ID, fade);
+    for (const b of changed) if (b.id !== DEVICE_ID) setDeviceFading(b.id, fade);
+    const dimById = Object.fromEntries(changed.map(b => [b.id, bulbs[b.id].set]));
+    await dimTargets(changed, dimById, fade, roomName);
+    diagLog(`AL-IDLE | ${roomName} | manual | ${changed.length}/${targets.length} bulb(s) dim→${pctOf(cap)}% (fade ${fade}s)`);
+    return { room: roomName, idle: true, from: 'manual', dimmed: true, bulbs: changed.length, brightness: cap };
+  }
+
+  // Auto light: the idle target (own profile, reference, nothing stored yet)
+  const target = idleTarget(activeProfile, idleCfg, null, currentMinutes);
+  const level = { brightness: target.brightness, temperature: target.temperature };
+  const la = state.lastApplied;
+  // Nothing to send only when AL last sent this level and the light shows it.
+  // AL's own ramp heading elsewhere (an early ramp into the next profile) has
+  // recorded its target as lastApplied, so it is always replaced
+  const alreadyThere = !!la && matchesValues(la.brightness, la.temperature, level, 0.005)
+    && matchesValues(dim, temp, level);
+  // Level saved before the commands: a wake during them must not take the
+  // "no change" shortcut
+  if (!saveWhileIdle(token, s => ({ idle: { ...s.idle, level } }))) return woken();
+  const bPct = pctOf(level.brightness);
+  const tPct = pctOf(level.temperature);
+  if (alreadyThere) {
+    diagLog(`AL-IDLE | ${roomName} | ${activeProfile.name} | already dim=${bPct}% temp=${tPct}% — no change`);
+    return { room: roomName, idle: true, from: 'profile', dimmed: false, profile: activeProfile.name, brightness: level.brightness, temperature: level.temperature };
+  }
+  await applyLighting(device, level.brightness, level.temperature, true, fade, { onlyOn: true });
+  // Recorded only while still idle: a wake during the commands has applied
+  // (and recorded) the profile since
+  const recorded = stillIdle();
+  if (recorded) setLastProfile(DEVICE_ID, activeProfile.name, level.brightness, level.temperature, target === activeProfile ? activeProfile : null);
+  diagLog(`AL-IDLE | ${roomName} | ${activeProfile.name} → ${idleSourceTag(target)} | dim=${bPct}% temp=${tPct}% | fade ${fade}s${recorded ? '' : ' | woken during the commands'}`);
+  return { room: roomName, idle: true, from: 'profile', dimmed: true, profile: activeProfile.name, brightness: level.brightness, temperature: level.temperature };
+}
+
+/**
+ * "<id> wake": the room is in use again. The lease save took the idle state
+ * (woke) and cleared it, and took over a running GradualFadeOut fade.
+ * ctx: { device, roomName, activeProfile (own, uncapped), idleCfg (may be
+ *        null), woke, takeover (+ takeoverAt, prevRestoredAt: the _RestoredAt
+ *        it wrote and the one before), afterRestore, startedAt }
+ */
+async function runWake(ctx) {
+  const { device, roomName, activeProfile, woke, takeover, afterRestore, startedAt } = ctx;
+  const fade = (ctx.idleCfg || IDLE_DEFAULTS).wakeFadeSeconds;
+  const took = () => `took ${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+  const age = `idle ${idleAge(woke.since)}`;
+  const tags = (takeover ? ' | took over GradualFadeOut fade' : '') + (afterRestore ? ' | after restore' : '');
+  // GradualFadeOut faded it or RestoreSavedSettings restored it: every bulb needs putting back
+  const flattened = takeover || afterRestore;
+
+  // Off: only the flag goes. Never switch on from motion. A takeover of a
+  // GradualFadeOut fade that finds the light already off restored nothing:
+  // its _RestoredAt goes back, so the switch-on GradualFadeOut's verify does
+  // for an active zone gets a normal apply (not AL-SKIP-RESTORE)
+  if (!isOn(device)) {
+    if (takeover && global.get(`${DEVICE_ID}_RestoredAt`) === ctx.takeoverAt) {
+      global.set(`${DEVICE_ID}_RestoredAt`, ctx.prevRestoredAt);
+    }
+    diagLog(`AL-WAKE | ${roomName} | light off — idle cleared | ${age}`);
+    return { room: roomName, woke: true, lightOff: true };
+  }
+
+  const state = getDeviceState(DEVICE_ID);
+  const now = Date.now();
+  const dim = device.capabilitiesObj?.dim?.value ?? null;
+  const temp = device.capabilitiesObj?.light_temperature?.value ?? null;
+
+  if (state.manual === true) {
+    // Manual light: each bulb's own dim back from the snapshot (still manual).
+    // Not the group device's own dim — a virtual group would flatten the scene
+    const snap = woke.bulbs || {};
+    const restore = Object.keys(snap)
+      .map(id => CACHED_ALL_DEVICES?.[id])
+      .filter(b => b && isOn(b))
+      .filter(b => {
+        const s = snap[b.id];
+        if (flattened) return true;
+        if (!(s.set < s.dim - 0.01)) return false;          // idle left it alone
+        if (now < (state.fadeEndTime || 0)) return true;    // idle's fade still running
+        // A bulb changed by hand while idle is the user's: leave it
+        const live = b.capabilitiesObj?.dim?.value;
+        return typeof live === 'number' && Math.abs(live - s.set) <= SETTINGS.tolerance;
+      });
+    if (restore.length === 0) {
+      diagLog(`AL-WAKE | ${roomName} | manual | nothing to restore | ${age}${tags} | ${took()}`);
+      return { room: roomName, woke: true, from: 'manual', restored: 0 };
+    }
+    setDeviceFading(DEVICE_ID, fade);
+    const ops = [dimTargets(restore, Object.fromEntries(restore.map(b => [b.id, snap[b.id].dim])), fade, roomName)];
+    if (afterRestore) {
+      // RestoreSavedSettings put one temperature on every bulb: each bulb's own
+      // back — colour (hue/saturation) for a colour bulb, never a temperature
+      const setCap = (id, capabilityId, value) => Homey.devices.setCapabilityValue({ deviceId: id, capabilityId, value }).catch(() => null);
+      for (const b of restore) {
+        const s = snap[b.id];
+        if (s.mode === 'color') {
+          if (typeof s.hue === 'number') ops.push(setCap(b.id, 'light_hue', s.hue));
+          if (typeof s.sat === 'number') ops.push(setCap(b.id, 'light_saturation', s.sat));
+        } else if (typeof s.temp === 'number') {
+          ops.push(setCap(b.id, 'light_temperature', s.temp));
+        }
+      }
+    }
+    await Promise.all(ops);
+    diagLog(`AL-WAKE | ${roomName} | manual | restored ${restore.length}/${Object.keys(snap).length} bulb(s) (fade ${fade}s) | ${age}${tags} | ${took()}`);
+    return { room: roomName, woke: true, from: 'manual', restored: restore.length };
+  }
+
+  // Auto light: its own profile, uncapped ("as now")
+  const target = activeProfile;
+  // Changed by hand while idle and no check has seen it: the user's choice
+  // (back at the profile is no change by hand — that is applied as a wake).
+  // The idle level is AL's own too: an idle run that died after its commands,
+  // before it recorded lastApplied, left the light there
+  if (!flattened && now >= (state.fadeEndTime || 0) && changedByHand(dim, temp, state.lastApplied, target)
+      && !matchesValues(dim, temp, woke.level)) {
+    patchDeviceState(DEVICE_ID, { manual: true, manualSince: now });
+    overrideLog(DEVICE_ID, roomName, state.lastProfile, state.lastApplied, dim, temp, 'wake', ' | while idle');
+    diagLog(`AL-WAKE | ${roomName} | changed while idle (${pctOf(dim)}%) — manual | ${age} | ${took()}`);
+    return { room: roomName, woke: true, manual: true, reason: 'changed_while_idle' };
+  }
+  // Nothing to do only when idle provably sent nothing: its level (null while
+  // it was still deciding) and AL's last values are the target, no fade of its
+  // is still running (its commands may not have landed) and the light shows it
+  const same = (v) => !!v && matchesValues(v.brightness, v.temperature, target, 0.01);
+  if (!flattened && now >= (state.fadeEndTime || 0) && same(woke.level) && same(state.lastApplied)
+      && matchesValues(dim, temp, target)) {
+    diagLog(`AL-WAKE | ${roomName} | ${target.name} | no change | ${age} | ${took()}`);
+    return { room: roomName, woke: true, profile: target.name, changed: false };
+  }
+  // A duration > 0 also interrupts idle's 30 s fade or GradualFadeOut's
+  await applyLighting(device, target.brightness, target.temperature, true, fade, { onlyOn: true });
+  setLastProfile(DEVICE_ID, target.name, target.brightness, target.temperature, target);
+  diagLog(`AL-WAKE | ${roomName} | ${target.name} | dim=${pctOf(target.brightness)}% temp=${pctOf(target.temperature)}% | fade ${fade}s | ${age}${tags} | ${took()}`);
+  return { room: roomName, woke: true, profile: target.name, brightness: target.brightness, temperature: target.temperature, changed: true };
+}
+
 // ====== MAIN SCRIPT ======
 
 // Handle args - can be string directly or array depending on HomeyScript context
@@ -2750,7 +3216,7 @@ const MODE_ARG = (argParts[1] || '').toLowerCase();
 // in a flow card: logged and ignored — never run as normal mode
 const KNOWN_MODES = new Set(['', 'check', 'hourly', 'lux', 'force', 'reset', 'clear',
   'cycle-profile', 'cycle', 'brighten', 'button-brighten', 'dim-down', 'dim', 'button-dim',
-  'max', 'button-max', 'toggle', 'button-toggle']);
+  'max', 'button-max', 'toggle', 'button-toggle', 'idle', 'wake']);
 const DEVICE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const LUX_MODE = MODE_ARG === 'lux';
@@ -2763,6 +3229,9 @@ const BUTTON_BRIGHTEN = MODE_ARG === 'brighten' || MODE_ARG === 'button-brighten
 const BUTTON_DIM = MODE_ARG === 'dim-down' || MODE_ARG === 'dim' || MODE_ARG === 'button-dim';
 const BUTTON_MAX = MODE_ARG === 'max' || MODE_ARG === 'button-max';
 const BUTTON_TOGGLE = MODE_ARG === 'toggle' || MODE_ARG === 'button-toggle';
+const IDLE_MODE = MODE_ARG === 'idle';   // room empty: dim (see IDLE (ROOM EMPTY AFTER DARK))
+const WAKE_MODE = MODE_ARG === 'wake';   // room in use again: undo idle
+const RUN_STARTED_AT = Date.now();       // wake logs its run time
 
 // Debug logging for troubleshooting argument issues
 if (SETTINGS.enableDetailedLogging) {
@@ -2799,7 +3268,7 @@ const badArg = !DEVICE_ID_PATTERN.test(DEVICE_ID) ? 'not a device id'
 if (badArg) {
   log(`[AdaptiveLighting] ✗ Bad argument "${argString}": ${badArg} — nothing changed`);
   log(`[AdaptiveLighting] Usage: "deviceId [mode]"`);
-  log(`[AdaptiveLighting] Modes: check, lux, force/reset, clear, cycle-profile, brighten, dim-down, max, toggle`);
+  log(`[AdaptiveLighting] Modes: check, lux, force/reset, clear, cycle-profile, idle, wake, brighten, dim-down, max, toggle`);
   diagLogArgOnce(`AL-BADARG | "${argString}" | ${badArg}`);
   return false;
 }
@@ -2811,13 +3280,73 @@ try {
   // For all other modes: fetch device, sun times, and device list in parallel
   const isButtonMode = BUTTON_BRIGHTEN || BUTTON_DIM || BUTTON_MAX || BUTTON_TOGGLE;
 
-  // Turn-on, clear, reset and cycle-profile take a lease on their light before
-  // their first await, so a check or lux poll stays away until their commands
-  // have landed (see UNIFIED DEVICE STATE). Button modes save no state
+  // IDLE / WAKE GATE: synchronous, before the lease and any API call.
+  // idleCfg is null when idle is off for this light (check mode then ignores a
+  // stored flag; wake still undoes it)
+  const idleCfg = idleConfigFor(DEVICE_ID);
+  let woke = null;                // wake: the idle state its lease save cleared
+  let wakeTakeover = false;       // wake: took over a running GradualFadeOut fade
+  let wakeAfterRestore = false;   // wake: RestoreSavedSettings (or GFO) restored just before
+  let wakeTakeoverAt = 0;         // wake: the _RestoredAt its takeover wrote …
+  let wakePrevRestoredAt = 0;     //       … and the one it replaced (put back if nothing was restored)
+  if (IDLE_MODE) {
+    if (!idleCfg) {
+      diagLogArgOnce(`AL-IDLE-OFF | "${argString}" | ${idleOffReason(DEVICE_ID)}`);
+      return { skipped: true, reason: 'idle_not_enabled' };
+    }
+    // Both idle triggers (inactive 5 min, dark while empty) may fire: silent
+    if (getDeviceState(DEVICE_ID).idle) return { skipped: true, reason: 'already_idle' };
+    // GradualFadeOut is fading the light off: don't fight it
+    if (Date.now() < (global.get(`${DEVICE_ID}_FadeActiveUntil`) || 0)) {
+      diagLog(`AL-IDLE-SKIP | ${ROOM_CONFIG[DEVICE_ID]?.name || DEVICE_ID.substring(0, 8)} | GradualFadeOut fade in progress`);
+      return { skipped: true, reason: 'fade_in_progress' };
+    }
+  }
+  // Every "zone active" runs wake: when not idle that costs one global.get —
+  // no write, no log, no API call
+  if (WAKE_MODE && !getDeviceState(DEVICE_ID).idle) return { skipped: true, reason: 'not_idle' };
+
+  // Turn-on, clear, reset, cycle-profile, idle and wake take a lease on their
+  // light before their first await, so a check or lux poll stays away until
+  // their commands have landed (see UNIFIED DEVICE STATE). Button modes save no state
   if (!CHECK_MANUAL && !isButtonMode) {
     const token = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    patchDeviceState(DEVICE_ID, s => ({ busy: { ...activeLeases(s), [token]: Date.now() + BUSY_LEASE_MS } }));
+    patchDeviceState(DEVICE_ID, s => {
+      const fields = { busy: { ...activeLeases(s), [token]: Date.now() + BUSY_LEASE_MS } };
+      // Idle: the flag in the same save, so a wake at any later point sees it
+      if (IDLE_MODE) fields.idle = { token, since: Date.now(), level: null, bulbs: null };
+      // Wake: take the flag and clear it in the same save. An idle run still
+      // fetching finds its token gone and sends nothing; a second wake stops at
+      // the gate. fullRunDue: a wake that fails half-way is repaired by the next poll
+      if (WAKE_MODE) {
+        woke = s.idle;
+        fields.idle = null;
+        fields.fullRunDue = true;
+      }
+      return fields;
+    });
     leaseToken = token;
+  }
+  // Wake takes over a running GradualFadeOut fade here, before any await, as
+  // GFO's own selfRestore does: GFO then ends with FADE-CANCELLED, and a
+  // RestoreSavedSettings run after this skips (no active fade). One that ran
+  // before has set _RestoredAt. Either way the light ends at what wake sends.
+  // Not for a manual light with no bulb snapshot (idle died or was woken before
+  // taking one): wake would have nothing to send, so leave the fade to
+  // RestoreSavedSettings
+  if (WAKE_MODE && woke) {
+    const now = Date.now();
+    const restoredAt = global.get(`${DEVICE_ID}_RestoredAt`) || 0;
+    wakeTakeover = now < (global.get(`${DEVICE_ID}_FadeActiveUntil`) || 0)
+      && !(getDeviceState(DEVICE_ID).manual === true && !woke.bulbs);
+    wakeAfterRestore = !wakeTakeover && restoredAt > 0 && now - restoredAt >= 0
+      && now - restoredAt < SETTINGS.restoreGraceSeconds * 1000;
+    if (wakeTakeover) {
+      global.set(`${DEVICE_ID}_FadeActiveUntil`, 0);
+      global.set(`${DEVICE_ID}_RestoredAt`, now);
+      wakeTakeoverAt = now;
+      wakePrevRestoredAt = restoredAt;
+    }
   }
 
   // CHECK-MODE GATE: the flows poll every checkPollMinutes. Nothing can change
@@ -2956,7 +3485,17 @@ try {
   // so the scaled brightness flows through normal/check/force/clear alike.
   const daylight = getDaylight(roomConfig, device);
   const sun = getSunTemperature(roomConfig);
-  const activeProfile = applySunTemperature(applyDaylight(scheduledProfile, daylight, roomConfig, sun), sun, roomConfig);
+  const baseProfile = applySunTemperature(applyDaylight(scheduledProfile, daylight, roomConfig, sun), sun, roomConfig);
+  // Idle in check/lux/hourly: the light keeps the idle rule (the lowest of its
+  // own profile, the reference and the level idle set; never up until wake).
+  // The cached state is safe: if idle or wake saved after this run's gate, rev
+  // moved and the run stops with AL-SKIP-STALE at recordSchedule below
+  const idleState = CHECK_MANUAL && idleCfg ? getDeviceState(DEVICE_ID).idle : null;
+  const activeProfile = idleState ? idleTarget(baseProfile, idleCfg, idleState.level, currentMinutes) : baseProfile;
+  const idleCapped = activeProfile !== baseProfile;
+  // While idle the gate also wakes for the reference set's boundaries (the
+  // living room's 21:00 Night is no kitchen boundary)
+  const scheduleProfiles = (idleState || IDLE_MODE) ? roomConfig.profiles.concat(idleCfg.profiles) : roomConfig.profiles;
   if (daylight.active && SETTINGS.enableDetailedLogging) {
     log(`[${roomName}] Daylight: ${daylight.lux} lx (adj ${daylight.luxAdjusted}) → factor ${daylight.factor}`);
   }
@@ -2966,11 +3505,26 @@ try {
 
   // Remember the next boundary + this full run (feeds the check-mode gate)
   if (!CYCLE_PROFILE) {
-    recordSchedule(DEVICE_ID, roomConfig.profiles, currentMinutes);
+    recordSchedule(DEVICE_ID, scheduleProfiles, currentMinutes);
   }
-  
+
+  // Idle and wake return here: never past the clears, the normal-mode skips or
+  // the off→on path (manual stays manual, nothing is switched on)
+  if (IDLE_MODE) {
+    return await runIdle({ device, roomName, activeProfile, idleCfg, token: leaseToken, currentMinutes });
+  }
+  if (WAKE_MODE) {
+    return await runWake({
+      device, roomName, activeProfile, idleCfg, woke,
+      takeover: wakeTakeover, takeoverAt: wakeTakeoverAt, prevRestoredAt: wakePrevRestoredAt,
+      afterRestore: wakeAfterRestore, startedAt: RUN_STARTED_AT
+    });
+  }
+
   // Handle "cycle-profile" mode - cycle through forced profiles
   if (CYCLE_PROFILE) {
+    // A button press: someone is in the room
+    if (getDeviceState(DEVICE_ID).idle) patchDeviceState(DEVICE_ID, { idle: null });
     // Check if light is off and turn it on
     const isOn = device.capabilitiesObj?.onoff?.value ?? false;
     if (!isOn) {
@@ -3077,10 +3631,12 @@ try {
   // Handle "clear" mode - clear manual mode for group and all members, only apply profile if light is on
   if (CLEAR_MANUAL) {
     const wasManual = isManualMode(DEVICE_ID);
-    
+
     // Clear manual mode for group and all members
     await clearManualModeForGroup(DEVICE_ID, device);
-    
+    // … and idle: a clear is a person at the light
+    if (getDeviceState(DEVICE_ID).idle) patchDeviceState(DEVICE_ID, { idle: null });
+
     // Clear forced profile (reset to auto mode) and pre-calculate all profiles
     if (FORCED_PROFILE_DEVICES.has(DEVICE_ID)) {
       const profiles = roomConfig.profiles;
@@ -3336,10 +3892,12 @@ try {
     // Daylight-managed profiles use the finer luminance.step for brightness so
     // that small daylight adjustments are actually applied; the 10% tolerance
     // is kept for temperature and for manual-adjustment detection below.
-    const daylightManaged = daylight.active && daylight.config.profiles.includes(scheduledProfile.name);
+    // An idle target is plain values (no lux/sun meta): normal tolerances, and
+    // no meta to re-record on every full run
+    const daylightManaged = !idleCapped && daylight.active && daylight.config.profiles.includes(scheduledProfile.name);
     const dimTolerance = daylightManaged ? daylight.config.step : SETTINGS.tolerance;
-    const sunManaged = sun.active && sun.config.profiles.includes(scheduledProfile.name);
-    const luxTempManaged = daylight.active && !!activeProfile.luxTemp;
+    const sunManaged = !idleCapped && sun.active && sun.config.profiles.includes(scheduledProfile.name);
+    const luxTempManaged = !idleCapped && daylight.active && !!activeProfile.luxTemp;
     const tempTolerance = sunManaged ? sun.config.step
                         : luxTempManaged ? daylight.config.tempStep
                         : SETTINGS.tolerance;
@@ -3358,14 +3916,24 @@ try {
       // next poll, start the upcoming profile NOW with a fade that ends
       // transitionDuration after the boundary — lands on schedule despite the
       // 5-minute polling.
-      const upcoming = findNextBoundary(roomConfig.profiles, currentMinutes);
+      const upcoming = findNextBoundary(scheduleProfiles, currentMinutes);
       const pollMs = SETTINGS.checkPollMinutes * 60000;
       // Only Hue bulbs (and groups of them) are known to honour multi-minute
       // transitions; for anything else an early start would just be an early
       // instant change, so leave those to the normal catch-up path.
       const supportsLongFade = await isHueDevice(device);
-      if (upcoming && supportsLongFade && upcoming.msFromNow <= pollMs + SETTINGS.checkPollSlackSeconds * 1000 && upcoming.profile.name !== activeProfile.name) {
-        const next = applySunTemperature(applyDaylight(upcoming.profile, daylight, roomConfig, sun), sun, roomConfig);
+      // While idle every boundary counts, the reference's too (a profile name
+      // says nothing about the idle target there): the idle rule at the
+      // boundary decides, and sameValues below keeps one that changes nothing quiet
+      if (upcoming && supportsLongFade && upcoming.msFromNow <= pollMs + SETTINGS.checkPollSlackSeconds * 1000 && (idleState || upcoming.profile.name !== activeProfile.name)) {
+        let next;
+        if (idleState) {
+          const at = upcoming.minutes % 1440;
+          const own = findActiveProfile(roomConfig.profiles, at);
+          next = idleTarget(applySunTemperature(applyDaylight(own, daylight, roomConfig, sun), sun, roomConfig), idleCfg, idleState.level, at);
+        } else {
+          next = applySunTemperature(applyDaylight(upcoming.profile, daylight, roomConfig, sun), sun, roomConfig);
+        }
         const sameValues = approxEqual(next.brightness, activeProfile.brightness)
           && approxEqual(next.temperature, activeProfile.temperature);
         if (sameValues) {
@@ -3374,16 +3942,19 @@ try {
         } else {
           const secsToBoundary = Math.max(0, Math.round(upcoming.msFromNow / 1000));
           const fadeSeconds = secsToBoundary + SETTINGS.transitionDuration;
-          await applyLighting(device, next.brightness, next.temperature, true, fadeSeconds);
+          // While idle only bulbs that are on (D6: a dim card can switch one on)
+          await applyLighting(device, next.brightness, next.temperature, true, fadeSeconds, { onlyOn: !!idleState });
           setLastProfile(DEVICE_ID, next.name, next.brightness, next.temperature, next);
+          if (idleState) rememberIdleLevel(next.brightness, next.temperature);
           // The gate should now look past this boundary
-          recordSchedule(DEVICE_ID, roomConfig.profiles, upcoming.minutes);
+          recordSchedule(DEVICE_ID, scheduleProfiles, upcoming.minutes);
 
           const bPct = Math.round(next.brightness * 100);
           const tPct = Math.round(next.temperature * 100);
           const bTime = formatMinutesToTime(upcoming.minutes % 1440);
+          const idleTag = idleState ? ` | idle ${idleSourceTag(next)}` : '';
           const message = `[${roomName}] ${next.name} → ${bPct}% / ${tPct}% (early: boundary ${bTime} in ${secsToBoundary}s, fade ${fadeSeconds}s)`;
-          diagLog(`AL-APPLY | ${roomName} | ${next.name} | dim=${bPct}% temp=${tPct}% | mode=check (early, boundary ${bTime}, fade ${fadeSeconds}s)${daylightTag(next)}`);
+          diagLog(`AL-APPLY | ${roomName} | ${next.name} | dim=${bPct}% temp=${tPct}% | mode=check (early, boundary ${bTime}, fade ${fadeSeconds}s)${daylightTag(next)}${idleTag}`);
           if (SETTINGS.enableLogging) log(message);
           await notify(message);
           return {
@@ -3435,19 +4006,11 @@ try {
     let matchesLastProfile = false;
 
     if (lastApplied && typeof lastApplied.brightness === 'number') {
-      const lastDimDiff = Math.abs(currentBrightness - lastApplied.brightness);
-      const lastTempDiff = (currentTemperature !== null && typeof lastApplied.temperature === 'number')
-        ? Math.abs(currentTemperature - lastApplied.temperature)
-        : 0;
-      matchesLastProfile = lastDimDiff <= SETTINGS.tolerance && lastTempDiff <= SETTINGS.tolerance;
+      matchesLastProfile = matchesValues(currentBrightness, currentTemperature, lastApplied);
     } else if (lastProfileName) {
       const lastProfile = roomConfig.profiles.find(p => p.name === lastProfileName);
       if (lastProfile) {
-        const lastDimDiff = Math.abs(currentBrightness - lastProfile.brightness);
-        const lastTempDiff = currentTemperature !== null 
-          ? Math.abs(currentTemperature - lastProfile.temperature) 
-          : 0;
-        matchesLastProfile = lastDimDiff <= SETTINGS.tolerance && lastTempDiff <= SETTINGS.tolerance;
+        matchesLastProfile = matchesValues(currentBrightness, currentTemperature, lastProfile);
       }
     } else {
       // No lastProfile recorded yet - this is first check after script update
@@ -3467,12 +4030,30 @@ try {
         log(`[${roomName}] Updating from ${lastProfileName} to ${activeProfile.name}`);
       }
       // Continue to apply the new profile (don't return, don't set manual mode)
+    } else if (idleState && matchesValues(currentBrightness, currentTemperature, baseProfile)) {
+      // Idle, and put back to its own profile by hand (switch, app): the room is
+      // in use again — a wake, not an override. Auto, the profile recorded
+      setLastProfile(DEVICE_ID, baseProfile.name, baseProfile.brightness, baseProfile.temperature, baseProfile);
+      patchDeviceState(DEVICE_ID, { idle: null });
+      diagLog(`AL-WAKE | ${roomName} | ${baseProfile.name} set by hand — idle cleared | mode=check`);
+      if (SETTINGS.enableLogging) log(`[${roomName}] Back at ${baseProfile.name} by hand - idle ended`);
+      return {
+        room: roomName,
+        skipped: true,
+        reason: 'idle_ended_by_hand',
+        profile: baseProfile.name
+      };
     } else {
-      // Values don't match last profile - this is manual adjustment
-      setManualMode(DEVICE_ID, true);
+      // Values don't match last profile - this is manual adjustment. While idle
+      // it is the user's choice too: manual, and idle ends with it (one save)
+      if (idleState) {
+        patchDeviceState(DEVICE_ID, { manual: true, manualSince: Date.now(), idle: null });
+      } else {
+        setManualMode(DEVICE_ID, true);
+      }
       if (lastApplied && typeof lastApplied.brightness === 'number') {
         overrideLog(DEVICE_ID, roomName, lastProfileName, lastApplied, currentBrightness, currentTemperature, 'check',
-          daylight.active ? ` | lux=${daylight.lux}` : '');
+          (daylight.active ? ` | lux=${daylight.lux}` : '') + (idleState ? ' | while idle' : ''));
       }
       
       const currentBrightnessPct = Math.round(currentBrightness * 100);
@@ -3496,6 +4077,9 @@ try {
   
   // Light turned on (normal mode) or force/reset - clear manual mode for group and members
   if (!CHECK_MANUAL || FORCE_UPDATE) {
+    // Switched on or reset: the room is in use. Idle ends here, where the apply
+    // happens — a turn-on skipped above (fade/restore) leaves it to the wake
+    if (getDeviceState(DEVICE_ID).idle) patchDeviceState(DEVICE_ID, { idle: null });
     const wasManual = isManualMode(DEVICE_ID);
     await clearManualModeForGroup(DEVICE_ID, device);
     
@@ -3614,10 +4198,12 @@ try {
     }
   } else {
     // Normal mode or check mode - use standard apply
-    await applyLighting(device, activeProfile.brightness, activeProfile.temperature, useDuration);
+    // While idle only bulbs that are on (D6: a dim card can switch one on)
+    await applyLighting(device, activeProfile.brightness, activeProfile.temperature, useDuration, null, { onlyOn: !!idleState });
 
     // Remember which profile was applied (for check mode comparison)
     setLastProfile(DEVICE_ID, activeProfile.name, activeProfile.brightness, activeProfile.temperature, activeProfile);
+    if (idleState) rememberIdleLevel(activeProfile.brightness, activeProfile.temperature);
 
     // Manual mode ends only now that the new profile is applied — if the apply
     // threw, the light stays manual and the next full run tries again
@@ -3641,7 +4227,7 @@ try {
   const weekendIndicator = weekendTag(roomConfig);
   const message = `[${roomName}] ${activeProfile.name} → ${brightnessPercent}% / ${tempDesc}${weekendIndicator}${modeIndicator}`;
 
-  diagLog(`AL-APPLY | ${roomName} | ${activeProfile.name} | dim=${brightnessPercent}% temp=${tempPercent}% | mode=${CHECK_MANUAL ? 'check' : FORCE_UPDATE ? 'force' : CLEAR_MANUAL ? 'clear' : 'normal'}${weekendIndicator}${daylightTag(activeProfile)}`);
+  diagLog(`AL-APPLY | ${roomName} | ${activeProfile.name} | dim=${brightnessPercent}% temp=${tempPercent}% | mode=${CHECK_MANUAL ? 'check' : FORCE_UPDATE ? 'force' : CLEAR_MANUAL ? 'clear' : 'normal'}${weekendIndicator}${daylightTag(activeProfile)}${idleState ? ` | idle ${idleSourceTag(activeProfile)}` : ''}`);
 
   // Only log when in check mode (not when light turns on)
   if (SETTINGS.enableLogging && CHECK_MANUAL) {

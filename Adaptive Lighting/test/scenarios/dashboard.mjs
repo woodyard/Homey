@@ -39,6 +39,18 @@ export const scenarios = {
     t.equal(mode('drift', changed, st, T0 + 45000), 'auto', 'changed again → the 30 s start over');
   },
 
+  async 'an idle light (AL 2.32.0) is auto at its dimmed values; tooltip says idle (1.18.0)'(t) {
+    const idle = { mode: 'auto', idle: true, bri: 0.35, temp: 0.9, schedBri: 0.35, factor: undefined, lux: undefined, sunEl: undefined };
+    const live = { onoff: true, dim: 0.35, light_temperature: 0.9 };
+    t.equal(mode('idle1', live, status('idle1', idle)), 'auto', 'live 35 %/0.9 = what AL applied → auto, not Manual?');
+    t.equal(mode('idle2', { ...live, dim: 0.8 }, status('idle2', idle), T0 + 31000), 'auto', '80 % for 0 s → still auto (first sighting)');
+    t.equal(mode('idle2', { ...live, dim: 0.8 }, status('idle2', idle), T0 + 62000), 'drift', 'changed by hand for 30 s → Manual?');
+    t.equal([lib.isIdle(idle), lib.isIdle(entry), lib.isIdle(null)], [true, false, false], 'isIdle');
+    const text = lib.describeLightStatus({ ...idle, profile: 'Daytime', at: T0 });
+    t.check(text.includes('idle: dimmed while the room is empty'), 'tooltip mentions idle', text);
+    t.check(!lib.describeLightStatus(entry).includes('idle'), 'no idle text for a light that is not idle');
+  },
+
   async 'tooltip describes what AL applied'(t) {
     const text = lib.describeLightStatus(entry);
     t.check(text.startsWith('Daytime · 32% (80% × 0.4 daylight, 250 lx) · colour 0.59 (sun 21.4°) · set '), 'profile, daylight factor, lux, colour, sun', text);

@@ -261,7 +261,9 @@ export function classifyMode(caps, phase) {
 // ---- AdaptiveLighting's published status (Logic variable AdaptiveLightingStatus) ----
 // The script (2.28+) publishes each light's real state: { v, schema, publishedAt,
 // weekend, lights: { <device id>: { name, mode, forced?, profile, bri, temp,
-// schedBri, schedTemp, factor?, lux?, sunEl?, via, at, fadeUntil, next } } }.
+// schedBri, schedTemp, factor?, lux?, sunEl?, via, at, fadeUntil, next, idle? } } }.
+// idle (2.32.0): the light is dimmed because its room is empty; mode still says
+// auto/manual underneath, and bri/temp are the dimmed values AL applied.
 // It writes on change plus an hourly heartbeat while lights are on, so an old
 // publishedAt means the script isn't running (or not since the dashboard started).
 export const AL_STATUS_SCHEMA = 1;
@@ -304,6 +306,12 @@ export function resolveLightMode(caps, alStatus, deviceId, phase, now = Date.now
   return { mode: now - driftSince.get(deviceId) >= AL_DRIFT_GRACE_MS ? 'drift' : 'auto', guess: false, st };
 }
 
+// AL has dimmed this light because its room is empty (AdaptiveLighting idle).
+// Shown as " · idle" after the mode label; not for an off light
+export function isIdle(st) {
+  return !!st && st.idle === true;
+}
+
 // One-line description of what AL did, for tooltips:
 // "Daytime · 32% (80% × 0.4 daylight, 250 lx) · colour 0.59 (sun 21.4°) · set 12:05"
 export function describeLightStatus(st) {
@@ -321,6 +329,7 @@ export function describeLightStatus(st) {
     parts.push(`colour ${st.temp}${typeof st.sunEl === 'number' ? ` (sun ${st.sunEl}°)` : ''}`);
   }
   if (st.mode === 'forced') parts.push('forced profile');
+  if (isIdle(st)) parts.push('idle: dimmed while the room is empty');
   if (st.at) {
     parts.push(`set ${new Date(st.at).toLocaleTimeString('da-DK', { timeZone: 'Europe/Copenhagen', hour: '2-digit', minute: '2-digit' })}`);
   }

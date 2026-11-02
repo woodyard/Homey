@@ -53,7 +53,7 @@ export const scenarios = {
   },
 
   async 'every mode the live flows use still runs'(t) {
-    for (const mode of ['', 'check', 'lux 120', 'clear', 'force', 'brighten', 'max', 'dim-down', 'toggle']) {
+    for (const mode of ['', 'check', 'lux 120', 'clear', 'force', 'brighten', 'max', 'dim-down', 'toggle', 'idle', 'wake']) {
       const env = createEnv([light(K, 'K Bord')]);
       setClock('2026-10-27T12:00:00+01:00');
       const r = await env.run(AL, `${K} ${mode}`.trim());

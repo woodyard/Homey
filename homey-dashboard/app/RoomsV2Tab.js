@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AL_ROOMS, getSunTimes, phaseList, isActive, activePhase, resolveLightMode, describeLightStatus, tempColor,
-  fmtMinutes, copenhagenMinutesNow, isWeekendNow, isWeekendScheduleNow,
+  fmtMinutes, copenhagenMinutesNow, isWeekendNow, isWeekendScheduleNow, isIdle,
 } from '../lib/adaptiveLighting';
 import {
   HEATING_ROOMS, HEATING_ACTIONS, heatingDaySlots, heatingSlot, guessHeatFlow,
@@ -277,7 +277,7 @@ function LightTile({ device, al, onToggle }) {
   const modeColor = mode === 'manual' || mode === 'drift' ? '#b45309'
     : mode === 'auto' ? '#16a34a' : mode === 'forced' ? '#2563eb' : '#9ca3af';
   const modeText = mode
-    ? `${mode === 'forced' && al.st?.profile ? `Forced ${al.st.profile}` : LIGHT_MODE_LABEL[mode] || mode}${al.guess ? ' (guessed)' : ''}`
+    ? `${mode === 'forced' && al.st?.profile ? `Forced ${al.st.profile}` : LIGHT_MODE_LABEL[mode] || mode}${al.guess ? ' (guessed)' : ''}${!al.guess && mode !== 'off' && isIdle(al.st) ? ' · idle' : ''}`
     : '';
   const alText = al && al.st ? describeLightStatus(al.st) : '';
   return (

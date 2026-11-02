@@ -92,6 +92,11 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.18.0** (2026-11-02) — Lighting follows AdaptiveLighting 2.32.0: a light the script has
+  dimmed because its room is empty (kitchen idle) shows **Auto · idle** (or **Manual · idle**) on
+  its badge and in the Rooms 2.0 tile text, and the tooltip adds "idle: dimmed while the room is
+  empty". The status field `idle` is additive (schema stays 1); the drift check compares with the
+  dimmed values the script applied, so an idle light is not shown as Manual?.
 - **1.17.1** (2026-11-02) — Lighting follows AdaptiveLighting 2.31.2: the entrance (E9 Loft,
   E9 Garderobe, E7 Lys) has Daytime from 07:00 on weekdays (Morning 06:00–07:00).
 - **1.17.0** (2026-10-27) — Light modes come from AdaptiveLighting itself (2.28.0+), not a
