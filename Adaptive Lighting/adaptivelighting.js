@@ -2,12 +2,17 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.31.1
-// Date:        2026-10-30
+// Version:     2.31.2
+// Date:        2026-11-02
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.31.2 2026-11-02  Entrance Daytime from 07:00 on weekdays
+//                    - PROFILES.entrance (E9 Loft, E9 Garderobe, E7 Lys):
+//                      Morning 06:00-07:00 (was -09:00), Daytime 07:00-18:00
+//                      (80 %, colour following the sun). Weekends unchanged
+//                      (entranceWeekend: Morning 07:30, Daytime 10:00)
 // 2.31.1 2026-10-30  Profile changes ramp in early again
 //                    - The check poll before a profile change (19:55 for
 //                      Evening at 20:00) is meant to start a 6-minute ramp
@@ -826,8 +831,8 @@ const PROFILES = {
   
   // Entrance/hallway - motion-triggered, functional
   entrance: [
-    { name: "Morning",  startTime: "06:00", endTime: "09:00", brightness: 0.40, temperature: 0.7 },
-    { name: "Daytime",  startTime: "09:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
+    { name: "Morning",  startTime: "06:00", endTime: "07:00", brightness: 0.40, temperature: 0.7 },
+    { name: "Daytime",  startTime: "07:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
     { name: "Evening",  startTime: "18:00", endTime: "23:00", brightness: 0.4,  temperature: 0.7 },
     { name: "Night",    startTime: "23:00", endTime: "06:00", brightness: 0.10, temperature: 1.0 }
   ],
@@ -1772,7 +1777,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.31.1';
+const AL_VERSION = '2.31.2';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {

@@ -55,8 +55,8 @@ const P = {
     { name: 'Night',    startTime: '22:00', endTime: '06:00', brightness: 0.15, temperature: 0.9 },
   ],
   entrance: [
-    { name: 'Morning',  startTime: '06:00', endTime: '09:00', brightness: 0.40, temperature: 0.7 },
-    { name: 'Daytime',  startTime: '09:00', endTime: '18:00', brightness: 0.8,  temperature: 0.5 },
+    { name: 'Morning',  startTime: '06:00', endTime: '07:00', brightness: 0.40, temperature: 0.7 },
+    { name: 'Daytime',  startTime: '07:00', endTime: '18:00', brightness: 0.8,  temperature: 0.5 },
     { name: 'Evening',  startTime: '18:00', endTime: '23:00', brightness: 0.4,  temperature: 0.7 },
     { name: 'Night',    startTime: '23:00', endTime: '06:00', brightness: 0.10, temperature: 1.0 },
   ],

@@ -26,7 +26,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.17.1';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).

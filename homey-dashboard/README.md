@@ -92,6 +92,8 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.17.1** (2026-11-02) — Lighting follows AdaptiveLighting 2.31.2: the entrance (E9 Loft,
+  E9 Garderobe, E7 Lys) has Daytime from 07:00 on weekdays (Morning 06:00–07:00).
 - **1.17.0** (2026-10-27) — Light modes come from AdaptiveLighting itself (2.28.0+), not a
   guess. The script publishes every light's state to the Logic text variable
   `AdaptiveLightingStatus`; the new `/api/homey/lighting` route reads it and one shared 15s poll
