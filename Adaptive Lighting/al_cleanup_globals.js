@@ -30,10 +30,7 @@
 // Version:     1.0
 // Author:      Henrik Skovgaard
 //
-// VERSION HISTORY:
-// -------------------------------------------------------------------------
-// 1.0  2026-10-28  Initial version (with AdaptiveLighting 2.29.1)
-// -------------------------------------------------------------------------
+// Version history: CHANGELOG.md
 
 const DRY_RUN = true;
 const BATCH_SIZE = 14;   // + 1 write for the rebuilt index = 15, as Room Heating's cleanup

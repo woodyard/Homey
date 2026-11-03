@@ -67,6 +67,5 @@ scenario starts from `createEnv([...devices])`, so nothing leaks between scenari
 
 ## Adding a test with a change
 
-When a script changes behaviour, add or update the scenario in the same change, and bump the
-script's version history as usual. A quick way to check a new test is real: break the code on
+When a script changes behaviour, add or update the scenario in the same change, and bump the script's version in its header and add an entry to [CHANGELOG.md](../CHANGELOG.md). A quick way to check a new test is real: break the code on
 purpose in a copy (`--scripts=<copy>`) and make sure the test fails.

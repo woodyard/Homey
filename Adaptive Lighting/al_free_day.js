@@ -21,10 +21,7 @@
 // Version:     1.0
 // Author:      Henrik Skovgaard
 //
-// VERSION HISTORY:
-// -------------------------------------------------------------------------
-// 1.0  2026-10-28  Initial version (with AdaptiveLighting 2.30.1)
-// -------------------------------------------------------------------------
+// Version history: CHANGELOG.md
 
 // Shared with the other Adaptive Lighting scripts: one line per event in
 // AL_DiagnostikLog (see GradualFadeOut's header). Max 500 lines retained

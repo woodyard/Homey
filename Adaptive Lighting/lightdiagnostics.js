@@ -2,22 +2,7 @@
  * AdaptiveLighting Diagnostics
  * Version: 1.5
  *
- * VERSION HISTORY:
- * -------------------------------------------------------------------------
- * 1.5  2026-10-28  Drop dead flags: the legacy ${id}_FadeActive (not written
- *                  since GradualFadeOut 5.0) and ${id}_SavedManualMode (not
- *                  written since GradualFadeOut 6.14 / watchdog 2.13 — the
- *                  manual flag is AL's own, shown above)
- * 1.4  2026-03-31  Show full device picture including GradualFadeOut state
- *                  - Shows SavedDim, SavedTemp, FadeActiveUntil, SavedManualMode
- *                  - Raw state dump includes both AL state and external variables
- * 1.3  2026-03-31  Per-device state variables (AL_Device_<key>.State)
- *                  - Reads device index from AL_DeviceKeys
- *                  - Reads each device state individually
- *                  - Shows forced profile index when active
- * 1.2  2026-03-31  Read unified device state (fadeEndTime, forcedProfile)
- * 1.1  Initial     Basic diagnostics for manual mode and fade timers
- * -------------------------------------------------------------------------
+ * Version history: CHANGELOG.md
  *
  * Shows status of all devices tracked by AdaptiveLighting, including:
  * - Current brightness/temperature
