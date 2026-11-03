@@ -2,6 +2,12 @@
 // Description: Periodically checks if lights are stuck on while room is idle.
 //              If idle longer than the room's InactivitySeconds, triggers fade to off.
 //              Catches cases where the normal zone-inactive → countdown → fade chain fails.
+//              A light switched on while nobody is seen (switch, app, voice) gets
+//              15 minutes from the turn-on — the zone never went inactive, so
+//              only the watchdog turns it off. A light that keeps coming back
+//              on with nobody seen is faded at most 30 minutes after the first
+//              such turn-on; one back on right after an automatic off (a
+//              flip-back) gets the room's normal timeout.
 //
 // Usage: Pass room name as argument (e.g. "B9" or "E9")
 //        Each room's config (devices, sensors, variables) is defined below.
@@ -13,6 +19,60 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.17 2026-11-03  A light switched on while nobody is seen gets 15 minutes
+//                  - B9, 3 Nov: the Hue dimmer switch turned B9 Lys on at
+//                    07:23:24; neither motion sensor had changed since
+//                    06:51:41, so the 07:24:00 run logged idle=1939s and faded
+//                    the light 36 s after it came on. The person was first seen
+//                    at 07:26:13
+//                  - Turn-on time: AdaptiveLighting's lastApplied.at when via is
+//                    "normal" (B7/B9/E9 run AL only from "turned on") and it is
+//                    at most a minute ahead; else unknown. Not onoff.lastChanged
+//                    (probably not in HomeyScript's capabilitiesObj) nor
+//                    lastUpdated (moves on every same-value report). While AL's
+//                    turn-on run holds its lease → decide next minute. A lease
+//                    more than 65 s ahead (AL's run 60 s) is ignored: a clock
+//                    step or a corrupt state must not block the fade for good
+//                  - Idle counts from the latest of the last motion, the turn-on
+//                    and (E9) the door's last change
+//                  - Seen: turn-on unknown (exactly as 2.16), a motion change
+//                    from SEEN_BEFORE_ON (60 s) before the turn-on, or in E9 the
+//                    door (E9 Dør) changing then (read only when motion hasn't
+//                    seen anyone). A door that can't be read or has no change
+//                    time is not seen (WATCHDOG-ERROR naming it, at most every
+//                    10 min)
+//                  - Not seen: no fade before UNSEEN_MIN_ON (900 s) after the
+//                    turn-on (less only under the flapping cap); one
+//                    WATCHDOG-UNSEEN line per turn-on, and WATCHDOG-FADE says
+//                    "(nobody seen since on)". Seen later → the room's
+//                    threshold from that motion, as before
+//                  - Flapping cap: a light that keeps coming back on while
+//                    nobody is seen is faded at the latest UNSEEN_MAX_HOLD
+//                    (1800 s) after the first unseen turn-on of the stretch. A
+//                    turn-on continues the stretch only with the same last
+//                    motion (E9: door untouched), no automatic off in between,
+//                    and within the 1800 s; else it starts a new stretch with
+//                    its full 900 s (a night visit faded at 03:15 must not cut
+//                    the 07:23 one short). One record per room
+//                    (AL_WatchdogUnseen_<room>), written only when it changes
+//                  - Flip-back: on within AUTO_OFF_WINDOW (180 s) of
+//                    GradualFadeOut's (6.18) or the watchdog's own off
+//                    (${id}_AutoOffAt, now stamped at WATCHDOG-OFF and at the
+//                    "already very dim" off) — a late Hue/Zigbee report or
+//                    someone pressing on right after — gets the room's
+//                    threshold from the turn-on, never the flapping cap, no
+//                    UNSEEN line, and WATCHDOG-FADE says "(flip-back after
+//                    auto-off)"
+//                  - No motion timestamp but a turn-on: faded 900 s after it
+//                    (was "no motion timestamp available" for ever)
+//                  - Before fading: wait 5 s, then read the light, the motion
+//                    sensors, a fade in progress and AL's state again. Off,
+//                    motion, a fade started (GradualFadeOut) or a turn-on
+//                    started or recorded meanwhile → no fade, the next minute
+//                    decides; otherwise the fade uses the fresh light values
+//                  - Known limit (as before): a countdown already armed by an
+//                    earlier zone-inactive transition can still let
+//                    GradualFadeOut fade a light switched on unseen
 // 2.16 2026-10-28  Group detection from the device driver
 //                  - Shared GROUPS block (same as AdaptiveLighting 2.29.3): a
 //                    group is Homey's virtual group driver, not "lacks
@@ -147,6 +207,11 @@ const ROOMS = {
     motionSensors: [
       "0da27a1f-ced1-4d02-9193-9438109c5c38"  // E9 Motion
     ],
+    // Door contacts in the zone: opening the door makes it active and turns
+    // the lights on, so a door change counts as someone seen (and as activity)
+    doorSensors: [
+      "68ef424e-3ab9-4573-8a89-bdce2b4ffe65"  // E9 Dør
+    ],
     inactivityVar: "E9_InactivitySeconds"
   }
 };
@@ -161,6 +226,16 @@ const WATCHDOG_GRACE = 60; // Extra seconds beyond inactivity threshold before w
                            // Prevents racing with the normal inactivity flow
 const HOLD_WAIT_SECONDS = 10; // motion at fade end: how long to wait for
                               // RestoreSavedSettings before restoring here
+const SEEN_BEFORE_ON = 60;   // A motion (or door) change this many seconds before the
+                             // turn-on still counts as seen: AL records the turn-on a
+                             // few seconds after the motion that caused it
+const UNSEEN_MIN_ON = 900;   // Switched on while nobody is seen: no fade before this
+                             // many seconds after the turn-on (shower, bath)
+const UNSEEN_MAX_HOLD = 1800; // ... and none later than this after the first unseen
+                              // turn-on of a stretch (a light that keeps coming
+                              // back on with nobody seen)
+const AUTO_OFF_WINDOW = 180; // On this soon after GradualFadeOut's or the watchdog's
+                             // off: a flip-back, not a fresh unseen turn-on
 const ERROR_LOG_INTERVAL = 600; // Seconds between WATCHDOG-ERROR lines for the same
                                 // room — a permanent error would otherwise write one
                                 // line a minute and push everything else out of the log
@@ -201,6 +276,19 @@ function diagLog(entry) {
   const lines = (logText + newEntry).split('\n').filter(l => l.length > 0);
   const trimmed = lines.slice(-500).join('\n') + '\n';
   global.set('AL_DiagnostikLog', trimmed);
+}
+
+// A WATCHDOG-ERROR line at most once per room per ERROR_LOG_INTERVAL — one
+// timestamp per room and source (AL_WatchdogErrorAt_<room>[_<source>]), since
+// the flow runs every minute. Never throws
+function diagLogErrorLimited(entry, source = '') {
+  try {
+    const lastErrorKey = `AL_WatchdogErrorAt_${roomKey}${source ? `_${source}` : ''}`;
+    if (Date.now() - (global.get(lastErrorKey) || 0) >= ERROR_LOG_INTERVAL * 1000) {
+      global.set(lastErrorKey, Date.now());
+      diagLog(entry);
+    }
+  } catch (e) { /* ignore */ }
 }
 
 // ====== GROUPS — same block in adaptivelighting.js, gradualfadeout.js,
@@ -290,9 +378,75 @@ function checkOverride(deviceId, name, dim, temp, source) {
   } catch (e) { /* override logging is best-effort */ }
 }
 
+// ====== TURN-ON TIME ======
+// From AdaptiveLighting's state for the primary light. B7/B9/E9 run AL only
+// from the light's "turned on" flow (mode normal), so lastApplied {at, via:
+// 'normal'} is the last turn-on AL handled. Not Homey's onoff.lastChanged
+// (probably not in HomeyScript's capabilitiesObj) nor lastUpdated (moves on
+// every same-value report)
+// at:   epoch ms; 0 = unknown (no record, another mode, or more than a minute
+//       ahead — a bad value must not hold the light for good)
+// busy: AL's turn-on run still holds its lease (it hasn't recorded the turn-on
+//       yet). AL's leases run 60 s (BUSY_LEASE_MS): one further ahead than
+//       that (a clock stepped back, a corrupt write) is no lease — AL keeps it,
+//       and it must not block the fade for good either
+function turnOnInfo() {
+  const now = Date.now();
+  let at = 0;
+  let busy = false;
+  try {
+    const raw = global.get(`AL_Device_${ROOM.primaryLight.substring(0, 8)}.State`);
+    const state = raw ? JSON.parse(raw) : null;
+    const applied = state?.lastApplied;
+    if (applied?.via === 'normal' && typeof applied.at === 'number' && applied.at > 0 && applied.at <= now + 60000) {
+      at = applied.at;
+    }
+    busy = Object.values(state?.busy || {}).some(until => typeof until === 'number' && until > now && until <= now + 65000);
+  } catch (e) { /* corrupt AL state — turn-on unknown, as before 2.17 */ }
+  return { at, busy };
+}
+
+// Latest change of the room's door contacts, epoch ms (0 = none readable). A
+// contact that can't be read, or has no change time, counts as not seen;
+// WATCHDOG-ERROR names it
+async function lastDoorChange() {
+  let latest = 0;
+  for (const id of ROOM.doorSensors || []) {
+    try {
+      const sensor = await Homey.devices.getDevice({ id });
+      const cap = sensor.capabilitiesObj?.alarm_contact;
+      if (!cap) throw new Error(`${sensor.name || 'device'} has no alarm_contact`);
+      const ts = new Date(cap.lastChanged ?? cap.lastUpdated).getTime();
+      if (!(ts > 0)) throw new Error(`${sensor.name || 'device'} alarm_contact has no change time`);
+      if (ts > latest) latest = ts;
+    } catch (e) {
+      diagLogErrorLimited(`WATCHDOG-ERROR | ${ROOM.name} | door sensor ${id} unreadable (treated as not seen): ${e.message}`, 'door');
+    }
+  }
+  return latest;
+}
+
+// Motion now, and the sensors' last change (epoch ms, 0 = none)
+async function readMotion() {
+  let motion = false;
+  let last = 0;
+  for (const sensorId of ROOM.motionSensors) {
+    const sensor = await Homey.devices.getDevice({ id: sensorId });
+    const motionCap = sensor.capabilitiesObj?.alarm_motion;
+    if (motionCap?.value) {
+      motion = true;
+      break;
+    }
+    const ts = new Date(motionCap?.lastChanged ?? motionCap?.lastUpdated).getTime();
+    if (!isNaN(ts) && ts > last) last = ts;
+  }
+  return { motion, last };
+}
+
 try {
   // ====== 1. CHECK IF LIGHTS ARE ON ======
-  const device = await Homey.devices.getDevice({ id: ROOM.primaryLight });
+  // (let: read again after the 5 s look before a fade)
+  let device = await Homey.devices.getDevice({ id: ROOM.primaryLight });
   const lightsOn = device.capabilitiesObj?.onoff?.value === true;
 
   if (!lightsOn) {
@@ -300,18 +454,7 @@ try {
   }
 
   // ====== 2. CHECK MOTION SENSORS ======
-  let hasMotion = false;
-  let lastMotionTime = 0;
-  for (const sensorId of ROOM.motionSensors) {
-    const sensor = await Homey.devices.getDevice({ id: sensorId });
-    const motionCap = sensor.capabilitiesObj?.alarm_motion;
-    if (motionCap?.value) {
-      hasMotion = true;
-      break;
-    }
-    const ts = new Date(motionCap?.lastChanged ?? motionCap?.lastUpdated).getTime();
-    if (!isNaN(ts) && ts > lastMotionTime) lastMotionTime = ts;
-  }
+  const { motion: hasMotion, last: lastMotionTime } = await readMotion();
 
   if (hasMotion) {
     return `${PREFIX}: motion detected`;
@@ -338,20 +481,114 @@ try {
     log(`${PREFIX}: couldn't read Logic variable: ${e.message}`);
   }
 
-  // ====== 5. CHECK IF IDLE LONG ENOUGH (based on sensor timestamps) ======
-  const now = Date.now();
+  // AdaptiveLighting's record of the turn-on — read after the last await
+  // above, so a turn-on that started meanwhile is seen. Its turn-on run still
+  // holds the lease: the turn-on isn't recorded yet, the next minute decides.
+  // (E9's door read below awaits once more; a turn-on during it is caught by
+  // the look before a fade, and holding on an older turn-on is safe)
+  const turnOn = turnOnInfo();
+  if (turnOn.busy) {
+    return `${PREFIX}: AdaptiveLighting turn-on in progress`;
+  }
 
-  if (lastMotionTime <= 0) {
+  // ====== 5. CHECK IF IDLE LONG ENOUGH (motion, turn-on and door times) ======
+  // Idle since the latest of the last motion, the turn-on and (E9) the door.
+  // - Seen (a motion change from SEEN_BEFORE_ON before the turn-on, in E9 also
+  //   the door; or the turn-on unknown): the room's threshold, as before 2.17
+  // - Not seen: switched on by a switch, the app or voice while the sensors
+  //   can't see the person — no fade before UNSEEN_MIN_ON
+  // - Flip-back (not seen, on within AUTO_OFF_WINDOW of an automatic off): a
+  //   late report or someone undoing the off — the room's threshold
+  const now = Date.now();
+  const onAt = turnOn.at;
+
+  if (lastMotionTime <= 0 && onAt <= 0) {
     return `${PREFIX}: no motion timestamp available`;
   }
 
-  const idleDuration = (now - lastMotionTime) / 1000;
+  const seenFrom = onAt - SEEN_BEFORE_ON * 1000;
+  let seen = onAt <= 0 || lastMotionTime >= seenFrom;
+  let doorAt = 0;
+  if (!seen && ROOM.doorSensors) {
+    doorAt = await lastDoorChange();
+    seen = doorAt >= seenFrom;
+  }
+  const autoOffAt = global.get(`${ROOM.primaryLight}_AutoOffAt`) || 0;
+  const flipBack = !seen && autoOffAt > 0 && onAt >= autoOffAt && onAt - autoOffAt <= AUTO_OFF_WINDOW * 1000;
+  const unseen = !seen && !flipBack;
 
-  const watchdogThreshold = inactivitySeconds + WATCHDOG_GRACE;
+  const idleDuration = (now - Math.max(lastMotionTime, onAt, doorAt)) / 1000;
 
-  if (idleDuration < watchdogThreshold) {
-    const remaining = Math.round(watchdogThreshold - idleDuration);
-    return `${PREFIX}: idle ${Math.round(idleDuration)}s / ${watchdogThreshold}s (${remaining}s left)`;
+  let watchdogThreshold = inactivitySeconds + WATCHDOG_GRACE;
+  if (unseen) watchdogThreshold = Math.max(watchdogThreshold, UNSEEN_MIN_ON);
+
+  // Flapping cap: while nobody is seen, the hold ends UNSEEN_MAX_HOLD after the
+  // first unseen turn-on of a stretch, however often the turn-on moves (a bulb
+  // dropping out and rejoining). A turn-on continues the stretch only while
+  // nobody has been seen since its first turn-on (the same last motion; in E9
+  // the door untouched), no automatic off came in between, and it is within
+  // UNSEEN_MAX_HOLD of that first turn-on. Any other unseen turn-on starts a
+  // new stretch with its full UNSEEN_MIN_ON: a night visit faded at 03:15 must
+  // not cut short a switch-on at 07:23. A flip-back is never capped (it gets
+  // the room's threshold). Record per room, written only when it changes:
+  // { firstOnAt, lastMotion, loggedOnAt (WATCHDOG-UNSEEN) }
+  const unseenKey = `AL_WatchdogUnseen_${roomKey}`;
+  const storedStretch = global.get(unseenKey) || null;
+  let stretch = null;
+  if (unseen) {
+    let rec = null;
+    try { rec = storedStretch ? JSON.parse(storedStretch) : null; } catch (e) { /* corrupt — start over */ }
+    const first = typeof rec?.firstOnAt === 'number' && rec.firstOnAt > 0 ? rec.firstOnAt : 0;
+    const sameStretch = first > 0 && first <= onAt
+      && rec.lastMotion === lastMotionTime
+      && doorAt < first - SEEN_BEFORE_ON * 1000
+      && !(autoOffAt > first && autoOffAt <= onAt)
+      && onAt < first + UNSEEN_MAX_HOLD * 1000;
+    stretch = sameStretch ? rec : { firstOnAt: onAt, lastMotion: lastMotionTime, loggedOnAt: 0 };
+  }
+  const capAt = stretch ? stretch.firstOnAt + UNSEEN_MAX_HOLD * 1000 : Infinity;
+  const capped = now >= capAt;
+  const holding = idleDuration < watchdogThreshold && !capped;
+
+  // WATCHDOG-UNSEEN once per turn-on: shows how often it happens and whether 900 s fits
+  if (holding && unseen && stretch.loggedOnAt !== onAt) {
+    stretch.loggedOnAt = onAt;
+    const holdFor = Math.round(Math.min(watchdogThreshold, (capAt - onAt) / 1000));
+    const last = lastMotionTime > 0 ? `last motion ${Math.round((onAt - lastMotionTime) / 60000)} min before` : 'no motion timestamp';
+    const capNote = holdFor < watchdogThreshold ? ` (first unseen turn-on ${Math.round((onAt - stretch.firstOnAt) / 60000)} min before, max ${UNSEEN_MAX_HOLD}s)` : '';
+    diagLog(`WATCHDOG-UNSEEN | ${ROOM.name} | on ${Math.max(0, Math.round((now - onAt) / 1000))}s, nobody seen since (${last}) — no fade before ${holdFor}s${capNote}`);
+  }
+  if (stretch && JSON.stringify(stretch) !== storedStretch) global.set(unseenKey, JSON.stringify(stretch));
+
+  if (holding) {
+    let reason = unseen ? ' — on, nobody seen' : flipBack ? ' — flip-back after auto-off' : '';
+    if (capAt - now < (watchdogThreshold - idleDuration) * 1000) reason += `, max ${UNSEEN_MAX_HOLD}s from the first unseen turn-on`;
+    const remaining = Math.round(Math.min(watchdogThreshold - idleDuration, (capAt - now) / 1000));
+    return `${PREFIX}: idle ${Math.round(idleDuration)}s / ${watchdogThreshold}s (${remaining}s left)${reason}`;
+  }
+
+  // A switch pressed just before this minute: AL's turn-on run may not have
+  // taken its lease or recorded the turn-on yet. Look once more before fading.
+  // The 5 s are new in 2.17, so steps 1-3 are repeated too: someone walking in
+  // or switching the light off meanwhile, or GradualFadeOut's countdown
+  // starting its fade, must not get a fade decided on values from before the
+  // wait (RestoreSavedSettings has no fade to cancel yet). AL's state is read
+  // last, after the final await
+  await wait(5000);
+  device = await Homey.devices.getDevice({ id: ROOM.primaryLight });
+  if (device.capabilitiesObj?.onoff?.value !== true) {
+    return `${PREFIX}: switched off just now`;
+  }
+  const motionAgain = await readMotion();
+  if (motionAgain.motion || motionAgain.last > lastMotionTime) {
+    return `${PREFIX}: motion just now — decide next minute`;
+  }
+  if (Date.now() < (global.get(`${ROOM.primaryLight}_FadeActiveUntil`) || 0)) {
+    return `${PREFIX}: fade started just now`;
+  }
+  const again = turnOnInfo();
+  if (again.busy || again.at > onAt) {
+    return `${PREFIX}: turned on just now — decide next minute`;
   }
 
   // ====== 6. TRIGGER FADE ======
@@ -386,12 +623,17 @@ try {
 
   checkOverride(ROOM.primaryLight, device.name, currentBrightness, currentTemp, 'watchdog');
 
-  diagLog(`WATCHDOG-FADE | ${ROOM.name} | idle=${Math.round(idleDuration)}s threshold=${watchdogThreshold}s | dim=${Math.round(currentBrightness * 100)}% manual=${wasManualMode}`);
+  const why = unseen ? ' (nobody seen since on)' : flipBack ? ' (flip-back after auto-off)' : '';
+  const capInfo = capped && idleDuration < watchdogThreshold ? ` first-on=${Math.round((now - stretch.firstOnAt) / 1000)}s cap=${UNSEEN_MAX_HOLD}s` : '';
+  diagLog(`WATCHDOG-FADE | ${ROOM.name} | idle=${Math.round(idleDuration)}s threshold=${watchdogThreshold}s${why}${capInfo} | dim=${Math.round(currentBrightness * 100)}% manual=${wasManualMode}`);
 
   // If already very dim, just turn off
   if (currentBrightness <= 0.05) {
     await device.setCapabilityValue('onoff', false);
     global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
+    // An automatic off too (E9: the second step after WATCHDOG-HOLD) — a
+    // turn-on soon after is a flip-back (2.17)
+    global.set(`${ROOM.primaryLight}_AutoOffAt`, Date.now());
     diagLog(`WATCHDOG-SKIP | ${ROOM.name} | already very dim (${Math.round(currentBrightness * 100)}%)`);
     return `${PREFIX}: already dim, turned off`;
   }
@@ -584,6 +826,8 @@ try {
       })
   ));
   global.set(`${ROOM.primaryLight}_FadeActiveUntil`, 0);
+  // A turn-on soon after this off is a flip-back (2.17), not a fresh unseen one
+  for (const p of restorePlan) global.set(`${p.id}_AutoOffAt`, Date.now());
   diagLog(`WATCHDOG-OFF | ${ROOM.name} | off sent to ${targets.length} light(s)`);
 
   // Verify: a lost command or a late Zigbee report can leave/flip Homey's
@@ -629,12 +873,6 @@ try {
   // Flow runs never show the console, and an unknown device/sensor id (e.g. after
   // re-pairing) throws on every run. Log it, at most once per room per interval
   log(`${PREFIX}: ERROR ${error.message}`);
-  try {
-    const lastErrorKey = `AL_WatchdogErrorAt_${roomKey}`;
-    if (Date.now() - (global.get(lastErrorKey) || 0) >= ERROR_LOG_INTERVAL * 1000) {
-      global.set(lastErrorKey, Date.now());
-      diagLog(`WATCHDOG-ERROR | ${ROOM.name} | ${error.message}`);
-    }
-  } catch (e) { /* ignore */ }
+  diagLogErrorLimited(`WATCHDOG-ERROR | ${ROOM.name} | ${error.message}`);
   return `${PREFIX}: ERROR ${error.message}`;
 }

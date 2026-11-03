@@ -12,6 +12,14 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.18 2026-11-03  Stamp ${deviceId}_AutoOffAt at FADE-OFF
+//                  - Room_watchdog 2.17 gives a light switched on while nobody
+//                    is seen 15 minutes. A turn-on within 3 minutes of this off
+//                    is a late Hue/Zigbee report or someone pressing on right
+//                    after it, not a fresh switch-on: the watchdog reads the
+//                    stamp and gives it the room's normal timeout instead
+//                  - Also at the "already off/very dim" off (FADE-SKIP at
+//                    ≤5 %), which switches the light off without a fade
 // 6.17 2026-10-28  Group detection from the device driver
 //                  - Shared GROUPS block (same as AdaptiveLighting 2.29.3): a
 //                    group is Homey's virtual group driver, not "lacks
@@ -429,6 +437,7 @@ async function processDevice(deviceId) {
     if (currentBrightness <= 0.05) {
       await device.setCapabilityValue('onoff', false);
       global.set(fadeActiveUntilVar, 0); // Clear - no fade needed
+      global.set(`${deviceId}_AutoOffAt`, Date.now()); // Room_watchdog: a turn-on soon after is a flip-back
       diagLog(`FADE-SKIP | ${device.name} | already off/very dim (${Math.round(currentBrightness * 100)}%)`);
       return `${device.name}: Already off or very dim`;
     }
@@ -550,6 +559,7 @@ async function processDevice(deviceId) {
         })
     ));
     global.set(fadeActiveUntilVar, 0);
+    global.set(`${deviceId}_AutoOffAt`, Date.now()); // Room_watchdog: a turn-on soon after is a flip-back
     diagLog(`FADE-OFF | ${device.name} | off sent to ${turnOffTargets.length} light(s)`);
 
     // Verify: a lost command or a late Zigbee report can leave/flip Homey's

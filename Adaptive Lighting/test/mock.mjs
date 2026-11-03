@@ -20,9 +20,11 @@ export function setScriptDir(dir) { scriptDir = path.resolve(dir); sourceCache.c
 export function scriptPath(name) { return path.join(scriptDir, name); }
 export function scriptFiles() { return fs.readdirSync(scriptDir).filter((f) => f.endsWith('.js')).sort(); }
 
+// Line endings as LF: a Windows checkout (core.autocrlf) has CRLF, and the
+// tests' { patch } targets are written with \n
 const sourceCache = new Map();
 function source(name) {
-  if (!sourceCache.has(name)) sourceCache.set(name, fs.readFileSync(scriptPath(name), 'utf8'));
+  if (!sourceCache.has(name)) sourceCache.set(name, fs.readFileSync(scriptPath(name), 'utf8').replace(/\r\n/g, '\n'));
   return sourceCache.get(name);
 }
 
@@ -61,6 +63,14 @@ export function motionSensor(id, name, { motion = false, lastChanged = null } = 
   return {
     id, name, class: 'sensor', zone: 'zone', capabilities: ['alarm_motion'],
     capabilitiesObj: { alarm_motion: { value: motion, lastChanged: lastChanged || new RealDate(now).toISOString() } },
+  };
+}
+
+// A door contact (alarm_contact true = open), e.g. E9 Dør
+export function contactSensor(id, name, { open = false, lastChanged = null } = {}) {
+  return {
+    id, name, class: 'sensor', zone: 'zone', capabilities: ['alarm_contact'],
+    capabilitiesObj: { alarm_contact: { value: open, lastChanged: lastChanged || new RealDate(now).toISOString() } },
   };
 }
 
@@ -201,6 +211,9 @@ export function createEnv(devices = []) {
 
   // ---- inspection helpers ----
   env.state = (deviceId) => JSON.parse(env.store.get(`AL_Device_${deviceId.slice(0, 8)}.State`) || 'null');
+  // Store an AL device state without running AdaptiveLighting, e.g.
+  // { lastApplied: { at, brightness, via: 'normal' }, busy: { token: until } }
+  env.setState = (deviceId, state) => env.store.set(`AL_Device_${deviceId.slice(0, 8)}.State`, JSON.stringify(state));
   env.diag = () => (env.store.get('AL_DiagnostikLog') || '').split('\n').filter(Boolean);
   env.status = () => {
     const v = Object.values(env.vars).find((x) => x.name === 'AdaptiveLightingStatus');
