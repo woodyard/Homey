@@ -2,19 +2,15 @@
 
 ## Version History Updates
 
-When modifying `room_heating.js`, always update the version history:
+The scripts carry only their current version in the header (`Version: X.Y.Z`) and a
+`Version history: CHANGELOG.md` pointer. The history lives in `CHANGELOG.md`, one section
+per script, newest first. When modifying a script:
 
-1. **Bump the version number** in the header comment (`Version: X.Y.Z` at ~line 33)
-2. **Add a changelog entry** at the top of the "Recent Changes" list (~line 37) using this format:
+1. **Bump the version number** in the script's header comment.
+2. **Add an entry** at the top of that script's section in `CHANGELOG.md`:
    ```
-   * X.Y.Z (YYYY-MM-DD) - <emoji> <Type>: <Short description>
-   ```
-3. **Add a detailed entry** in `CHANGELOG.txt` at the top (below the header), using this format:
-   ```
-   ==============================================
-   Version X.Y.Z (YYYY-MM-DD)
-   ==============================================
-   <emoji> <Type>: <Short description>
+   ### X.Y.Z — YYYY-MM-DD — <emoji> <Short description>
+
    - <Detail about what changed>
    - <Detail about why>
    - Files modified: room_heating.js (vX.Y.Z)
@@ -42,4 +38,5 @@ When modifying `room_heating.js`, always update the version history:
 - It controls heating for multiple rooms (Clara, Oliver, Stue, etc.)
 - Configuration is in `room_heating_config.js`
 - Uses `global.get()`/`global.set()` for persistent state between runs
-- Uses `await tag()` and `await say()` for Homey notifications
+- Sends notifications with the `create_notification` flow card action
+- Check a change offline with `test/` (see `test/README.md`) before it is pasted into Homey
