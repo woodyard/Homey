@@ -15,8 +15,8 @@ export const scenarios = {
     const env = createEnv([light(ID.O_LOFT, 'O Loft')]);
     const O = ID.O_LOFT;
     await at(env, '2026-10-27T16:00:00+01:00', O);
-    let r = await at(env, '2026-10-27T16:20:00+01:00', `${O} check`, () => { env.dev(O).dim.value = 1.0; });
-    t.equal(r.reason, 'manual_adjustment_detected', 'Hue switch to 100% → manual');
+    let r = await at(env, '2026-10-27T16:20:00+01:00', `${O} check`, () => { env.dev(O).dim.value = 0.5; });
+    t.equal(r.reason, 'manual_adjustment_detected', 'Hue switch to 50% → manual');
     t.check(env.state(O).manualSince > 0, 'manualSince stamped');
 
     r = await at(env, '2026-10-27T18:01:00+01:00', `${O} check`);

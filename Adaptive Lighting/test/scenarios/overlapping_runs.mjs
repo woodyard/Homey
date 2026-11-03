@@ -152,7 +152,7 @@ export const scenarios = {
     // The second press starts before the first has saved, and fetches after it has
     const [first, second] = await overlap(env, `${O} cycle-profile`, `${O} cycle-profile`);
     t.equal([first.profile, second.profile], ['Morning', 'Daytime'], 'Morning, then Daytime');
-    t.equal([env.state(O).forcedProfile.index, env.dev(O).dim.value], [1, 0.8], 'forced Daytime 80 %');
+    t.equal([env.state(O).forcedProfile.index, env.dev(O).dim.value], [1, 1], 'forced Daytime 100 %');
   },
 
   async 'a lux run during a turn-on backs off'(t) {

@@ -2,12 +2,73 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.32.3
+// Version:     2.32.4
 // Date:        2026-11-03
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.32.4 2026-11-03  Four fixes
+//                    Idle floor never lifts the light above AL's own ramp:
+//                      - 2 Nov: the 22:55 poll ramped the kitchen to Night 15 %
+//                        (boundary 23:00); empty at 22:58, idle compared with
+//                        the clock profile (Evening 70 %), so the 20 % floor
+//                        applied and the kitchen stayed at 20 % all night (15 %
+//                        vs 20 % is within tolerance for every later check)
+//                      - While AL's own transition runs (fadeEndTime), the floor
+//                        is also capped at the level it is heading to
+//                        (lastApplied): 15 % at 22:58. A ramp up (05:55 to
+//                        Morning) or wake's fade changes nothing. The AL-IDLE
+//                        line says "min 15% (AL ramp)"
+//                    Sunrise/sunset 13 days off:
+//                      - getSunTimesNOAA (on Homey the geolocation call gives
+//                        no sun times, so every run uses these) computed
+//                        its Julian day 13 days ahead. 30.10 the living room's
+//                        "sunrise+30>08:00" was 08:08 (sunrise 07:38, true
+//                        07:11); 3.11 Daytime at 08:16 instead of 08:00.
+//                        Off by up to ~33 min around the equinoxes (sunrise
+//                        late/sunset early in autumn, the reverse in spring),
+//                        ~11 min at midwinter. Now within 2 min of the
+//                        København times all year
+//                      - Julian day from Date.UTC (noon), as solarElevationDeg
+//                        already does (sun=… colour was never affected)
+//                    Wake takes over a GradualFadeOut fade that reads off:
+//                      - Homey sets onoff false the moment GradualFadeOut's
+//                        dim-to-0 card starts (insights, 3 Nov), and a Hue bulb
+//                        reports itself on again only sometimes. A wake in those
+//                        seconds logged "light off — idle cleared" and sent
+//                        nothing, but its takeover had already cancelled the
+//                        fade: GradualFadeOut skipped its off, RestoreSavedSettings
+//                        found no fade, and someone who came in stayed at 0 %
+//                      - During a takeover a bulb that reads off is fading: auto
+//                        lights get the profile on every bulb, manual lights each
+//                        snapshot bulb's dim; the dim card switches them on, as
+//                        RestoreSavedSettings does. Logged "| read off mid-fade".
+//                        An off by hand in those seconds comes back on (as with
+//                        GradualFadeOut 6.19), and so does an auto light's bulb
+//                        switched off by hand before or while idle (as with
+//                        RestoreSavedSettings: AL keeps no per-bulb on/off for
+//                        auto lights)
+//                      - GradualFadeOut's own off at fade end (_AutoOffAt at or
+//                        after the takeover) is still an off: flag cleared,
+//                        _RestoredAt put back, nothing switched on
+//                      - Other modes are unaffected: idle, normal and check skip
+//                        while _FadeActiveUntil runs (lux runs go through the
+//                        check), before reading onoff
+//                    Kids' rooms: Daytime at full, cool white:
+//                      - AL_OverrideLog (20.10-03.11): 14 Daytime overrides in
+//                        the kids' rooms (O Loft 6, C Loft + C LightStrip 8);
+//                        12 went to 100 %, 10 of them to the coolest white
+//                        (nu=100%/1, like Hue's "Energize"), from 80 % at
+//                        0.50-0.70. The other 2 were O Loft dimmed at 16-17:30
+//                      - PROFILES.kidsRoom / kidsRoomWeekend: Daytime 100 % at
+//                        0.1 (was 80 % at 0.5). 100 %/0.01 is within the 10 %
+//                        tolerance, so that choice no longer turns a light manual
+//                      - O Loft, C Loft and C LightStrip lose sunTemperature
+//                        (2.27.4): in winter it slid Daytime towards Evening's
+//                        warm 0.7, away from what the kids pick
+//                      - Morning, Evening and Night unchanged: wake-up and
+//                        bedtime light stay the parents' call
 // 2.32.3 2026-11-03  Dining room Evening with the living room
 //                    - PROFILES.dining: Evening from "sunset-60>15:30<19:00",
 //                      the stue/filament rule (was "sunset>17:00<19:00"). From
@@ -918,10 +979,11 @@ const PROFILES = {
     { name: "Night",    startTime: "22:00", endTime: "07:00", brightness: 0.05, temperature: 1.0 }
   ],
   
-  // Kids room - earlier bedtime schedule
+  // Kids room - earlier bedtime schedule. Daytime full and cool: the kids set
+  // 100 %/coolest by hand at most turn-ons (AL_OverrideLog, 2.32.4)
   kidsRoom: [
     { name: "Morning",  startTime: "06:00", endTime: "08:00", brightness: 0.35, temperature: 0.7 },
-    { name: "Daytime",  startTime: "08:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
+    { name: "Daytime",  startTime: "08:00", endTime: "18:00", brightness: 1.0,  temperature: 0.1 }, // was 0.8/0.5
     { name: "Evening",  startTime: "18:00", endTime: "20:00", brightness: 0.35, temperature: 0.7 },
     { name: "Night",    startTime: "20:00", endTime: "06:00", brightness: 0.05, temperature: 1.0 }
   ],
@@ -964,7 +1026,7 @@ const PROFILES = {
   // Kids room weekend - later morning and bedtime
   kidsRoomWeekend: [
     { name: "Morning",  startTime: "07:30", endTime: "10:00", brightness: 0.35, temperature: 0.7 },
-    { name: "Daytime",  startTime: "10:00", endTime: "19:00", brightness: 0.8,  temperature: 0.5 },
+    { name: "Daytime",  startTime: "10:00", endTime: "19:00", brightness: 1.0,  temperature: 0.1 }, // was 0.8/0.5
     { name: "Evening",  startTime: "19:00", endTime: "21:00", brightness: 0.35, temperature: 0.7 },
     { name: "Night",    startTime: "21:00", endTime: "07:30", brightness: 0.05, temperature: 1.0 }
   ],
@@ -1081,13 +1143,14 @@ const SV_SUN_TEMPERATURE = STUE_SUN_TEMPERATURE; // same elevation curve; ends c
 //     no sun colour), and
 //   - the level idle last set (a light only goes down until wake).
 // The chosen candidate's temperature goes with it, but never below
-// `minBrightness` (unless the light's own profile is lower). Lights in manual
+// `minBrightness` (unless the light's own profile is lower, or AL's own ramp
+// that idle replaces is heading lower — the 22:55 ramp to Night). Lights in manual
 // mode keep their scene: each bulb gets min(its dim, the cap), colour untouched.
 // Not for FORCED_PROFILE_DEVICES.
 const IDLE_DEFAULTS = {
   enabled: true,
   profiles: null,         // reference profile set (required), e.g. PROFILES.stue
-  minBrightness: 0,       // floor: idle never dims below this (own profile lower → own)
+  minBrightness: 0,       // floor: idle never dims below this (own profile or AL's running ramp lower → that)
   fadeSeconds: 30,        // idle: fade down
   wakeFadeSeconds: 1      // wake: fade back up
 };
@@ -1213,8 +1276,8 @@ const ROOM_CONFIG = {
     name: "O Loft",
     profiles: PROFILES.kidsRoom,
     schoolHolidays: true,                      // school holidays use the weekend schedule too
-    weekendProfiles: PROFILES.kidsRoomWeekend, // Later bedtime on weekends
-    sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
+    weekendProfiles: PROFILES.kidsRoomWeekend  // Later bedtime on weekends
+    // No sunTemperature (2.32.4): Daytime stays cool all year
   },
 
   // =====================================================================
@@ -1224,15 +1287,15 @@ const ROOM_CONFIG = {
     name: "C Loft",
     profiles: PROFILES.kidsRoom,
     schoolHolidays: true,                      // school holidays use the weekend schedule too
-    weekendProfiles: PROFILES.kidsRoomWeekend, // Later bedtime on weekends
-    sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
+    weekendProfiles: PROFILES.kidsRoomWeekend  // Later bedtime on weekends
+    // No sunTemperature (2.32.4): Daytime stays cool all year
   },
   "5acaab17-7864-4831-b6e2-72bd35588b21": {
     name: "C LightStrip",
     profiles: PROFILES.kidsRoom,
     schoolHolidays: true,                      // school holidays use the weekend schedule too
-    weekendProfiles: PROFILES.kidsRoomWeekend, // Same weekend bedtime as C Loft
-    sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
+    weekendProfiles: PROFILES.kidsRoomWeekend  // Same weekend bedtime as C Loft
+    // No sunTemperature (2.32.4): Daytime stays cool all year
   },
   "4c34d605-334b-4207-b9a3-1796829b0caf": {
     name: "C Light Svampelampe",
@@ -1359,7 +1422,8 @@ function overrideLog(deviceId, name, profileName, applied, dim, temp, source, ex
 /**
  * Fetch sunrise/sunset from Homey's native geolocation API
  * This ensures consistency with Homey's own sunrise/sunset triggers and alerts
- * Returns: { sunriseMinutes, sunsetMinutes } or null if failed
+ * Returns: { sunriseMinutes, sunsetMinutes } or null if failed — on Homey it
+ * gives no sun times, so getSunTimesNOAA is what runs (2.32.4)
  */
 async function fetchSunTimesFromHomey() {
   try {
@@ -1428,7 +1492,7 @@ function getSunTimes(date) {
 
 /**
  * Calculate sunrise and sunset times using NOAA algorithm
- * Used as fallback when Homey API is unavailable
+ * Used when Homey gives no sun times — on Homey that is every run (2.32.4)
  */
 function getSunTimesNOAA(date) {
   const lat = SETTINGS.latitude;
@@ -1436,10 +1500,10 @@ function getSunTimesNOAA(date) {
   const rad = Math.PI / 180;
   const deg = 180 / Math.PI;
   
-  // Julian day
-  const JD = Math.floor(365.25 * (date.getFullYear() + 4716)) + 
-             Math.floor(30.6001 * (date.getMonth() + 2)) + 
-             date.getDate() - 1524.5;
+  // Julian day at 12:00 UTC of the date, from the epoch as solarElevationDeg
+  // does (the Meeus formula used before lacked the Gregorian correction and the
+  // Jan/Feb shift: 13 days ahead, sun times up to ~33 min off)
+  const JD = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 12) / 86400000 + 2440587.5;
   
   const JC = (JD - 2451545) / 36525;
   const L0 = (280.46646 + JC * (36000.76983 + 0.0003032 * JC)) % 360;
@@ -1931,7 +1995,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.32.3';
+const AL_VERSION = '2.32.4';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -2609,11 +2673,13 @@ function idleOffReason(deviceId) {
  * brightness of the idle level, its own profile and the reference set's profile
  * at `minutes`; the chosen one's temperature goes with it. A tie keeps the
  * earlier of level → own → reference (nothing visible changes).
+ * `heading`: the brightness AL's own running transition is heading to (idle
+ * run only, null otherwise) — the floor never goes above it either.
  * Returns `own` itself when that is the answer (its lux/sun meta stays valid);
  * otherwise a plain profile under own's name (lastProfile keeps meaning the
  * light's own schedule) with idleSource 'level' | 'reference' and idleRef
  */
-function idleTarget(own, idleCfg, level, minutes) {
+function idleTarget(own, idleCfg, level, minutes, heading = null) {
   const ref = findActiveProfile(idleCfg.profiles, minutes);
   const candidates = [];
   if (level && typeof level.brightness === 'number') candidates.push({ ...level, source: 'level' });
@@ -2623,9 +2689,12 @@ function idleTarget(own, idleCfg, level, minutes) {
   for (const c of candidates.slice(1)) {
     if (c.brightness < best.brightness - 0.001) best = c;
   }
-  // The floor, but never above the light's own profile
-  const floor = Math.min(idleCfg.minBrightness || 0, own.brightness);
-  if (best.brightness < floor - 0.001) best = { ...best, brightness: floor, floor: true };
+  // The floor, but never above the light's own profile, nor above where AL's
+  // own ramp is taking it (22:55 ramp to Night 15 %: idle at 22:58 → 15 %)
+  const ownFloor = Math.min(idleCfg.minBrightness || 0, own.brightness);
+  const rampCap = typeof heading === 'number' && heading < ownFloor - 0.001;
+  const floor = rampCap ? heading : ownFloor;
+  if (best.brightness < floor - 0.001) best = { ...best, brightness: floor, floor: true, ramp: rampCap };
   if (best.source === 'own'
       || (approxEqual(best.brightness, own.brightness, 0.005) && approxEqual(best.temperature ?? 0, own.temperature ?? 0, 0.005))) {
     return own;
@@ -2638,13 +2707,14 @@ function idleTarget(own, idleCfg, level, minutes) {
     temperature: typeof best.temperature === 'number' ? best.temperature : own.temperature,
     idleSource: best.source,
     idleRef: ref ? ref.name : null,
-    idleFloor: best.floor === true
+    idleFloor: best.floor === true,
+    idleRamp: best.ramp === true
   };
 }
 
-/** Log text for where an idle target came from: "ref Evening", "ref Night, min 20%", "idle level", "own profile" */
+/** Log text for where an idle target came from: "ref Evening", "ref Night, min 20%", "ref Night, min 15% (AL ramp)", "idle level", "own profile" */
 function idleSourceTag(target) {
-  const floor = target?.idleFloor ? `, min ${pctOf(target.brightness)}%` : '';
+  const floor = target?.idleFloor ? `, min ${pctOf(target.brightness)}%${target.idleRamp ? ' (AL ramp)' : ''}` : '';
   if (target?.idleSource === 'reference') return `ref ${target.idleRef}${floor}`;
   if (target?.idleSource === 'level') return `idle level${floor}`;
   return 'own profile';
@@ -3123,10 +3193,13 @@ async function runIdle(ctx) {
     return { room: roomName, idle: true, from: 'manual', dimmed: true, bulbs: changed.length, brightness: cap };
   }
 
-  // Auto light: the idle target (own profile, reference, nothing stored yet)
-  const target = idleTarget(activeProfile, idleCfg, null, currentMinutes);
-  const level = { brightness: target.brightness, temperature: target.temperature };
+  // Auto light: the idle target (own profile, reference, nothing stored yet).
+  // AL's own transition still running (the early ramp into Night): idle
+  // replaces it, but the floor never lifts the light above where it was going
   const la = state.lastApplied;
+  const heading = now < (state.fadeEndTime || 0) && typeof la?.brightness === 'number' ? la.brightness : null;
+  const target = idleTarget(activeProfile, idleCfg, null, currentMinutes, heading);
+  const level = { brightness: target.brightness, temperature: target.temperature };
   // Nothing to send only when AL last sent this level, the light shows it and
   // no AL transition is running. AL's own ramp heading elsewhere (an early ramp
   // into the next profile) is always replaced: it has recorded its target as
@@ -3164,15 +3237,25 @@ async function runWake(ctx) {
   const fade = (ctx.idleCfg || IDLE_DEFAULTS).wakeFadeSeconds;
   const took = () => `took ${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
   const age = `idle ${idleAge(woke.since)}`;
-  const tags = (takeover ? ' | took over GradualFadeOut fade' : '') + (afterRestore ? ' | after restore' : '');
+  // A takeover reads a bulb off while GradualFadeOut is still fading it: Homey
+  // sets onoff false the moment the dim-to-0 card starts (insights, 3 Nov), and
+  // a Hue bulb reports itself on again only sometimes. That is the fade, not an
+  // off (GradualFadeOut fades only a light that is on), so every bulb gets the
+  // wake target and the dim card switches it on — as RestoreSavedSettings and
+  // GradualFadeOut's own restore do. An off by hand in those seconds comes back
+  // on too, as with GradualFadeOut 6.19. Only GradualFadeOut's own off
+  // (FADE-OFF stamps _AutoOffAt) at or after the takeover is a real off
+  const fading = takeover && (global.get(`${DEVICE_ID}_AutoOffAt`) || 0) < ctx.takeoverAt;
+  const tags = (takeover ? ' | took over GradualFadeOut fade' : '') + (afterRestore ? ' | after restore' : '')
+    + (fading && !isOn(device) ? ' | read off mid-fade' : '');
   // GradualFadeOut faded it or RestoreSavedSettings restored it: every bulb needs putting back
   const flattened = takeover || afterRestore;
 
-  // Off: only the flag goes. Never switch on from motion. A takeover of a
-  // GradualFadeOut fade that finds the light already off restored nothing:
-  // its _RestoredAt goes back, so the switch-on GradualFadeOut's verify does
-  // for an active zone gets a normal apply (not AL-SKIP-RESTORE)
-  if (!isOn(device)) {
+  // Off: only the flag goes. Never switch on from motion. A takeover that
+  // finds the light switched off by GradualFadeOut restored nothing: its
+  // _RestoredAt goes back, so the switch-on GradualFadeOut's verify does for
+  // an active zone gets a normal apply (not AL-SKIP-RESTORE)
+  if (!isOn(device) && !fading) {
     if (takeover && global.get(`${DEVICE_ID}_RestoredAt`) === ctx.takeoverAt) {
       global.set(`${DEVICE_ID}_RestoredAt`, ctx.prevRestoredAt);
     }
@@ -3191,7 +3274,7 @@ async function runWake(ctx) {
     const snap = woke.bulbs || {};
     const restore = Object.keys(snap)
       .map(id => CACHED_ALL_DEVICES?.[id])
-      .filter(b => b && isOn(b))
+      .filter(b => b && (fading || isOn(b)))
       .filter(b => {
         const s = snap[b.id];
         if (flattened) return true;
@@ -3248,8 +3331,9 @@ async function runWake(ctx) {
     diagLog(`AL-WAKE | ${roomName} | ${target.name} | no change | ${age} | ${took()}`);
     return { room: roomName, woke: true, profile: target.name, changed: false };
   }
-  // A duration > 0 also interrupts idle's 30 s fade or GradualFadeOut's
-  await applyLighting(device, target.brightness, target.temperature, true, fade, { onlyOn: true });
+  // A duration > 0 also interrupts idle's 30 s fade or GradualFadeOut's.
+  // Mid-fade every bulb, also one that reads off (see fading above)
+  await applyLighting(device, target.brightness, target.temperature, true, fade, { onlyOn: !fading });
   setLastProfile(DEVICE_ID, target.name, target.brightness, target.temperature, target);
   diagLog(`AL-WAKE | ${roomName} | ${target.name} | dim=${pctOf(target.brightness)}% temp=${pctOf(target.temperature)}% | fade ${fade}s | ${age}${tags} | ${took()}`);
   return { room: roomName, woke: true, profile: target.name, brightness: target.brightness, temperature: target.temperature, changed: true };

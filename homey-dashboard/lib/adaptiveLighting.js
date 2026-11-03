@@ -50,7 +50,7 @@ const P = {
   ],
   kidsRoom: [
     { name: 'Morning',  startTime: '06:00', endTime: '08:00', brightness: 0.35, temperature: 0.7 },
-    { name: 'Daytime',  startTime: '08:00', endTime: '18:00', brightness: 0.8,  temperature: 0.5 },
+    { name: 'Daytime',  startTime: '08:00', endTime: '18:00', brightness: 1.0,  temperature: 0.1 },
     { name: 'Evening',  startTime: '18:00', endTime: '20:00', brightness: 0.35, temperature: 0.7 },
     { name: 'Night',    startTime: '20:00', endTime: '06:00', brightness: 0.05, temperature: 1.0 },
   ],
@@ -81,7 +81,7 @@ const P = {
   ],
   kidsRoomWeekend: [
     { name: 'Morning',  startTime: '07:30', endTime: '10:00', brightness: 0.35, temperature: 0.7 },
-    { name: 'Daytime',  startTime: '10:00', endTime: '19:00', brightness: 0.8,  temperature: 0.5 },
+    { name: 'Daytime',  startTime: '10:00', endTime: '19:00', brightness: 1.0,  temperature: 0.1 },
     { name: 'Evening',  startTime: '19:00', endTime: '21:00', brightness: 0.35, temperature: 0.7 },
     { name: 'Night',    startTime: '21:00', endTime: '07:30', brightness: 0.05, temperature: 1.0 },
   ],
@@ -134,9 +134,8 @@ export const AL_MATCH_TOLERANCE = 0.10;
 export function getSunTimes(date) {
   const rad = Math.PI / 180;
   const deg = 180 / Math.PI;
-  const JD = Math.floor(365.25 * (date.getFullYear() + 4716)) +
-             Math.floor(30.6001 * (date.getMonth() + 2)) +
-             date.getDate() - 1524.5;
+  // Julian day at 12:00 UTC of the date (the old formula was 13 days ahead; AL 2.32.4)
+  const JD = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 12) / 86400000 + 2440587.5;
   const JC = (JD - 2451545) / 36525;
   const L0 = (280.46646 + JC * (36000.76983 + 0.0003032 * JC)) % 360;
   const M = 357.52911 + JC * (35999.05029 - 0.0001537 * JC);

@@ -4,10 +4,11 @@
 //              Catches cases where the normal zone-inactive → countdown → fade chain fails.
 //              A light switched on while nobody is seen (switch, app, voice) gets
 //              15 minutes from the turn-on — the zone never went inactive, so
-//              only the watchdog turns it off. A light that keeps coming back
-//              on with nobody seen is faded at most 30 minutes after the first
-//              such turn-on; one back on right after an automatic off (a
-//              flip-back) gets the room's normal timeout.
+//              only the watchdog turns it off (GradualFadeOut leaves it alone
+//              when a countdown armed earlier runs out). A light that keeps
+//              coming back on with nobody seen is faded at most 30 minutes
+//              after the first such turn-on; one back on right after an
+//              automatic off (a flip-back) gets the room's normal timeout.
 //
 // Usage: Pass room name as argument (e.g. "B9" or "E9")
 //        Each room's config (devices, sensors, variables) is defined below.
@@ -19,6 +20,16 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.19 2026-11-03  ROOMS and the turn-on reading shared with GradualFadeOut 6.20
+//                  - The 2.17 known limit is fixed there: a countdown armed when
+//                    the room emptied no longer fades a light switched on while
+//                    nobody is seen (E9, 2 Nov: on at 09:00:48, FADE-SAVE at
+//                    09:01:35). GradualFadeOut logs FADE-SKIP-UNSEEN and leaves
+//                    the light to this script's 900 s
+//                  - A ROOMS block and a TURN-ON block (SEEN_BEFORE_ON,
+//                    UNSEEN_MIN_ON, AUTO_OFF_WINDOW, turnOnInfo(lightId)) are now
+//                    the same in both scripts; change both together. Behaviour
+//                    here unchanged
 // 2.18 2026-11-03  Motion at fade end: restore even when onoff reads off (as
 //                  GradualFadeOut 6.19)
 //                  - 2.15 left a light that read off alone, as "switched off by
@@ -77,9 +88,6 @@
 //                    motion, a fade started (GradualFadeOut) or a turn-on
 //                    started or recorded meanwhile → no fade, the next minute
 //                    decides; otherwise the fade uses the fresh light values
-//                  - Known limit (as before): a countdown already armed by an
-//                    earlier zone-inactive transition can still let
-//                    GradualFadeOut fade a light switched on unseen
 // 2.16 2026-10-28  Group detection from the device driver
 //                  - Shared GROUPS block (same as AdaptiveLighting 2.29.3): a
 //                    group is Homey's virtual group driver, not "lacks
@@ -182,7 +190,10 @@
 // 1.0  2026-03-19  Initial version - B9 safety net
 // -------------------------------------------------------------------------
 
-// ====== ROOM CONFIGURATIONS ======
+// ====== ROOMS — same block in room_watchdog.js and gradualfadeout.js;
+// change both together ======
+// Room_watchdog checks the room named by its argument; GradualFadeOut finds a
+// light's room (primary or extra light) for its nobody-seen check
 const ROOMS = {
   B9: {
     name: "Badeværelse 9",
@@ -222,6 +233,7 @@ const ROOMS = {
     inactivityVar: "E9_InactivitySeconds"
   }
 };
+// ====== end of shared ROOMS block ======
 
 // ====== SETTINGS ======
 const DEFAULT_INACTIVITY = 300;
@@ -233,16 +245,10 @@ const WATCHDOG_GRACE = 60; // Extra seconds beyond inactivity threshold before w
                            // Prevents racing with the normal inactivity flow
 const HOLD_WAIT_SECONDS = 10; // motion at fade end: how long to wait for
                               // RestoreSavedSettings before restoring here
-const SEEN_BEFORE_ON = 60;   // A motion (or door) change this many seconds before the
-                             // turn-on still counts as seen: AL records the turn-on a
-                             // few seconds after the motion that caused it
-const UNSEEN_MIN_ON = 900;   // Switched on while nobody is seen: no fade before this
-                             // many seconds after the turn-on (shower, bath)
-const UNSEEN_MAX_HOLD = 1800; // ... and none later than this after the first unseen
-                              // turn-on of a stretch (a light that keeps coming
-                              // back on with nobody seen)
-const AUTO_OFF_WINDOW = 180; // On this soon after GradualFadeOut's or the watchdog's
-                             // off: a flip-back, not a fresh unseen turn-on
+const UNSEEN_MAX_HOLD = 1800; // Switched on while nobody is seen: no fade later than
+                              // this after the first unseen turn-on of a stretch (a
+                              // light that keeps coming back on with nobody seen;
+                              // UNSEEN_MIN_ON is in the shared TURN-ON block)
 const ERROR_LOG_INTERVAL = 600; // Seconds between WATCHDOG-ERROR lines for the same
                                 // room — a permanent error would otherwise write one
                                 // line a minute and push everything else out of the log
@@ -385,24 +391,37 @@ function checkOverride(deviceId, name, dim, temp, source) {
   } catch (e) { /* override logging is best-effort */ }
 }
 
-// ====== TURN-ON TIME ======
-// From AdaptiveLighting's state for the primary light. B7/B9/E9 run AL only
-// from the light's "turned on" flow (mode normal), so lastApplied {at, via:
-// 'normal'} is the last turn-on AL handled. Not Homey's onoff.lastChanged
-// (probably not in HomeyScript's capabilitiesObj) nor lastUpdated (moves on
-// every same-value report)
+// ====== TURN-ON — same block in room_watchdog.js and gradualfadeout.js;
+// change both together ======
+// A light switched on while nobody is seen (switch, app, voice) gets
+// UNSEEN_MIN_ON from the turn-on: Room_watchdog holds its fade that long, and
+// GradualFadeOut leaves the light to it when a countdown armed earlier runs out
+const SEEN_BEFORE_ON = 60;   // A motion (or door) change this many seconds before the
+                             // turn-on still counts as seen: AL records the turn-on a
+                             // few seconds after the motion that caused it
+const UNSEEN_MIN_ON = 900;   // Switched on while nobody is seen: no fade before this
+                             // many seconds after the turn-on (shower, bath)
+const AUTO_OFF_WINDOW = 180; // On this soon after GradualFadeOut's or the watchdog's
+                             // off: a flip-back, not a fresh unseen turn-on
+
+// Turn-on time, from AdaptiveLighting's state for a light (both scripts read
+// the room's primary light). B7/B9/E9 run AL only from the light's "turned
+// on" flow (mode normal), so lastApplied {at, via: 'normal'} is the last
+// turn-on AL handled. Not Homey's onoff.lastChanged (probably not in
+// HomeyScript's capabilitiesObj) nor lastUpdated (moves on every same-value
+// report)
 // at:   epoch ms; 0 = unknown (no record, another mode, or more than a minute
 //       ahead — a bad value must not hold the light for good)
 // busy: AL's turn-on run still holds its lease (it hasn't recorded the turn-on
 //       yet). AL's leases run 60 s (BUSY_LEASE_MS): one further ahead than
 //       that (a clock stepped back, a corrupt write) is no lease — AL keeps it,
 //       and it must not block the fade for good either
-function turnOnInfo() {
+function turnOnInfo(lightId) {
   const now = Date.now();
   let at = 0;
   let busy = false;
   try {
-    const raw = global.get(`AL_Device_${ROOM.primaryLight.substring(0, 8)}.State`);
+    const raw = global.get(`AL_Device_${lightId.substring(0, 8)}.State`);
     const state = raw ? JSON.parse(raw) : null;
     const applied = state?.lastApplied;
     if (applied?.via === 'normal' && typeof applied.at === 'number' && applied.at > 0 && applied.at <= now + 60000) {
@@ -412,6 +431,7 @@ function turnOnInfo() {
   } catch (e) { /* corrupt AL state — turn-on unknown, as before 2.17 */ }
   return { at, busy };
 }
+// ====== end of shared TURN-ON block ======
 
 // Latest change of the room's door contacts, epoch ms (0 = none readable). A
 // contact that can't be read, or has no change time, counts as not seen;
@@ -493,7 +513,7 @@ try {
   // holds the lease: the turn-on isn't recorded yet, the next minute decides.
   // (E9's door read below awaits once more; a turn-on during it is caught by
   // the look before a fade, and holding on an older turn-on is safe)
-  const turnOn = turnOnInfo();
+  const turnOn = turnOnInfo(ROOM.primaryLight);
   if (turnOn.busy) {
     return `${PREFIX}: AdaptiveLighting turn-on in progress`;
   }
@@ -593,7 +613,7 @@ try {
   if (Date.now() < (global.get(`${ROOM.primaryLight}_FadeActiveUntil`) || 0)) {
     return `${PREFIX}: fade started just now`;
   }
-  const again = turnOnInfo();
+  const again = turnOnInfo(ROOM.primaryLight);
   if (again.busy || again.at > onAt) {
     return `${PREFIX}: turned on just now — decide next minute`;
   }

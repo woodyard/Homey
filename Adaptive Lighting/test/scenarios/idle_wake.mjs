@@ -12,7 +12,7 @@ const KB = ID.K_BORD;   // kitchen: Morning 06-09 100/0.3, Daytime 09-20 100/0.4
 const KL = ID.K_LOFT;
 const ZONE = 'koekken-zone';
 const FETCH_MS = 50;
-// Monday 2 Nov 2026: the stue set has Daytime 80/0.4 until sunset-60 (~15:36),
+// Monday 2 Nov 2026: the stue set has Daytime 80/0.4 until sunset-60 (15:29, clamped to 15:30),
 // Evening 35/0.9 until 21:00, Night 10/0.9, Morning 06:00 35/0.7
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -40,6 +40,11 @@ function groupModel(group, bulbs) {
   group.capabilitiesObj = { onoff: forward('onoff'), dim: forward('dim'), light_temperature: forward('light_temperature') };
 }
 
+// Homey's onoff (2.32.4): true makes every dim card set onoff, so GradualFadeOut's
+// dim-to-0 card reports each bulb off the moment the fade starts (insights,
+// 3 Nov). The GradualFadeOut scenarios run once without and once with it
+let homeyOnoff = false;
+
 // K Bord and K Loft: virtual groups of three Hue bulbs each, all in the kitchen zone
 function kitchen({ dim = 1, temp = 0.4 } = {}) {
   const devices = [];
@@ -49,7 +54,9 @@ function kitchen({ dim = 1, temp = 0.4 } = {}) {
     groupModel(group, bulbs);
     devices.push(group, ...bulbs);
   }
-  return createEnv(devices);
+  const env = createEnv(devices);
+  env.dimCardSetsOnoff = homeyOnoff;
+  return env;
 }
 
 // Bulbs set by hand (Hue app / switch), no AL involved
@@ -273,6 +280,47 @@ export const scenarios = {
       await env.run(AL, `${KB} check`);
     }
     t.equal([dims(env, KB)[0], env.state(KB).manual, overrides(env).length], [0.15, false, 0], 'stays 15 % into Morning, auto, no OVERRIDE');
+  },
+
+  async 'floor: AL\'s own ramp DOWN when idle starts (2 Nov: 22:55 ramp to Night 15 %, empty at 22:58) → 15 %, not the 20 % floor (2.32.4)'(t) {
+    // The 2 Nov replay: idle 22:22 (floor 20 %), wake 22:50 (Evening 70 %), the
+    // 22:55 poll ramps to Night 15 % (boundary 23:00), empty again at 22:58
+    const env = kitchen({ dim: 0.7, temp: 0.6 });
+    at('22:00:00');
+    await env.run(AL, KB);
+    at('22:22:13');
+    const first = await env.run(AL, `${KB} idle`);
+    t.equal([first.brightness, dims(env, KB)], [0.2, [0.2, 0.2, 0.2]], 'setup: 22:22 idle → the 20 % floor (no ramp running)');
+    at('22:50:37');
+    await env.run(AL, `${KB} wake`);
+    at('22:55:01');
+    const ramp = await env.run(AL, `${KB} check`);
+    t.equal([ramp.early, ramp.brightness], [true, 0.15], 'setup: the 22:55 poll ramps to Night 15 % (early, boundary 23:00)');
+    at('22:58:18');
+    const r = await env.run(AL, `${KB} idle`);
+    t.equal([r.dimmed, r.brightness, dims(env, KB), temps(env, KB)], [true, 0.15, [0.15, 0.15, 0.15], [0.9, 0.9, 0.9]], '22:58 idle: 15 % (the floor stops where AL\'s ramp is heading), not 20 %');
+    t.check(lines(env, 'AL-IDLE | K Bord | Evening → ref Night, min 15% (AL ramp) | dim=15% temp=90%').length === 1, 'AL-IDLE names the ramp cap', lines(env, 'AL-IDLE').join(' / '));
+    t.equal(env.state(KB).idle.level, { brightness: 0.15, temperature: 0.9 }, 'idle level 15/0.9');
+    for (const [time, day] of [['23:00:00', '02'], ['23:05:00', '02'], ['23:30:00', '02'], ['02:00:00', '03']]) {
+      at(time, day);
+      await env.run(AL, `${KB} check`);
+    }
+    t.equal([dims(env, KB)[0], env.state(KB).manual, overrides(env).length], [0.15, false, 0], 'stays 15 % through the night, auto, no OVERRIDE');
+  },
+
+  async 'floor: AL\'s own fade UP when idle starts never lowers the floor (2.32.4)'(t) {
+    // Wake's 1 s fade to Evening 70 % still running (fadeEndTime + 5 s): the floor stays 20 %
+    const env = kitchen({ dim: 0.7, temp: 0.6 });
+    at('22:00:00');
+    await env.run(AL, KB);
+    at('22:22:13');
+    await env.run(AL, `${KB} idle`);
+    at('22:50:37');
+    await env.run(AL, `${KB} wake`);
+    at('22:50:39');
+    const up = await env.run(AL, `${KB} idle`);
+    t.equal([up.brightness, dims(env, KB)], [0.2, [0.2, 0.2, 0.2]], 'idle during wake\'s fade up: the 20 % floor');
+    t.check(lines(env, 'AL-IDLE | K Bord | Evening → ref Night, min 20% | dim=20%').length === 2, 'no "(AL ramp)" tag', lines(env, 'AL-IDLE').join(' / '));
   },
 
   async 'D3: idle reads the bulbs part-way up AL\'s own ramp → not a change by hand (auto, no OVERRIDE)'(t) {
@@ -938,4 +986,59 @@ export const scenarios = {
     t.equal([w.lightOff, env.state(KB).idle, env.commands], [true, null, []], 'light off — idle cleared, no command');
     t.equal(BULB[KB].map((b) => env.dev(b).onoff.value), [false, false, false], 'K Bord stays off');
   },
+
+  // ---------------- 2.32.4: a takeover that reads the light off mid-fade ----------------
+  async 'C3 (2.32.4): wake 5 s into the fade reads the light off (Homey onoff) → takes over, Morning on every bulb, "read off mid-fade"; GFO cancelled, RSS skips'(t) {
+    const env = await morningIdle();
+    env.dimCardSetsOnoff = true;
+    let seen = null;
+    const rss = [];
+    const r = await gfoMorning(env, async () => {
+      seen = [ons(env, KB), env.dev(KB).onoff.value];
+      env.dev('kbbulb02').onoff.value = true;              // one Hue bulb reports itself on again
+      for (const id of [KB, KL]) await env.run(AL, `${id} wake`);
+      for (const id of [KB, KL]) rss.push(await env.run(RSS, [id]));
+    });
+    t.equal(seen, [[false, false, false], false], 'setup: 5 s into the fade every bulb and the group read off');
+    t.equal((String(r).match(/Fade cancelled/g) || []).length, 2, 'GFO: both fades cancelled, no off');
+    t.check(rss.every((x) => String(x).startsWith('No active fade')), 'RSS: no active fade, skipped', rss.join(' / '));
+    for (const id of [KB, KL]) {
+      t.equal([ons(env, id), dims(env, id), temps(env, id), env.state(id).idle, env.state(id).manual], [[true, true, true], [1, 1, 1], [0.3, 0.3, 0.3], null, false], `${id === KB ? 'K Bord' : 'K Loft'}: every bulb on at Morning 100/0.3, auto, idle cleared`);
+    }
+    t.check(lines(env, 'AL-WAKE | K Loft | Morning').some((l) => l.includes('took over GradualFadeOut fade | read off mid-fade')), 'K Loft (group reads off): AL-WAKE took over, read off mid-fade', lines(env, 'AL-WAKE').join(' / '));
+    t.check(lines(env, 'AL-WAKE | K Bord | Morning').some((l) => l.includes('took over GradualFadeOut fade') && !l.includes('read off')), 'K Bord (one bulb back on, the group reads on): took over; its two bulbs that read off restored too');
+    t.equal([lines(env, 'light off').length, overrides(env)], [0, []], 'no "light off" line, no OVERRIDE');
+    at('08:41:10');
+    const p = await env.run(AL, `${KB} check`);
+    t.equal([p.reason, env.state(KB).manual], ['already_correct', false], 'a check a minute later: already correct');
+  },
+
+  async 'C3 (2.32.4): manual scene, wake reads it off mid-fade → each snapshot bulb back on at its own dim; a bulb off before idle stays off'(t) {
+    const env = await manualScene([0.8, 0.3, 0.6]);
+    env.dev('kbbulb01').onoff.value = false;               // off before idle: not in the snapshot
+    at('16:00:00');
+    await env.run(AL, `${KB} idle`);
+    env.dimCardSetsOnoff = true;
+    let wakeCommands = [];
+    let w = null;
+    await gfoMorning(env, async () => {
+      const n = env.commands.length;
+      w = await env.run(AL, `${KB} wake`);
+      wakeCommands = env.commands.slice(n);
+    }, '03');
+    t.equal([w.from, w.restored], ['manual', 2], 'wake: bulbs 2 and 3 restored, not "light off"');
+    t.equal([ons(env, KB), dims(env, KB).slice(1)], [[false, true, true], [0.3, 0.6]], 'bulbs 2 and 3 on at their own dim; bulb 1 (off before idle) stays off');
+    t.check(!wakeCommands.some((c) => c.startsWith('K Bord 1 ') || /light_(temperature|hue|saturation)/.test(c)), 'no command to bulb 1, dims only', wakeCommands.join(', '));
+    t.check(lines(env, 'AL-WAKE | K Bord | manual | restored 2/2').some((l) => l.includes('read off mid-fade')), 'AL-WAKE: restored 2/2, read off mid-fade', lines(env, 'AL-WAKE').join(' / '));
+  },
 };
+
+// The GradualFadeOut scenarios again with Homey's onoff (2.32.4): the dim-to-0
+// card reports each bulb off at once, so a wake during the fade reads the light off
+for (const name of Object.keys(scenarios).filter((n) => /^C3|GFO|GradualFadeOut/.test(n) && !n.includes('(2.32.4)'))) {
+  const plain = scenarios[name];
+  scenarios[`${name} [Homey onoff]`] = async (t) => {
+    homeyOnoff = true;
+    try { await plain(t); } finally { homeyOnoff = false; }
+  };
+}

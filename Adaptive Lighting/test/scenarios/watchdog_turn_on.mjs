@@ -2,7 +2,9 @@
 // lastApplied via normal) and the E9 door; a light switched on while nobody is
 // seen gets UNSEEN_MIN_ON (900 s), capped at UNSEEN_MAX_HOLD (1800 s) from the
 // first such turn-on; a flip-back right after an automatic off (GradualFadeOut
-// 6.18 / the watchdog's own _AutoOffAt) gets the room's threshold
+// 6.18 / the watchdog's own _AutoOffAt) gets the room's threshold.
+// GradualFadeOut 6.20: a countdown armed before such a turn-on leaves the light
+// to the watchdog (FADE-SKIP-UNSEEN), read through the shared TURN-ON block
 import { createEnv, light, motionSensor, contactSensor, setClock, clock, ID, HUE_DRIVER, GROUP_DRIVER } from '../mock.mjs';
 
 const WD = 'room_watchdog.js';
@@ -472,9 +474,9 @@ export const scenarios = {
   },
 
   async 'a turn-on from before the last automatic off is no flip-back'(t) {
-    // Switched on unseen at 10:00; the armed countdown's GradualFadeOut turns
-    // it off at 10:05 (the known limit) and it comes back on without AL
-    // recording a turn-on: still the 10:00 turn-on, 900 s, the same stretch
+    // Switched on unseen at 10:00; an automatic off at 10:05 (before
+    // GradualFadeOut 6.20, the armed countdown's fade) and it comes back on
+    // without AL recording a turn-on: still the 10:00 turn-on, 900 s, the same stretch
     const env = b9Env({ now: '10:01:00', alAt: '10:00:00', motionAt: '09:00:00', eveAt: '09:00:00' });
     await env.run(WD, ['B9']);
     env.store.set(`${B9}_AutoOffAt`, ms('10:05:00'));
@@ -574,5 +576,92 @@ export const scenarios = {
     await env3.run(GFO, [E9]);
     t.check(lines(env3, 'FADE-SKIP | E9 Loft | already off/very dim (3%)').length === 1 && env3.dev(E9).onoff.value === false, 'very dim → turned off', env3.diag().join('\n'));
     t.equal(env3.global.get(`${E9}_AutoOffAt`), ms('22:20:00'), 'stamped');
+  },
+  async 'armed countdown (the 2.17 known limit): B9 empties at 09:00:00, switched on unseen at 09:01:10, the countdown runs GradualFadeOut at 09:02:00 → FADE-SKIP-UNSEEN, nothing saved; the watchdog fades it 900 s after the turn-on'(t) {
+    const env = b9Env({ now: '09:01:10', motionAt: '09:00:00', eveAt: '08:55:00' });
+    env.dimCardSetsOnoff = true;
+    for (const b of env.bulbs) b.capabilitiesObj.onoff.value = false;     // off since before 09:00
+    for (const b of env.bulbs) b.capabilitiesObj.onoff.value = true;      // 09:01:10 the Hue switch
+    await env.run(AL, B9);                                                  // onoff_true → AL normal
+    t.equal(env.state(B9).lastApplied.at, ms('09:01:10'), 'AL recorded the turn-on');
+    const dims = env.bulbs.map((b) => b.capabilitiesObj.dim.value);
+    setClock(iso('09:02:00'));                                              // B9_Countdown (120 s) at zero
+    t.equal(String(await env.run(GFO, [B9])), 'B9 Lys: switched on while nobody is seen, left to Room_watchdog', 'GradualFadeOut leaves it alone');
+    t.equal(lines(env, 'FADE-').map((l) => l.slice(l.indexOf('FADE-'))),
+      ['FADE-SKIP-UNSEEN | B9 Lys | on 50s, nobody seen since — left to Room_watchdog (no fade before 900s)'], 'one FADE-SKIP-UNSEEN line, no FADE-SAVE');
+    t.check(env.cards.length === 0 && env.dev(B9).onoff.value === true && JSON.stringify(env.bulbs.map((b) => b.capabilitiesObj.dim.value)) === JSON.stringify(dims),
+      'no dim card, the light stays on as AL set it', JSON.stringify(env.cards));
+    t.equal([`${B9}_SavedDim`, `${B9}_FadeActiveUntil`, `${B9}_FadeTargets`, `${B9}_AutoOffAt`].map((k) => env.store.get(k) ?? null), [null, null, null, null],
+      'nothing saved, no restore window, no _AutoOffAt (a press after it would be a flip-back)');
+    const out = await minutes(env, '09:03:00', '09:16:00');
+    t.check(!faded(env) && out['09:16'] === 'B9 Watchdog: idle 890s / 900s (10s left) — on, nobody seen', 'the watchdog holds it 900 s from the turn-on', JSON.stringify(out));
+    setClock(iso('09:17:00'));
+    await env.run(WD, ['B9']);
+    t.check(lines(env, 'WATCHDOG-FADE | Badeværelse 9 | idle=950s threshold=900s (nobody seen since on) |').length === 1 && env.dev(B9).onoff.value === false,
+      'faded at 09:17 (6.19: faded at 09:02, 50 s after the turn-on)', env.diag().join('\n'));
+  },
+
+  async 'armed countdown, E9 replay of 2 Nov: empty since about 08:58:35, both lights on at 09:00:48, GradualFadeOut at 09:01:35 → both left to the watchdog, the sensors read once'(t) {
+    const d2 = (time) => ms(time, '02');
+    const env = e9Env({ now: d2('09:01:35'), motionAt: d2('08:58:35'), doorAt: d2('08:57:30') });
+    env.dimCardSetsOnoff = true;
+    alState(env, E9, d2('09:00:48'));
+    alState(env, GARDEROBE, d2('09:00:48'));
+    const reads = {};
+    const getDevice = env.Homey.devices.getDevice;
+    env.Homey.devices.getDevice = async (a) => { reads[a.id] = (reads[a.id] || 0) + 1; return getDevice(a); };
+    const r = String(await env.run(GFO, [`${GARDEROBE},${E9}`]));                  // the E9 flow's argument
+    t.equal(r, 'E9 Garderobe: switched on while nobody is seen, left to Room_watchdog | E9 Loft: switched on while nobody is seen, left to Room_watchdog', 'both lights left on');
+    t.equal(lines(env, 'FADE-').map((l) => l.slice(l.indexOf('FADE-'))), [
+      'FADE-SKIP-UNSEEN | E9 Garderobe | on 47s, nobody seen since — left to Room_watchdog (no fade before 900s)',
+      'FADE-SKIP-UNSEEN | E9 Loft | on 47s, nobody seen since — left to Room_watchdog (no fade before 900s)',
+    ], 'two FADE-SKIP-UNSEEN lines (real log: FADE-SAVE for both at 09:01:35)');
+    t.check(env.cards.length === 0 && env.dev(E9).onoff.value === true && env.dev(GARDEROBE).onoff.value === true, 'no dim card, both on');
+    t.equal([reads[E9_MOTION], reads[E9_DOOR]], [1, 1], 'one check for the room: E9 Motion and E9 Dør read once');
+    setClock(iso(d2('09:02:00')));
+    t.equal(String(await env.run(WD, ['E9'])), 'E9 Watchdog: idle 72s / 900s (828s left) — on, nobody seen', 'the watchdog takes over: 900 s');
+  },
+
+  async 'armed countdown: GradualFadeOut still fades when someone was seen, the turn-on is 900 s old, a flip-back, or it cannot tell'(t) {
+    // B9 at 09:02:00 (countdown at zero), AL's turn-on record at alAt, the
+    // sensors' last change at motionAt/eveAt; returns GradualFadeOut's result
+    const run = async ({ alAt = '09:01:10', motionAt = '09:00:00', eveAt = '08:55:00', setup = () => {} } = {}) => {
+      const env = b9Env({ now: '09:02:00', alAt, motionAt, eveAt });
+      env.dimCardSetsOnoff = true;
+      setup(env);
+      const r = String(await env.run(GFO, [B9]));
+      return { env, r, fadedHere: r === 'B9 Lys: Faded and turned off' && lines(env, 'FADE-SKIP-UNSEEN').length === 0 };
+    };
+    t.check((await run({ motionAt: '09:00:30' })).fadedHere, 'a motion change 40 s before the turn-on → seen → faded');
+    t.check((await run({ eveAt: '09:01:30' })).fadedHere, 'B9 Eve Motion Bruser changed after the turn-on → seen → faded');
+    t.check((await run({ setup: (env) => env.motion('hue', true, '08:00:00') })).fadedHere, 'B9 Motion reporting motion now (since 08:00) → seen → faded');
+    t.check((await run({ alAt: '08:47:00', motionAt: '08:40:00', eveAt: '08:40:00' })).fadedHere, 'turned on 900 s ago → faded');
+    t.check((await run({ setup: (env) => env.store.set(`${B9}_AutoOffAt`, ms('09:00:30')) })).fadedHere, 'on 40 s after an automatic off (flip-back) → faded');
+    t.check((await run({ setup: (env) => alState(env, B9, ms('09:01:10'), { via: 'check' }) })).fadedHere, 'a record from another AL mode → faded');
+    t.check((await run({ setup: (env) => { delete env.devices[B9_EVE]; } })).fadedHere, 'a motion sensor that cannot be read → faded as 6.19');
+    const busy = await run({ alAt: '08:00:00', motionAt: '08:00:00', eveAt: '08:00:00', setup: (env) => alState(env, B9, ms('08:00:00'), { busyUntil: clock() + 55000 }) });
+    t.check(lines(busy.env, 'FADE-SKIP-UNSEEN | B9 Lys | on 0s, nobody seen since').length === 1 && busy.env.cards.length === 0,
+      "AL's turn-on run holds its lease, nobody seen → switched on just now, left to the watchdog", busy.r);
+    t.check((await run({ alAt: '08:00:00', motionAt: '09:01:30', setup: (env) => alState(env, B9, ms('08:00:00'), { busyUntil: clock() + 55000 }) })).fadedHere,
+      '... with a motion change 30 s ago → faded');
+
+    // A light outside ROOMS (no motion sensors known) → faded as before
+    setClock(iso('09:02:00'));
+    const sv = createEnv([light(ID.SV_LOFT, 'SV Loft', { dim: 0.7, driver: HUE_DRIVER })]);
+    alState(sv, ID.SV_LOFT, ms('09:01:10'));
+    t.equal(String(await sv.run(GFO, [ID.SV_LOFT])), 'SV Loft: Faded and turned off', 'SV Loft: no check');
+
+    // E9 Garderobe on alone (E9 Loft off): the watchdog checks E9 through E9
+    // Loft and would never turn it off → faded, whatever the turn-on
+    const e9 = e9Env({ now: ms('09:01:35', '02'), motionAt: ms('08:58:35', '02'), doorAt: ms('08:57:30', '02') });
+    e9.dev(E9).onoff.value = false;
+    alState(e9, E9, ms('09:00:48', '02'));
+    alState(e9, GARDEROBE, ms('09:00:48', '02'));
+    t.equal(String(await e9.run(GFO, [`${GARDEROBE},${E9}`])), 'E9 Garderobe: Faded and turned off | E9 Loft: Already off', 'E9 Loft off → E9 Garderobe faded');
+
+    // E9 Dør changed 18 s before the turn-on → seen → both faded
+    const door = e9Env({ now: ms('09:01:35', '02'), motionAt: ms('08:58:35', '02'), doorAt: ms('09:00:30', '02') });
+    alState(door, E9, ms('09:00:48', '02'));
+    t.equal(String(await door.run(GFO, [`${GARDEROBE},${E9}`])), 'E9 Garderobe: Faded and turned off | E9 Loft: Faded and turned off', 'the door seen → faded');
   },
 };

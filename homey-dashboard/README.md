@@ -92,6 +92,11 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.18.3** (2026-11-03) — Lighting follows AdaptiveLighting 2.32.4: the schedule's sunrise and
+  sunset are today's again — they were for a date 13 days later (today 07:46/16:03 instead of
+  07:20/16:26), so sun-based phase changes were shown up to ~30 min off, as AL ran them. The
+  kids' rooms (O Loft, C Loft, C LightStrip) have Daytime at 100 % and cool white (0.1), weekdays
+  and weekends; Morning, Evening and Night are unchanged.
 - **1.18.2** (2026-11-03) — Lighting follows AdaptiveLighting 2.32.3: the dining room (SS Loft,
   SS Bordlampe, SS Light Perler) goes to Evening with the living room, an hour before sunset
   (never before 15:30 or after 19:00) — was at sunset, between 17:00 and 19:00.

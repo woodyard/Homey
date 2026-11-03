@@ -1,4 +1,5 @@
-// homey-dashboard/lib/adaptiveLighting.js: badge mode from AL's published status (1.17.0)
+// homey-dashboard/lib/adaptiveLighting.js: badge mode from AL's published status (1.17.0),
+// sunrise/sunset as AL computes them (1.18.3)
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -49,6 +50,18 @@ export const scenarios = {
     const text = lib.describeLightStatus({ ...idle, profile: 'Daytime', at: T0 });
     t.check(text.includes('idle: dimmed while the room is empty'), 'tooltip mentions idle', text);
     t.check(!lib.describeLightStatus(entry).includes('idle'), 'no idle text for a light that is not idle');
+  },
+
+  async "sunrise/sunset are today's København times, as AL 2.32.4 computes them (1.18.3)"(t) {
+    // [date, reference sunrise, sunset] — independent calculation, within a minute
+    // of the published times; 1.18.2 showed the times of 13 days later
+    for (const [date, rise, set] of [['2026-11-03', '07:20', '16:26'], ['2026-09-22', '06:55', '19:09'],
+      ['2027-03-22', '06:08', '18:27'], ['2026-06-21', '04:25', '21:58'], ['2026-12-21', '08:37', '15:38']]) {
+      const sun = lib.getSunTimes(new Date(`${date}T12:00:00`));
+      const toMin = (hm) => hm.split(':').map(Number).reduce((h, m) => h * 60 + m);
+      const off = [sun.sunriseMinutes - toMin(rise), sun.sunsetMinutes - toMin(set)];
+      t.check(off.every((m) => Math.abs(m) <= 2), `${date}: sunrise ${rise}, sunset ${set} within 2 min`, `off by ${off.join(' / ')} min`);
+    }
   },
 
   async 'tooltip describes what AL applied'(t) {

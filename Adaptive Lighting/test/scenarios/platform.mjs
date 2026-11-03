@@ -30,6 +30,20 @@ export const scenarios = {
     for (const f of files.slice(1)) t.check(blockOf(f) === ref, `${f} has the same block`);
   },
 
+  async 'the shared ROOMS and TURN-ON blocks are identical in Room_watchdog and GradualFadeOut'(t) {
+    const blockOf = (f, name) => {
+      const s = fs.readFileSync(scriptPath(f), 'utf8').replace(/\r\n/g, '\n');
+      const a = s.indexOf(`// ====== ${name} — same block`);
+      const e = s.indexOf(`// ====== end of shared ${name} block ======`);
+      return a >= 0 && e > a ? s.slice(a, e) : null;
+    };
+    for (const name of ['ROOMS', 'TURN-ON']) {
+      const ref = blockOf('room_watchdog.js', name);
+      t.check(ref, `room_watchdog.js has the ${name} block`);
+      t.check(blockOf('gradualfadeout.js', name) === ref, `gradualfadeout.js has the same ${name} block`);
+    }
+  },
+
   async 'the shared FREE DAYS block is identical in AdaptiveLighting and AL_FreeDay'(t) {
     const blockOf = (f) => {
       const s = fs.readFileSync(scriptPath(f), 'utf8').replace(/\r\n/g, '\n');

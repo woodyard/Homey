@@ -12,6 +12,30 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.20 2026-11-03  No fade for a light switched on while nobody is seen
+//                  - The countdown armed when the room empties keeps running
+//                    when the light is switched on (Hue switch, app, voice)
+//                    while the motion sensor misses the person, and faded it a
+//                    minute later. E9, 2 Nov: on at 09:00:48, FADE-SAVE at
+//                    09:01:35 — 47 s, where E9's day countdown is 180 s
+//                  - Before saving: the room's primary light was switched on
+//                    less than UNSEEN_MIN_ON (900 s) ago and nobody has been
+//                    seen since → FADE-SKIP-UNSEEN, nothing saved or sent.
+//                    Room_watchdog fades it 900 s after the turn-on, or the
+//                    room's timeout after the next motion
+//                  - Read exactly as Room_watchdog 2.17 does: its ROOMS and
+//                    TURN-ON blocks are now in both scripts (change both
+//                    together). Seen = motion now, a motion change from 60 s
+//                    before the turn-on, or the E9 door changing then; a turn-on
+//                    within 180 s of an automatic off (flip-back) is faded; AL's
+//                    turn-on run still holding its lease = switched on just now
+//                  - Only while the room's primary light is on (the watchdog
+//                    checks a room through it); E9 Loft and E9 Garderobe get
+//                    one answer. A light outside ROOMS, or a motion sensor that
+//                    can't be read → faded as before
+//                  - Not covered (nor by the watchdog): a Hue switch press that
+//                    brightens or changes scene on a light already on records
+//                    no turn-on, so the countdown still fades it
 // 6.19 2026-11-03  Zone active at fade end: restore even when onoff reads off
 //                  - 6.16 left a light that read off alone, as "switched off by
 //                    hand". But Homey sets onoff false the moment a dim-to-0
@@ -203,6 +227,7 @@ const HOLD_WAIT_SECONDS = 10; // zone active at fade end: how long to wait for
 // Actions logged:
 //   FADE-SAVE  (GradualFadeOut)   - brightness/temp saved before fade (manual= is AL's flag)
 //   FADE-SKIP  (GradualFadeOut)   - light already off, no fade needed
+//   FADE-SKIP-UNSEEN (GradualFadeOut) - switched on while nobody is seen; left to Room_watchdog
 //   FADE-CANCELLED (GradualFadeOut) - fade aborted early because of a restore/cleared flag
 //   FADE-ABORT (GradualFadeOut)   - restore ran before the fade command was sent; fade not started
 //   FADE-HOLD  (GradualFadeOut)   - zone active at fade end, RestoreSavedSettings restored it
@@ -315,6 +340,142 @@ function groupMembers(device, allDevices, { zoneFallback = true, exclude = [] } 
 }
 // ====== end of shared GROUPS block ======
 
+// ====== ROOMS — same block in room_watchdog.js and gradualfadeout.js;
+// change both together ======
+// Room_watchdog checks the room named by its argument; GradualFadeOut finds a
+// light's room (primary or extra light) for its nobody-seen check
+const ROOMS = {
+  B9: {
+    name: "Badeværelse 9",
+    // Primary light (used for state save/restore coordination with GradualFadeOut)
+    primaryLight: "b8591f4d-a493-4de7-9745-c13cd07e033c", // B9 Lys (group)
+    // Motion sensors to check (all must be clear for room to be idle)
+    motionSensors: [
+      "90bc5383-608b-43c9-89a1-f7f7c54d1675", // B9 Motion
+      "d78e0e15-5a6b-4908-be3c-4e5d3dc1a9d6"  // B9 Eve Motion Bruser
+    ],
+    // Logic variable name for inactivity threshold
+    inactivityVar: "B9_InactivitySeconds"
+  },
+  B7: {
+    name: "Badeværelse 7",
+    primaryLight: "1ab9ca1f-60ca-44f9-8221-a03e10f005bf", // B7 Lys (group)
+    motionSensors: [
+      "acc2b15c-2774-4293-922a-c0659df04a41"  // B7 Motion
+    ],
+    inactivityVar: "B7_InactivitySeconds"
+  },
+  E9: {
+    name: "Entre 9",
+    primaryLight: "2656f184-8c87-4434-95a2-fdb3fc36bdd8", // E9 Loft
+    // Additional lights to fade (not part of a group)
+    extraLights: [
+      "e339c184-ea11-4413-bd90-dac726861fd0"  // E9 Garderobe
+    ],
+    motionSensors: [
+      "0da27a1f-ced1-4d02-9193-9438109c5c38"  // E9 Motion
+    ],
+    // Door contacts in the zone: opening the door makes it active and turns
+    // the lights on, so a door change counts as someone seen (and as activity)
+    doorSensors: [
+      "68ef424e-3ab9-4573-8a89-bdce2b4ffe65"  // E9 Dør
+    ],
+    inactivityVar: "E9_InactivitySeconds"
+  }
+};
+// ====== end of shared ROOMS block ======
+
+// ====== TURN-ON — same block in room_watchdog.js and gradualfadeout.js;
+// change both together ======
+// A light switched on while nobody is seen (switch, app, voice) gets
+// UNSEEN_MIN_ON from the turn-on: Room_watchdog holds its fade that long, and
+// GradualFadeOut leaves the light to it when a countdown armed earlier runs out
+const SEEN_BEFORE_ON = 60;   // A motion (or door) change this many seconds before the
+                             // turn-on still counts as seen: AL records the turn-on a
+                             // few seconds after the motion that caused it
+const UNSEEN_MIN_ON = 900;   // Switched on while nobody is seen: no fade before this
+                             // many seconds after the turn-on (shower, bath)
+const AUTO_OFF_WINDOW = 180; // On this soon after GradualFadeOut's or the watchdog's
+                             // off: a flip-back, not a fresh unseen turn-on
+
+// Turn-on time, from AdaptiveLighting's state for a light (both scripts read
+// the room's primary light). B7/B9/E9 run AL only from the light's "turned
+// on" flow (mode normal), so lastApplied {at, via: 'normal'} is the last
+// turn-on AL handled. Not Homey's onoff.lastChanged (probably not in
+// HomeyScript's capabilitiesObj) nor lastUpdated (moves on every same-value
+// report)
+// at:   epoch ms; 0 = unknown (no record, another mode, or more than a minute
+//       ahead — a bad value must not hold the light for good)
+// busy: AL's turn-on run still holds its lease (it hasn't recorded the turn-on
+//       yet). AL's leases run 60 s (BUSY_LEASE_MS): one further ahead than
+//       that (a clock stepped back, a corrupt write) is no lease — AL keeps it,
+//       and it must not block the fade for good either
+function turnOnInfo(lightId) {
+  const now = Date.now();
+  let at = 0;
+  let busy = false;
+  try {
+    const raw = global.get(`AL_Device_${lightId.substring(0, 8)}.State`);
+    const state = raw ? JSON.parse(raw) : null;
+    const applied = state?.lastApplied;
+    if (applied?.via === 'normal' && typeof applied.at === 'number' && applied.at > 0 && applied.at <= now + 60000) {
+      at = applied.at;
+    }
+    busy = Object.values(state?.busy || {}).some(until => typeof until === 'number' && until > now && until <= now + 65000);
+  } catch (e) { /* corrupt AL state — turn-on unknown, as before 2.17 */ }
+  return { at, busy };
+}
+// ====== end of shared TURN-ON block ======
+
+// ====== SWITCHED ON WHILE NOBODY IS SEEN (6.20) ======
+// The countdown armed when the room emptied keeps running when a light is
+// switched on while the motion sensor misses the person. Room_watchdog gives
+// such a light UNSEEN_MIN_ON from the turn-on, so the fade is left to it. Read
+// as the watchdog reads it: the room's primary light's turn-on (turnOnInfo; AL's
+// turn-on run still holding its lease = on just now); seen = motion now, a
+// motion change from SEEN_BEFORE_ON before the turn-on, or (E9) the door
+// changing then — a door that can't be read is not seen; a turn-on within
+// AUTO_OFF_WINDOW of an automatic off is a flip-back, which the watchdog gives
+// the room's own timeout, so it is faded here. Only while the room's primary
+// light is on: the watchdog checks the room through it, and would never turn
+// off an extra light left on alone.
+// Resolves to the seconds since the turn-on when the fade is left to the
+// watchdog, else null. Never rejects: a light outside ROOMS, no turn-on in the
+// last UNSEEN_MIN_ON, or a motion sensor that can't be read (the watchdog logs
+// that) → null, faded as before. One check per room and run, so E9 Loft and
+// E9 Garderobe get the same answer
+const unseenChecks = {};
+function unseenTurnOn(deviceId) {
+  const room = Object.values(ROOMS).find(r => r.primaryLight === deviceId || (r.extraLights || []).includes(deviceId));
+  if (!room) return Promise.resolve(null);
+  if (!unseenChecks[room.primaryLight]) unseenChecks[room.primaryLight] = checkUnseen(room).catch(() => null);
+  return unseenChecks[room.primaryLight];
+}
+
+async function checkUnseen(room) {
+  const now = Date.now();
+  const turnOn = turnOnInfo(room.primaryLight);
+  const onAt = turnOn.busy ? now : turnOn.at;
+  if (onAt <= 0 || now - onAt >= UNSEEN_MIN_ON * 1000) return null;
+  const primary = await Homey.devices.getDevice({ id: room.primaryLight });
+  if (primary.capabilitiesObj?.onoff?.value !== true) return null;
+  const seenFrom = onAt - SEEN_BEFORE_ON * 1000;
+  const changedAt = cap => new Date(cap?.lastChanged ?? cap?.lastUpdated).getTime();
+  for (const id of room.motionSensors) {
+    const motion = (await Homey.devices.getDevice({ id })).capabilitiesObj?.alarm_motion;
+    if (motion?.value === true || changedAt(motion) >= seenFrom) return null;
+  }
+  for (const id of room.doorSensors || []) {
+    try {
+      const door = (await Homey.devices.getDevice({ id })).capabilitiesObj?.alarm_contact;
+      if (changedAt(door) >= seenFrom) return null;
+    } catch (e) { /* can't be read → not seen, as in Room_watchdog */ }
+  }
+  const autoOffAt = global.get(`${room.primaryLight}_AutoOffAt`) || 0;
+  if (autoOffAt > 0 && onAt >= autoOffAt && onAt - autoOffAt <= AUTO_OFF_WINDOW * 1000) return null;
+  return Math.max(0, Math.round((now - onAt) / 1000));
+}
+
 // A single Hue bulb has no members (no device lookup); otherwise bulbs by name,
 // else every light in its zone (logged — a bulb is probably misnamed)
 async function findGroupMembers(groupDevice) {
@@ -413,6 +574,16 @@ async function processDevice(deviceId) {
     if (Date.now() < previousFadeUntil) {
       diagLog(`FADE-SKIP | ${device.name} | fade already in progress`);
       return `${device.name}: fade already in progress`;
+    }
+
+    // Switched on while nobody is seen, after the room emptied: the countdown
+    // armed then must not fade it a minute after the turn-on. Room_watchdog
+    // fades it UNSEEN_MIN_ON after the turn-on, or the room's timeout once
+    // someone is seen. Nothing saved, no restore window opened (6.20)
+    const unseenFor = await unseenTurnOn(deviceId);
+    if (unseenFor !== null) {
+      diagLog(`FADE-SKIP-UNSEEN | ${device.name} | on ${unseenFor}s, nobody seen since — left to Room_watchdog (no fade before ${UNSEEN_MIN_ON}s)`);
+      return `${device.name}: switched on while nobody is seen, left to Room_watchdog`;
     }
 
     // Save current settings to global variables

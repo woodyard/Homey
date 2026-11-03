@@ -1,5 +1,7 @@
 // Profile selection: weekend switch at noon (2.27.3), holidays (2.30.0),
-// sun colour (2.24/2.27.4), Claras værelse's two lights agreeing (2.27.2)
+// sun colour (2.24/2.27.4), Claras værelse's two lights agreeing (2.27.2),
+// sunrise/sunset without Homey's geolocation and the kids' rooms'
+// full, cool Daytime without sun colour (2.32.4)
 import { createEnv, light, setClock, ID } from '../mock.mjs';
 
 const AL = 'adaptivelighting.js';
@@ -128,9 +130,8 @@ export const scenarios = {
     }
   },
 
-  async "sun colour for the kids' rooms and the entrance; kitchen unchanged"(t) {
-    const lights = [[ID.O_LOFT, 'O Loft'], [ID.C_LOFT, 'C Loft'], [ID.C_LIGHTSTRIP, 'C LightStrip'],
-      [ID.E9_LOFT, 'E9 Loft'], [ID.E9_GARDEROBE, 'E9 Garderobe']];
+  async "sun colour for the entrance; kitchen unchanged"(t) {
+    const lights = [[ID.E9_LOFT, 'E9 Loft'], [ID.E9_GARDEROBE, 'E9 Garderobe']];
     const cases = [
       ['27 Oct 12:00', '2026-10-27T12:00:00+01:00', 0.58],
       ['27 Oct 15:30', '2026-10-27T15:30:00+01:00', 0.65],
@@ -197,6 +198,63 @@ export const scenarios = {
       t.equal([ss.profile, ss.brightness], expected, `${label}: SS Loft ${expected[0]} ${Math.round(expected[1] * 100)} %`);
       t.equal(ss.profile, st.profile, `${label}: SS Loft and ST Standerlampe both ${st.profile}`);
     }
+  },
+
+  async 'sun-based boundaries use the true København sunrise/sunset (geolocation gives none)'(t) {
+    // The mock's geolocation returns no sun times (as on Homey), so AL computes
+    // them itself. Reference sunrise/sunset: an independent solar-position
+    // calculation, within a minute of the published København times. Before
+    // 2.32.4 they were for a date 13 days later: up to ~30 min off
+    // [date, time of the turn-on, ST Standerlampe's next profile start, reference]
+    const cases = [
+      ['Fri 30 Oct', '2026-10-30T07:00:00+01:00', 'Daytime at sunrise+30 > 08:00 (sunrise 07:11)', '2026-10-30T08:00:00+01:00'], // Homey: boundary 08:08
+      ['Mon 16 Nov', '2026-11-16T07:00:00+01:00', 'Daytime at sunrise+30 (sunrise 07:47)', '2026-11-16T08:17:00+01:00'],          // was 08:41
+      ['Fri 15 Jan', '2027-01-15T07:00:00+01:00', 'Daytime at sunrise+30 (sunrise 08:29)', '2027-01-15T08:59:00+01:00'],          // was 08:45
+      ['Tue 22 Sep', '2026-09-22T12:00:00+02:00', 'Evening at sunset-60 (sunset 19:09)', '2026-09-22T18:09:00+02:00'],            // was 17:37
+      ['Mon 22 Mar', '2027-03-22T12:00:00+01:00', 'Evening at sunset-60 (sunset 18:27)', '2027-03-22T17:27:00+01:00'],            // was 17:51
+    ];
+    for (const [label, iso, what, expected] of cases) {
+      const env = createEnv([light(ID.ST_STANDERLAMPE, 'ST Standerlampe')]);
+      setClock(iso);
+      await env.run(AL, ID.ST_STANDERLAMPE);
+      const got = env.state(ID.ST_STANDERLAMPE).nextBoundaryAt;
+      const offMinutes = Math.round((got - Date.parse(expected)) / 6000) / 10;
+      t.check(Math.abs(offMinutes) <= 2, `${label}: ${what} within 2 min of ${expected.slice(11, 16)}`, `off by ${offMinutes} min`);
+    }
+  },
+
+  async "kids' rooms: Daytime 100 % at 0.1 all year, the kids' 100 %/coolest is not manual; other profiles unchanged"(t) {
+    const kids = [[ID.O_LOFT, 'O Loft'], [ID.C_LOFT, 'C Loft'], [ID.C_LIGHTSTRIP, 'C LightStrip']];
+    // Weekday and weekend Daytime, low winter sun and summer: no sun colour any more
+    for (const [label, iso] of [['Mon 2 Nov 13:00', '2026-11-02T13:00:00+01:00'], ['Sat 31 Oct 15:30', '2026-10-31T15:30:00+01:00'],
+      ['21 Dec 12:00', '2026-12-21T12:00:00+01:00'], ['22 Jun 12:00', '2026-06-22T12:00:00+02:00']]) {
+      for (const [id, name] of kids) {
+        const r = await turnOn(id, name, iso);
+        t.equal([r.profile, r.brightness, r.temperature], ['Daytime', 1, 0.1], `${label}: ${name} Daytime 100 %/0.1`);
+      }
+    }
+    // The rest of both sets as before
+    const others = [
+      ['Mon 06:30', '2026-11-02T06:30:00+01:00', ['Morning', 0.35, 0.7]],
+      ['Mon 18:30', '2026-11-02T18:30:00+01:00', ['Evening', 0.35, 0.7]],
+      ['Mon 20:30', '2026-11-02T20:30:00+01:00', ['Night', 0.05, 1]],
+      ['Sat 08:30', '2026-10-31T08:30:00+01:00', ['Morning', 0.35, 0.7]],
+      ['Sat 19:30', '2026-10-31T19:30:00+01:00', ['Evening', 0.35, 0.7]],
+    ];
+    for (const [label, iso, expected] of others) {
+      const r = await turnOn(ID.O_LOFT, 'O Loft', iso);
+      t.equal([r.profile, r.brightness, r.temperature], expected, `${label}: O Loft ${expected[0]} unchanged`);
+    }
+    // AL_OverrideLog 02.11 13:00: "C Loft | Daytime | AL=80%/59 | nu=100%/1" — now within tolerance
+    const env = createEnv([light(ID.C_LOFT, 'C Loft')]);
+    setClock('2026-11-02T12:43:00+01:00');
+    await env.run(AL, ID.C_LOFT);
+    setClock('2026-11-02T13:00:00+01:00');
+    env.dev(ID.C_LOFT).dim.value = 1.0;
+    env.dev(ID.C_LOFT).light_temperature.value = 0.01;
+    const r = await env.run(AL, `${ID.C_LOFT} check`);
+    t.equal([r.reason, env.state(ID.C_LOFT).manual], ['already_correct', false], 'Hue "Energize" (100 %/0.01) at Daytime → not manual');
+    t.equal(env.store.get('AL_OverrideLog') || '', '', 'no OVERRIDE line');
   },
 
   async "Claras værelse: both lights pick the same profile"(t) {
