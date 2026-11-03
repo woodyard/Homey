@@ -2,12 +2,19 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.32.2
-// Date:        2026-11-02
+// Version:     2.32.3
+// Date:        2026-11-03
 // Author:      Henrik Skovgaard
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.32.3 2026-11-03  Dining room Evening with the living room
+//                    - PROFILES.dining: Evening from "sunset-60>15:30<19:00",
+//                      the stue/filament rule (was "sunset>17:00<19:00"). From
+//                      November to February the dining room stayed on Daytime
+//                      (70 %, cool) for 1½-2½ hours after the living room had
+//                      gone to Evening (35 %, warm); today Evening at 15:30
+//                      instead of 17:00. Summer unchanged (19:00)
 // 2.32.2 2026-11-02  Kitchen idle never below 20 %
 //                    - The living room's Night is 10 %, but it has more lamps
 //                      (Standerlampe, five filament bulbs, light chain, TV), so
@@ -935,11 +942,11 @@ const PROFILES = {
     { name: "Night",    startTime: "23:00", endTime: "06:00", brightness: 0.10, temperature: 1.0 }
   ],
   
-  // Dining room - ambient, cozy
+  // Dining room - ambient, cozy. Evening starts with the living room's (stue)
   dining: [
     { name: "Morning",  startTime: "06:00",              endTime: "09:00",              brightness: 0.35, temperature: 0.7 },
-    { name: "Daytime",  startTime: "09:00",              endTime: "sunset>17:00<19:00", brightness: 0.7,  temperature: 0.5 },
-    { name: "Evening",  startTime: "sunset>17:00<19:00", endTime: "22:00",              brightness: 0.35, temperature: 0.75 },
+    { name: "Daytime",  startTime: "09:00",              endTime: "sunset-60>15:30<19:00", brightness: 0.7,  temperature: 0.5 },
+    { name: "Evening",  startTime: "sunset-60>15:30<19:00", endTime: "22:00",           brightness: 0.35, temperature: 0.75 },
     { name: "Night",    startTime: "22:00",              endTime: "06:00",              brightness: 0.10, temperature: 0.9 }
   ],
   
@@ -1924,7 +1931,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.32.2';
+const AL_VERSION = '2.32.3';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {

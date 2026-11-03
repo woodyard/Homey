@@ -68,8 +68,8 @@ const P = {
   ],
   dining: [
     { name: 'Morning',  startTime: '06:00',            endTime: '09:00',            brightness: 0.35, temperature: 0.7 },
-    { name: 'Daytime',  startTime: '09:00',            endTime: 'sunset>17:00<19:00', brightness: 0.7,  temperature: 0.5 },
-    { name: 'Evening',  startTime: 'sunset>17:00<19:00', endTime: '22:00',          brightness: 0.35, temperature: 0.75 },
+    { name: 'Daytime',  startTime: '09:00',            endTime: 'sunset-60>15:30<19:00', brightness: 0.7,  temperature: 0.5 },
+    { name: 'Evening',  startTime: 'sunset-60>15:30<19:00', endTime: '22:00',       brightness: 0.35, temperature: 0.75 },
     { name: 'Night',    startTime: '22:00',            endTime: '06:00',            brightness: 0.10, temperature: 0.9 },
   ],
   // weekend variants

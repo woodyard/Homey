@@ -92,6 +92,9 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.18.2** (2026-11-03) — Lighting follows AdaptiveLighting 2.32.3: the dining room (SS Loft,
+  SS Bordlampe, SS Light Perler) goes to Evening with the living room, an hour before sunset
+  (never before 15:30 or after 19:00) — was at sunset, between 17:00 and 19:00.
 - **1.18.1** (2026-11-02) — Lighting follows AdaptiveLighting 2.32.1: the kitchen (K Loft, K Bord)
   has Evening 20:00–23:00 at 70 % and Night from 23:00; B9 Lys has its own schedule — Daytime until
   23:00, Evening 23:00–00:00, Night from midnight (weekend Night until 07:30). B7 is unchanged.

@@ -184,6 +184,21 @@ export const scenarios = {
     }
   },
 
+  async 'dining room goes to Evening with the living room (sunset-60, 15:30-19:00)'(t) {
+    const cases = [
+      ['3 Nov 15:25', '2026-11-03T15:25:00+01:00', ['Daytime', 0.7]],
+      ['3 Nov 15:35', '2026-11-03T15:35:00+01:00', ['Evening', 0.35]],
+      ['21 Jun 18:55', '2027-06-21T18:55:00+02:00', ['Daytime', 0.7]],
+      ['21 Jun 19:05', '2027-06-21T19:05:00+02:00', ['Evening', 0.35]],
+    ];
+    for (const [label, iso, expected] of cases) {
+      const ss = await turnOn(ID.SS_LOFT, 'SS Loft', iso);
+      const st = await turnOn(ID.ST_STANDERLAMPE, 'ST Standerlampe', iso);
+      t.equal([ss.profile, ss.brightness], expected, `${label}: SS Loft ${expected[0]} ${Math.round(expected[1] * 100)} %`);
+      t.equal(ss.profile, st.profile, `${label}: SS Loft and ST Standerlampe both ${st.profile}`);
+    }
+  },
+
   async "Claras værelse: both lights pick the same profile"(t) {
     for (const [label, iso] of [['Fri 20:30', '2026-10-30T20:30:00+01:00'], ['Sat 06:30', '2026-10-31T06:30:00+01:00'], ['Sun 20:30', '2026-11-01T20:30:00+01:00']]) {
       const loft = await turnOn(ID.C_LOFT, 'C Loft', iso);

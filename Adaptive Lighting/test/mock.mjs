@@ -216,6 +216,7 @@ export const ID = {
   ST_STANDERLAMPE: '3f4e2391-3be6-44ee-b340-fcc3219853b2',
   ST_MOTION: 'b88fc1cd-cd4f-447e-960b-03fb51951ca4',
   SV_LOFT: 'cbbd7c60-dc84-43c7-8f0f-790556fc9b14',
+  SS_LOFT: '18b6f5bf-1666-4bf1-92be-d9cb7e6b74c5',
   K_BORD: '0e5d845d-d8ea-4db6-8096-663b0a311e07',
   K_LOFT: 'f097b38c-cfb0-4b83-8124-59e35f82cd0f',
   O_LOFT: '1e87af68-506e-4c86-8bc9-ffc6a05f3ef0',
