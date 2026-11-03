@@ -20,6 +20,13 @@ import {
   HEATING_ROOMS, HEATING_ACTIONS, heatingDaySlots, heatingSlot, guessHeatFlow,
 } from '../lib/heating';
 import { estimateRoomModel, ROOM_MODEL_DEFAULTS, predictRoom } from '../lib/thermal';
+import {
+  AppWindow, BatteryFull, BatteryLow, BatteryMedium, Blinds, Bot, Brain, CalendarClock, ChartSpline,
+  ClipboardList, Coffee, DoorClosed, DoorOpen, Fan, Flame, Footprints, Hand, Heater, House, Lightbulb,
+  LoaderCircle, Minus, Moon, Pause, Plug, Plus, Power, Refrigerator, RotateCcw, Snowflake, Sparkles,
+  Speaker, Thermometer, TriangleAlert, Tv, WashingMachine,
+} from 'lucide-react';
+import styles from './RoomsV2Tab.module.css';
 
 const HIST_POLL_MS = 5 * 60 * 1000;   // temperature history refresh
 const STATUS_POLL_MS = 15 * 1000;     // heating status refresh
@@ -93,12 +100,17 @@ function fmtAgo(ts) {
 }
 
 const STATUS_ICON = {
-  socket: '🔌', tv: '📺', mediaplayer: '🔊', coffeemachine: '☕', fridge: '🧊', freezer: '❄️',
-  washer: '🧺', vacuumcleaner: '🤖', heater: '🔥', curtain: '🪟', fan: '🌀', other: '🏠',
+  socket: Plug, tv: Tv, mediaplayer: Speaker, coffeemachine: Coffee, fridge: Refrigerator, freezer: Snowflake,
+  washer: WashingMachine, vacuumcleaner: Bot, heater: Heater, curtain: Blinds, fan: Fan, other: House,
 };
 
 function batteryColor(pct) {
-  return pct <= 20 ? '#dc2626' : pct <= 50 ? '#b45309' : '#16a34a';
+  return pct <= 20 ? 'var(--bad)' : pct <= 50 ? 'var(--warn)' : 'var(--good)';
+}
+
+function BatteryIcon({ pct }) {
+  const Icon = pct <= 20 ? BatteryLow : pct <= 50 ? BatteryMedium : BatteryFull;
+  return <Icon size={13} strokeWidth={2.2} />;
 }
 
 function otherStateText(caps) {
@@ -108,8 +120,15 @@ function otherStateText(caps) {
   return null;
 }
 
-const STATUS_LABEL = { fontSize: 10.5, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em', margin: '10px 0 4px' };
-const STATUS_ROW = { display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, padding: '2px 0', minWidth: 0 };
+// Small uppercase panel heading with an icon.
+function Eyebrow({ icon: Icon, children }) {
+  return (
+    <div className={`hd-eyebrow ${styles.eyebrow}`}>
+      {Icon && <Icon size={13} strokeWidth={2.2} />}
+      {children}
+    </div>
+  );
+}
 
 // Left card: room status — motion inactivity, open windows/doors with duration,
 // batteries, and any devices not covered by the lights/heating sections.
@@ -136,40 +155,46 @@ function StatusPanel({ room, zone, onControl, heatingWindowOpen }) {
   ));
 
   return (
-    <div style={{ background: '#fff', border: '1px solid #e3e6ea', borderRadius: 12, padding: '12px 14px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em' }}>
-        📋 Status
-      </div>
+    <div className={`hd-inset ${styles.panel}`}>
+      <Eyebrow icon={ClipboardList}>Status</Eyebrow>
 
       {(motionDevs.length > 0 || contacts.length > 0 || heatingWindowOpen) && (
         <div>
-          <div style={STATUS_LABEL}>Activity</div>
+          <div className={styles.subLabel}>Activity</div>
           {heatingWindowOpen && (
-            <div style={STATUS_ROW} title="Reported by the heating system — the physical sensor may sit in a sub-zone">
-              <span style={{ color: '#b45309' }}>🪟 Window open — heating paused</span>
+            <div className={styles.row} title="Reported by the heating system — the physical sensor may sit in a sub-zone">
+              <span className={styles.rowIcon} style={{ color: 'var(--warn)' }}><AppWindow size={15} /></span>
+              <span className={styles.rowName} style={{ color: 'var(--warn)', fontWeight: 600 }}>Window open — heating paused</span>
             </div>
           )}
           {motionDevs.length > 0 && (
-            <div style={STATUS_ROW}>
-              {motionActive
-                ? <span style={{ color: '#16a34a' }}>🏃 Active now</span>
-                : (
-                  <span style={{ color: '#6b7280' }} title={motionTs ? `No motion since ${new Date(motionTs).toLocaleString()}` : undefined}>
-                    💤 Inactive{fmtAgo(motionTs) ? ` for ${fmtAgo(motionTs)}` : ''}
-                  </span>
-                )}
-            </div>
+            motionActive
+              ? (
+                <div className={styles.row}>
+                  <span className={styles.rowIcon} style={{ color: 'var(--good)' }}><Footprints size={15} /></span>
+                  <span className={styles.rowName} style={{ color: 'var(--good)', fontWeight: 600 }}>Active now</span>
+                  <span className={styles.rowEnd}><span className={`hd-live-dot ${styles.liveDot}`} /></span>
+                </div>
+              )
+              : (
+                <div className={styles.row} title={motionTs ? `No motion since ${new Date(motionTs).toLocaleString()}` : undefined}>
+                  <span className={styles.rowIcon}><Moon size={15} /></span>
+                  <span className={styles.rowName}>Inactive{fmtAgo(motionTs) ? ` for ${fmtAgo(motionTs)}` : ''}</span>
+                </div>
+              )
           )}
           {contacts.map((d) => {
             const open = !!d.capabilities.alarm_contact;
             const since = (d.capTimes || {}).alarm_contact;
-            const icon = /vindue|window/i.test(d.name) ? '🪟' : '🚪';
+            const Icon = /vindue|window/i.test(d.name) ? AppWindow : open ? DoorOpen : DoorClosed;
             return (
-              <div key={d.id} style={STATUS_ROW} title={since ? `Last change ${new Date(since).toLocaleString()}` : undefined}>
-                <span style={{ flex: 'none' }}>{icon}</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
-                <span style={{ marginLeft: 'auto', color: open ? '#b45309' : '#9ca3af', whiteSpace: 'nowrap' }}>
-                  {open ? `open${fmtAgo(since) ? ` · ${fmtAgo(since)}` : ''}` : 'closed'}
+              <div key={d.id} className={styles.row} title={since ? `Last change ${new Date(since).toLocaleString()}` : undefined}>
+                <span className={styles.rowIcon} style={open ? { color: 'var(--warn)' } : undefined}><Icon size={15} /></span>
+                <span className={styles.rowName}>{d.name}</span>
+                <span className={styles.rowEnd}>
+                  {open
+                    ? <span className="hd-tag hd-tag-warn">open{fmtAgo(since) ? ` · ${fmtAgo(since)}` : ''}</span>
+                    : <span className={styles.stateText}>closed</span>}
                 </span>
               </div>
             );
@@ -179,19 +204,20 @@ function StatusPanel({ room, zone, onControl, heatingWindowOpen }) {
 
       {others.length > 0 && (
         <div>
-          <div style={STATUS_LABEL}>Devices</div>
+          <div className={styles.subLabel}>Devices</div>
           {others.map((d) => {
             const caps = d.capabilities || {};
             const stateText = otherStateText(caps);
             const unavailable = d.available === false;
+            const Icon = STATUS_ICON[d.virtualClass || d.class] || House;
             return (
-              <div key={d.id} style={{ ...STATUS_ROW, opacity: unavailable ? 0.55 : 1 }}
+              <div key={d.id} className={styles.row} style={unavailable ? { opacity: 0.55 } : undefined}
                 title={unavailable ? `${d.name}: unavailable (unpowered or unreachable)` : undefined}>
-                <span style={{ flex: 'none' }}>{STATUS_ICON[d.virtualClass || d.class] || '🏠'}</span>
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
-                <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  {unavailable && <span style={{ fontSize: 12 }} title="Unavailable">⚠️</span>}
-                  {stateText && <span style={{ color: '#9ca3af', fontSize: 11, whiteSpace: 'nowrap' }}>{stateText}</span>}
+                <span className={styles.rowIcon}><Icon size={15} /></span>
+                <span className={styles.rowName}>{d.name}</span>
+                <span className={styles.rowEnd}>
+                  {unavailable && <span className={styles.warnIcon} title="Unavailable"><TriangleAlert size={13} /></span>}
+                  {stateText && <span className={styles.stateText}>{stateText}</span>}
                   {'onoff' in caps && onControl
                     ? (
                       <MiniToggle
@@ -200,7 +226,7 @@ function StatusPanel({ room, zone, onControl, heatingWindowOpen }) {
                           : d.alwaysOn ? `${d.name}: always on` : `${d.name}: turn ${caps.onoff ? 'off' : 'on'}`}
                       />
                     )
-                    : !stateText && <span style={{ color: '#9ca3af', fontSize: 11 }}>—</span>}
+                    : !stateText && <span className={styles.stateText}>—</span>}
                 </span>
               </div>
             );
@@ -210,16 +236,17 @@ function StatusPanel({ room, zone, onControl, heatingWindowOpen }) {
 
       {batteries.length > 0 && (
         <div>
-          <div style={STATUS_LABEL}>Batteries</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+          <div className={styles.subLabel}>Batteries</div>
+          <div className={styles.batteries}>
             {batteries.map((d) => {
               const pct = d.capabilities.measure_battery;
               return (
-                <span key={d.id} title={d.name} style={{
-                  fontSize: 11, padding: '2px 8px', borderRadius: 6, background: '#f8f9fa',
-                  border: '1px solid #eef0f2', color: batteryColor(pct), whiteSpace: 'nowrap',
-                }}>
-                  🔋 {Math.round(pct)}% <span style={{ color: '#6b7280' }}>{d.name}</span>
+                <span key={d.id} title={d.name} className={styles.battery}>
+                  <span className={styles.batteryPct} style={{ color: batteryColor(pct) }}>
+                    <BatteryIcon pct={pct} />
+                    {Math.round(pct)}%
+                  </span>
+                  <span className={styles.batteryName}>{d.name}</span>
                 </span>
               );
             })}
@@ -229,7 +256,7 @@ function StatusPanel({ room, zone, onControl, heatingWindowOpen }) {
 
       {motionDevs.length === 0 && contacts.length === 0 && !heatingWindowOpen
         && others.length === 0 && batteries.length === 0 && (
-        <div style={{ color: '#c0c6cf', fontSize: 12, marginTop: 10 }}>Nothing to report.</div>
+        <div className={styles.nothing}>Nothing to report.</div>
       )}
     </div>
   );
@@ -243,16 +270,9 @@ function MiniToggle({ on, onChange, title, disabled }) {
       type="button" role="switch" aria-checked={on} aria-disabled={disabled || undefined}
       title={disabled ? (title || 'Always on — cannot be switched off') : (title || (on ? 'Turn off' : 'Turn on'))}
       onClick={(e) => { e.stopPropagation(); if (!disabled) onChange(!on); }}
-      style={{
-        width: 32, height: 19, borderRadius: 999, border: 'none', padding: 0,
-        cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
-        background: on ? '#16a34a' : '#cbd5e1', position: 'relative', transition: 'background .15s', flex: 'none',
-      }}
+      className={`${styles.toggle}${on ? ` ${styles.toggleOn}` : ''}${disabled ? ` ${styles.toggleDisabled}` : ''}`}
     >
-      <span style={{
-        position: 'absolute', top: 2, left: on ? 15 : 2, width: 15, height: 15, borderRadius: '50%',
-        background: '#fff', transition: 'left .15s', boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
-      }} />
+      <span className={styles.track}><span className={styles.knob} /></span>
     </button>
   );
 }
@@ -260,6 +280,7 @@ function MiniToggle({ on, onChange, title, disabled }) {
 // A single bulb as a glowing tile with live state. `al` is resolveLightMode's
 // { mode, guess, st } for lights AdaptiveLighting manages, else null.
 const LIGHT_MODE_LABEL = { auto: 'Auto', manual: 'Manual', drift: 'Manual?', forced: 'Forced', off: 'Off', unknown: '—' };
+const LIGHT_MODE_TAG = { auto: 'hd-tag-good', manual: 'hd-tag-warn', drift: 'hd-tag-warn', forced: 'hd-tag-accent' };
 function LightTile({ device, al, onToggle }) {
   const mode = al ? al.mode : null;
   const c = device.capabilities || {};
@@ -274,36 +295,45 @@ function LightTile({ device, al, onToggle }) {
     color = tempColor(0.6);
   }
   const dim = c.dim;
-  const modeColor = mode === 'manual' || mode === 'drift' ? '#b45309'
-    : mode === 'auto' ? '#16a34a' : mode === 'forced' ? '#2563eb' : '#9ca3af';
   const modeText = mode
     ? `${mode === 'forced' && al.st?.profile ? `Forced ${al.st.profile}` : LIGHT_MODE_LABEL[mode] || mode}${al.guess ? ' (guessed)' : ''}${!al.guess && mode !== 'off' && isIdle(al.st) ? ' · idle' : ''}`
     : '';
   const alText = al && al.st ? describeLightStatus(al.st) : '';
+  // A lit tile is tinted by the bulb's own colour with a glow that grows with brightness.
+  const level = dim != null ? dim : 0.75;
+  const tileStyle = on ? {
+    background: `color-mix(in srgb, ${color} 20%, var(--surface-solid))`,
+    borderColor: `color-mix(in srgb, ${color} 45%, transparent)`,
+    boxShadow: `0 8px 24px -10px color-mix(in srgb, ${color} ${Math.round(45 + level * 40)}%, transparent)`,
+  } : undefined;
+  const iconStyle = on ? {
+    background: `color-mix(in srgb, ${color} 38%, transparent)`,
+    color: `color-mix(in srgb, ${color} 72%, var(--text))`,
+    boxShadow: `0 0 ${Math.round(6 + level * 12)}px color-mix(in srgb, ${color} 65%, transparent)`,
+  } : undefined;
   return (
     <div
       title={unavailable
         ? `${device.name}: unavailable (unpowered or unreachable)`
         : `${device.name}: ${on ? (dim != null ? `${Math.round(dim * 100)}%` : 'on') : 'off'}${modeText ? ` · ${modeText}` : ''}${alText ? `\nScript: ${alText}` : ''}`}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 9,
-        border: '1px solid #e3e6ea', background: on ? '#fffdf7' : '#f8f9fa', minWidth: 0,
-        opacity: unavailable ? 0.55 : 1,
-      }}
+      className={`${styles.tile}${unavailable ? ` ${styles.tileUnavailable}` : ''}`}
+      style={tileStyle}
     >
-      {unavailable && <span style={{ flex: 'none', fontSize: 12 }} title="Unavailable">⚠️</span>}
-      <span style={{
-        width: 14, height: 14, borderRadius: '50%', flex: 'none',
-        background: on ? color : '#e2e5e9',
-        boxShadow: on ? `0 0 ${4 + (dim != null ? dim * 8 : 6)}px ${color}` : 'none',
-        border: '1px solid rgba(0,0,0,0.12)',
-      }} />
-      <span style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{device.name}</span>
-      {/* The switch itself shows on/off — only the dim % adds information. */}
-      <span style={{ marginLeft: 'auto', fontSize: 11, color: '#6b7280', fontVariantNumeric: 'tabular-nums' }}>
-        {on && dim != null ? `${Math.round(dim * 100)}%` : ''}
+      <span className={styles.tileIcon} style={iconStyle}>
+        <Lightbulb size={17} strokeWidth={2} />
       </span>
-      {mode && <span style={{ width: 7, height: 7, borderRadius: '50%', background: modeColor, flex: 'none', opacity: al.guess ? 0.5 : 1 }} title={modeText} />}
+      <div className={styles.tileBody}>
+        <span className={styles.tileName}>{device.name}</span>
+        <span className={styles.tileMeta}>
+          {unavailable && <span className={styles.warnIcon} title="Unavailable"><TriangleAlert size={12} /></span>}
+          <span>{on ? (dim != null ? `${Math.round(dim * 100)}%` : 'On') : 'Off'}</span>
+          {mode && (
+            <span className={`hd-tag ${LIGHT_MODE_TAG[mode] || ''}`} style={al.guess ? { opacity: 0.6 } : undefined} title={modeText}>
+              {mode === 'forced' ? 'Forced' : LIGHT_MODE_LABEL[mode] || mode}
+            </span>
+          )}
+        </span>
+      </div>
       {onToggle && 'onoff' in c && (
         <MiniToggle
           on={on} onChange={onToggle} disabled={!!device.alwaysOn || unavailable}
@@ -391,20 +421,31 @@ function smoothPoints(points, window = 9) {
   });
 }
 
-const SERIES_COLORS = ['#2563eb', '#0891b2', '#0f766e', '#db2777'];
-const TARGET_COLOR = '#9333ea'; // scheduled heating target — distinct from the orange light curve
+// Data colours — picked to read on both the light and the dark theme.
+const SERIES_COLORS = ['#5b7cff', '#22b8cf', '#14b8a6', '#ec4899'];
+const TARGET_COLOR = '#a855f7'; // scheduled heating target — distinct from the orange light curve
+const FORECAST_COLOR = '#5b7cff';
+const LIGHT_LEVEL_COLOR = '#f59e0b';
+const SUN_MARK_COLOR = '#f3c96b';
+
+function LegendItem({ color, dashed, width = 2, opacity = 1, children }) {
+  return (
+    <span className={styles.legendItem}>
+      <svg width="18" height="4" aria-hidden="true" style={{ opacity, flex: 'none' }}>
+        <line x1="1" x2="17" y1="2" y2="2" stroke={color} strokeWidth={width} strokeLinecap="round" strokeDasharray={dashed ? '3.5 3' : undefined} />
+      </svg>
+      {children}
+    </span>
+  );
+}
 
 function ClimateChart({ series, slots, prediction, nowMin, lighting, uid }) {
-  const W = 920;
-  const H = 260;
-  const M = { l: 40, r: lighting ? 34 : 14, t: 26, b: 22 };
+  const wrapRef = useRef(null);
+  const [W, setW] = useState(920);
   const [hover, setHover] = useState(null);
-
-  const x = (m) => M.l + (m / 1440) * (W - M.l - M.r);
 
   // Optional adaptive-lighting overlay: brightness on a 0–100% right-hand axis.
   const light = lighting ? brightnessModel(lighting.profiles, lighting.sun) : null;
-  const yb = (b) => H - M.b - b * (H - M.t - M.b);
 
   const allVals = [
     ...series.flatMap((s) => s.points.map((p) => p.v)),
@@ -412,7 +453,28 @@ function ClimateChart({ series, slots, prediction, nowMin, lighting, uid }) {
     ...slots.map((s) => s.target),
   ];
   const hasTemp = allVals.length > 0;
-  if (!hasTemp && !light) return <div style={{ color: '#9ca3af', fontSize: 12.5, padding: '30px 0', textAlign: 'center' }}>No temperature data yet today.</div>;
+  const empty = !hasTemp && !light;
+
+  // Draw at the container's real pixel width so the labels stay legible on a phone.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver((entries) => {
+      const w = Math.round(entries[0].contentRect.width);
+      if (w > 0) setW(Math.max(280, w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [empty]);
+
+  const narrow = W < 560;
+  const H = narrow ? 220 : 260;
+  const M = { l: narrow ? 34 : 40, r: lighting ? (narrow ? 32 : 34) : 14, t: 26, b: 22 };
+
+  const x = (m) => M.l + (m / 1440) * (W - M.l - M.r);
+  const yb = (b) => H - M.b - b * (H - M.t - M.b);
+
+  if (empty) return <div ref={wrapRef} className={`hd-empty ${styles.chartEmpty}`}>No temperature data yet today.</div>;
   const yMin = hasTemp ? Math.floor(Math.min(...allVals) - 1) : 0;
   const yMax = hasTemp ? Math.ceil(Math.max(...allVals) + 1) : 1;
   const y = (v) => M.t + (1 - (v - yMin) / Math.max(1, yMax - yMin)) * (H - M.t - M.b);
@@ -426,6 +488,10 @@ function ClimateChart({ series, slots, prediction, nowMin, lighting, uid }) {
 
   const yTicks = [];
   if (hasTemp) for (let v = yMin; v <= yMax; v += (yMax - yMin) > 8 ? 2 : 1) yTicks.push(v);
+
+  const mainPts = series[0] && series[0].points.length > 1 ? series[0].points : null;
+  const top = M.t - 16;
+  const bottom = H - M.b;
 
   function onMove(e) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -449,32 +515,52 @@ function ClimateChart({ series, slots, prediction, nowMin, lighting, uid }) {
   }
 
   return (
-    <div style={{ position: 'relative' }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}
+    <div ref={wrapRef} className={styles.chart}>
+      <svg viewBox={`0 0 ${W} ${H}`} className={styles.chartSvg}
         onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        {mainPts && (
+          <defs>
+            <linearGradient id={`area-${uid}`} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor={SERIES_COLORS[0]} stopOpacity="0.24" />
+              <stop offset="100%" stopColor={SERIES_COLORS[0]} stopOpacity="0" />
+            </linearGradient>
+          </defs>
+        )}
         {/* schedule slot bands + labels */}
-        {slots.map((s, i) => (
-          <g key={`${s.name}-${s.start}`}>
-            <rect x={x(s.start)} y={M.t - 16} width={x(s.end) - x(s.start)} height={H - M.t - M.b + 16}
-              fill={i % 2 ? 'rgba(37,99,235,0.045)' : 'rgba(37,99,235,0.018)'} />
-            {(x(s.end) - x(s.start)) > 52 && (
-              <text x={(x(s.start) + x(s.end)) / 2} y={M.t - 5} textAnchor="middle" fontSize="10" fill="#94a3b8">
-                {s.name} {s.target}°{s.offset > 0 ? ` (−${s.offset}° idle)` : ''}
-              </text>
-            )}
-          </g>
-        ))}
+        {slots.map((s, i) => {
+          // Clamp to the drawn day, and keep the label inside the plot at the edges.
+          const x0 = x(Math.max(0, s.start));
+          const x1 = x(Math.min(1440, s.end));
+          if (x1 <= x0) return null;
+          const label = `${s.name} ${s.target}°${s.offset > 0 ? ` (−${s.offset}° idle)` : ''}`;
+          const half = label.length * 2.9;
+          const mid = (x0 + x1) / 2;
+          const lx = mid + half > W - M.r ? W - M.r - 2 : mid - half < M.l ? M.l + 2 : mid;
+          const anchor = lx === mid ? 'middle' : lx > mid ? 'end' : 'start';
+          return (
+            <g key={`${s.name}-${s.start}`}>
+              <rect x={x0} y={top} width={x1 - x0} height={bottom - top}
+                style={{ fill: 'var(--heat)', fillOpacity: i % 2 ? 0.075 : 0.035 }} />
+              {(x1 - x0) > 52 && (
+                <text x={lx} y={M.t - 5} textAnchor={anchor} fontSize="10"
+                  style={{ fill: 'var(--muted)', fontWeight: 500 }}>
+                  {label}
+                </text>
+              )}
+            </g>
+          );
+        })}
         {yTicks.map((v) => (
           <g key={v}>
-            <line x1={M.l} x2={W - M.r} y1={y(v)} y2={y(v)} stroke="#eef0f3" />
-            <text x={M.l - 6} y={y(v) + 3.5} textAnchor="end" fontSize="10.5" fill="#9ca3af">{v}°</text>
+            <line x1={M.l} x2={W - M.r} y1={y(v)} y2={y(v)} style={{ stroke: 'var(--chart-grid)' }} />
+            <text x={M.l - 7} y={y(v) + 3.5} textAnchor="end" fontSize="10.5" style={{ fill: 'var(--chart-axis)' }}>{v}°</text>
           </g>
         ))}
         {/* adaptive-lighting overlay: brightness area (right axis) behind the temp curves */}
         {light && (() => {
           const curve = light.samples
             .map((b, i) => `${i ? 'L' : 'M'} ${x(i * light.STEP).toFixed(1)} ${yb(b).toFixed(1)}`).join(' ');
-          const area = `${curve} L ${x(1440).toFixed(1)} ${H - M.b} L ${M.l} ${H - M.b} Z`;
+          const area = `${curve} L ${x(1440).toFixed(1)} ${bottom} L ${M.l} ${bottom} Z`;
           const sunrise = lighting.sun.sunriseMinutes;
           const sunset = lighting.sun.sunsetMinutes;
           return (
@@ -484,85 +570,121 @@ function ClimateChart({ series, slots, prediction, nowMin, lighting, uid }) {
                   {light.stops.map((s, i) => <stop key={i} offset={`${(s.at * 100).toFixed(1)}%`} stopColor={s.color} />)}
                 </linearGradient>
               </defs>
-              <path d={area} fill={`url(#cmb-${uid})`} opacity="0.20" />
-              <path d={curve} fill="none" stroke={`url(#cmb-${uid})`} strokeWidth="1.6" opacity="0.8" />
+              <path d={area} fill={`url(#cmb-${uid})`} opacity="0.22" />
+              <path d={curve} fill="none" stroke={`url(#cmb-${uid})`} strokeWidth="1.8" opacity="0.85" />
               {/* dim the night hours */}
-              <rect x={M.l} y={M.t - 16} width={x(sunrise) - M.l} height={H - M.t - M.b + 16} fill="rgba(100,116,139,0.10)" />
-              <rect x={x(sunset)} y={M.t - 16} width={W - M.r - x(sunset)} height={H - M.t - M.b + 16} fill="rgba(100,116,139,0.10)" />
+              <rect x={M.l} y={top} width={x(sunrise) - M.l} height={bottom - top} style={{ fill: 'var(--neutral-soft)' }} />
+              <rect x={x(sunset)} y={top} width={W - M.r - x(sunset)} height={bottom - top} style={{ fill: 'var(--neutral-soft)' }} />
               {/* sun / moon markers */}
               {[[sunrise, '☀️'], [sunset, '🌙']].map(([m, icon]) => (
                 <g key={icon}>
-                  <line x1={x(m)} x2={x(m)} y1={M.t - 6} y2={H - M.b} stroke="#f3c96b" strokeDasharray="2 3" />
-                  <text x={x(m)} y={H - M.b - 5} textAnchor="middle" fontSize="10">{icon}</text>
+                  <line x1={x(m)} x2={x(m)} y1={M.t - 6} y2={bottom} stroke={SUN_MARK_COLOR} strokeDasharray="2 3" opacity="0.9" />
+                  <text x={x(m)} y={bottom - 5} textAnchor="middle" fontSize="10">{icon}</text>
                 </g>
               ))}
               {/* right-hand brightness axis */}
               {[0, 0.5, 1].map((b) => (
-                <text key={b} x={W - M.r + 4} y={yb(b) + 3.5} fontSize="9.5" fill="#c0c6cf">{Math.round(b * 100)}%</text>
+                <text key={b} x={W - M.r + 4} y={yb(b) + 3.5} fontSize="9.5" style={{ fill: 'var(--faint)' }}>{Math.round(b * 100)}%</text>
               ))}
             </g>
           );
         })()}
         {[0, 6, 12, 18, 24].map((h) => (
-          <text key={h} x={x(h * 60)} y={H - 6} fontSize="10.5" fill="#9ca3af"
+          <text key={h} x={x(h * 60)} y={H - 6} fontSize="10.5" style={{ fill: 'var(--chart-axis)' }}
             textAnchor={h === 0 ? 'start' : h === 24 ? 'end' : 'middle'}>
             {String(h).padStart(2, '0')}
           </text>
         ))}
         {/* scheduled target step line */}
         {slots.length > 0 && (
-          <path d={targetPath} fill="none" stroke={TARGET_COLOR} strokeWidth="1.8" strokeDasharray="1 0" opacity="0.85" />
+          <path d={targetPath} fill="none" stroke={TARGET_COLOR} strokeWidth="2" opacity="0.9"
+            strokeLinejoin="round" strokeLinecap="round" />
+        )}
+        {/* soft area under the primary measured line */}
+        {mainPts && (
+          <path
+            d={`${linePath(mainPts)} L ${x(mainPts[mainPts.length - 1].m).toFixed(1)} ${bottom} L ${x(mainPts[0].m).toFixed(1)} ${bottom} Z`}
+            fill={`url(#area-${uid})`}
+          />
         )}
         {/* measured lines since midnight */}
         {series.map((s, i) => s.points.length > 1 && (
           <path key={s.key} d={linePath(s.points)} fill="none"
             stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
-            strokeWidth={i === 0 ? 2.6 : 1.5} opacity={i === 0 ? 1 : 0.55}
+            strokeWidth={i === 0 ? 2.6 : 1.5} opacity={i === 0 ? 1 : 0.6}
             strokeLinejoin="round" strokeLinecap="round" />
         ))}
         {/* prediction */}
         {prediction.length > 1 && (
-          <path d={linePath(prediction)} fill="none" stroke="#2563eb" strokeWidth="2"
-            strokeDasharray="5 5" opacity="0.65" />
+          <path d={linePath(prediction)} fill="none" stroke={FORECAST_COLOR} strokeWidth="2"
+            strokeDasharray="5 5" opacity="0.7" strokeLinecap="round" />
         )}
         {/* now marker */}
-        <line x1={x(nowMin)} x2={x(nowMin)} y1={M.t - 16} y2={H - M.b} stroke="#ef4444" strokeWidth="1.6" />
-        <circle cx={x(nowMin)} cy={M.t - 16} r="2.6" fill="#ef4444" />
+        <line x1={x(nowMin)} x2={x(nowMin)} y1={top} y2={bottom} strokeWidth="1.6"
+          style={{ stroke: 'var(--bad)', filter: 'drop-shadow(0 0 3px var(--bad))' }} />
+        <circle cx={x(nowMin)} cy={top} r="6" style={{ fill: 'var(--bad)', fillOpacity: 0.18 }} />
+        <circle cx={x(nowMin)} cy={top} r="3" style={{ fill: 'var(--bad)' }} />
         {hover && (
-          <line x1={hover.px} x2={hover.px} y1={M.t - 16} y2={H - M.b} stroke="#475569" strokeWidth="1" strokeDasharray="4 4" />
+          <g>
+            <line x1={hover.px} x2={hover.px} y1={top} y2={bottom} strokeWidth="1" strokeDasharray="4 4"
+              style={{ stroke: 'var(--muted)' }} />
+            {hover.actual && (
+              <circle cx={x(hover.actual.m)} cy={y(hover.actual.v)} r="4" fill={SERIES_COLORS[0]} strokeWidth="2"
+                style={{ stroke: 'var(--surface-solid)' }} />
+            )}
+            {hover.pred && (
+              <circle cx={x(hover.pred.m)} cy={y(hover.pred.v)} r="3.5" fill={FORECAST_COLOR} strokeWidth="2"
+                style={{ stroke: 'var(--surface-solid)' }} />
+            )}
+          </g>
         )}
       </svg>
       {hover && (
-        <div style={{
-          position: 'absolute', top: 4, left: `${Math.max(8, Math.min(84, (hover.px / W) * 100))}%`,
-          transform: 'translateX(-50%)', background: 'rgba(255,255,255,0.97)', border: '1px solid #dbe3ef',
-          borderRadius: 8, boxShadow: '0 6px 18px rgba(15,23,42,0.12)', padding: '7px 10px',
-          fontSize: 11.5, pointerEvents: 'none', whiteSpace: 'nowrap', zIndex: 2,
-        }}>
-          <b>{fmtMinutes(hover.m)}</b>
-          {hover.slot && <span style={{ color: TARGET_COLOR }}> · {hover.slot.name} → {hover.slot.target}°</span>}
-          {hover.actual && <span style={{ color: '#2563eb' }}> · measured {hover.actual.v.toFixed(1)}°</span>}
-          {hover.pred && <span style={{ color: '#6b7280' }}> · forecast {hover.pred.v.toFixed(1)}°</span>}
-          {hover.light != null && <span style={{ color: '#b45309' }}> · 💡 {Math.round(hover.light * 100)}%</span>}
+        <div
+          className={`${styles.tooltip}${narrow ? ` ${styles.tooltipNarrow}` : ''}`}
+          style={narrow ? undefined : { left: `${Math.max(8, Math.min(84, (hover.px / W) * 100))}%` }}
+        >
+          <b className="hd-num">{fmtMinutes(hover.m)}</b>
+          {hover.slot && <span className={styles.tipItem} style={{ color: TARGET_COLOR }}>{hover.slot.name} → {hover.slot.target}°</span>}
+          {hover.actual && (
+            <span className={styles.tipItem}>
+              <i className={styles.tipDot} style={{ background: SERIES_COLORS[0] }} />measured <b>{hover.actual.v.toFixed(1)}°</b>
+            </span>
+          )}
+          {hover.pred && (
+            <span className={styles.tipItem}>
+              <i className={styles.tipDot} style={{ background: FORECAST_COLOR, opacity: 0.6 }} />forecast {hover.pred.v.toFixed(1)}°
+            </span>
+          )}
+          {hover.light != null && (
+            <span className={styles.tipItem} style={{ color: 'var(--warn)' }}>
+              <Lightbulb size={12} strokeWidth={2.2} />{Math.round(hover.light * 100)}%
+            </span>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function heatBtn(actionKey, disabled) {
-  const c = actionKey === 'boost' ? '#ea580c' : actionKey === 'pause' ? '#6b7280' : '#2563eb';
-  return {
-    padding: '4px 11px', borderRadius: 999, border: `1px solid ${c}`, background: '#fff', color: c,
-    fontSize: 11.5, whiteSpace: 'nowrap', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
-  };
-}
-
+// Header tags for the heating mode, and icons for the inline heating actions.
 const HEAT_MODE = {
-  boost: { label: '🔥 Boost', bg: '#fff1e6', color: '#ea580c' },
-  pause: { label: '⏸ Paused', bg: '#f1f2f4', color: '#6b7280' },
-  manual: { label: '✋ Manual', bg: '#fff7ed', color: '#b45309' },
+  boost: { label: 'Boost', icon: Flame, tag: 'hd-tag-heat' },
+  pause: { label: 'Paused', icon: Pause, tag: '' },
+  manual: { label: 'Manual', icon: Hand, tag: 'hd-tag-warn' },
 };
+
+const HEAT_ACTION_UI = {
+  boost: { icon: Flame, className: styles.boost },
+  pause: { icon: Pause, className: '' },
+  reset: { icon: RotateCcw, className: 'hd-btn-soft' },
+};
+
+// HEATING_ACTIONS labels carry a leading emoji/symbol ('🔥 Boost') — the button
+// draws its own icon, so only the word is shown.
+function actionText(label) {
+  return String(label).replace(/^[^\p{L}\p{N}]+/u, '').trim() || label;
+}
 
 // ------------------------------------------------------------------ tab ----
 
@@ -891,255 +1013,320 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
 
   return (
     <div>
-      <p style={{ color: '#6b7280', fontSize: 12.5, marginTop: -4 }}>
+      <div className={styles.intro}>
+        <span className="hd-tag hd-tag-violet"><Sparkles size={12} strokeWidth={2.2} />Experimental</span>
+        <span className="hd-pill">
+          <CalendarClock size={14} />
+          <span>Today follows the <b>{weekend ? 'weekend' : 'weekday'}</b> schedules</span>
+        </span>
+      </div>
+      <p className="hd-lede">
         Experimental room view: live lights with today&apos;s adaptive-lighting curve, and today&apos;s
-        temperature with the heating schedule and a <span style={{ borderBottom: '2px dashed #94a3b8' }}>forecast</span> for
+        temperature with the heating schedule and a <span className={styles.dashSample}>forecast</span> for
         the rest of the day. The forecast is an estimate (assumes current boost/pause/manual mode runs out
-        as scheduled and ignores future motion/windows). Today follows the <b>{weekend ? 'weekend' : 'weekday'}</b> schedules.
+        as scheduled and ignores future motion/windows).
       </p>
 
-      <style>{`
-        .r2-row { display: grid; gap: 14px; grid-template-columns: minmax(240px, 4fr) minmax(380px, 8fr); }
-        .r2-room { margin-bottom: 20px; }
-        .r2-room-title { margin: 0; font-size: 15px; }
-        /* Mobile: stack the cards (Status first) and make the room boundary obvious —
-           bigger title with an accent bar and more air between rooms. */
-        @media (max-width: 760px) {
-          .r2-row { grid-template-columns: 1fr; }
-          .r2-room { margin-bottom: 34px; }
-          .r2-room-title {
-            font-size: 20px;
-            padding-left: 9px;
-            border-left: 4px solid #2563eb;
-            line-height: 1.2;
-          }
-        }
-      `}</style>
-
       {err && (
-        <div style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 14px', fontSize: 12.5, margin: '10px 0' }}>{err}</div>
+        <div className="hd-error">
+          <TriangleAlert size={15} style={{ flex: 'none', marginTop: 1 }} />
+          <span>{err}</span>
+        </div>
       )}
 
-      {rooms.map((room) => {
-        const profiles = roomProfiles(room.alMembers);
-        const sc = room.heating ? (heatStatus[room.heating.zone] || null) : null;
-        const slots = room.heating ? heatingDaySlots(room.heating.key, weekend) : [];
-        const thermo = room.heating && room.heating.thermostatId ? deviceById.get(room.heating.thermostatId) : null;
-        const thermoCaps = thermo ? thermo.capabilities || {} : {};
+      <div className={styles.rooms}>
+        {rooms.map((room) => {
+          const profiles = roomProfiles(room.alMembers);
+          const sc = room.heating ? (heatStatus[room.heating.zone] || null) : null;
+          const slots = room.heating ? heatingDaySlots(room.heating.key, weekend) : [];
+          const thermo = room.heating && room.heating.thermostatId ? deviceById.get(room.heating.thermostatId) : null;
+          const thermoCaps = thermo ? thermo.capabilities || {} : {};
 
-        // Today's measured series for this room; thermostat's own sensor first.
-        const series = room.sensors
-          .map((s) => ({
-            key: s.key, name: s.name,
-            primary: room.heating && s.deviceId === room.heating.thermostatId,
-            points: smoothPoints((seriesByKey.get(s.key) || [])
-              .map((e) => ({ ms: new Date(e.t).getTime(), v: e.v }))
-              .filter((e) => e.ms >= midnight)
-              .map((e) => ({ m: (e.ms - midnight) / 60000, v: e.v }))),
-          }))
-          .sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0));
+          // Today's measured series for this room; thermostat's own sensor first.
+          const series = room.sensors
+            .map((s) => ({
+              key: s.key, name: s.name,
+              primary: room.heating && s.deviceId === room.heating.thermostatId,
+              points: smoothPoints((seriesByKey.get(s.key) || [])
+                .map((e) => ({ ms: new Date(e.t).getTime(), v: e.v }))
+                .filter((e) => e.ms >= midnight)
+                .map((e) => ({ m: (e.ms - midnight) / 60000, v: e.v }))),
+            }))
+            .sort((a, b) => (b.primary ? 1 : 0) - (a.primary ? 1 : 0));
 
-        const primary = series[0];
-        const lastPoint = primary && primary.points.length ? primary.points[primary.points.length - 1] : null;
-        const startTemp = lastPoint ? lastPoint.v
-          : thermoCaps.measure_temperature != null ? thermoCaps.measure_temperature : null;
-        const model = modelByZone.get(room.path) || ROOM_MODEL_DEFAULTS;
-        const windowOpen = sc ? !!sc.windowOpen : !!thermoCaps.alarm_open_window_detected;
-        // An open window pauses the heating, so the room behaves passively — and the
-        // open state is assumed to persist (it may stay open for days).
-        const heatingActive = !!room.heating && heatingEnabled !== false && !windowOpen;
-        let prediction = [];
-        if (startTemp != null && (room.sensors.length || room.heating)) {
-          const startMin = lastPoint ? lastPoint.m : nowMin;
-          prediction = predictRoom({
-            startMin,
-            startTemp,
-            params: model,
-            targetAt: heatingActive ? makeTargetAt({
+          const primary = series[0];
+          const lastPoint = primary && primary.points.length ? primary.points[primary.points.length - 1] : null;
+          const startTemp = lastPoint ? lastPoint.v
+            : thermoCaps.measure_temperature != null ? thermoCaps.measure_temperature : null;
+          const model = modelByZone.get(room.path) || ROOM_MODEL_DEFAULTS;
+          const windowOpen = sc ? !!sc.windowOpen : !!thermoCaps.alarm_open_window_detected;
+          // An open window pauses the heating, so the room behaves passively — and the
+          // open state is assumed to persist (it may stay open for days).
+          const heatingActive = !!room.heating && heatingEnabled !== false && !windowOpen;
+          let prediction = [];
+          if (startTemp != null && (room.sensors.length || room.heating)) {
+            const startMin = lastPoint ? lastPoint.m : nowMin;
+            prediction = predictRoom({
               startMin,
-              slots,
-              status: sc,
-              deviceTarget: thermoCaps.target_temperature != null ? thermoCaps.target_temperature : null,
-              weekend,
-              roomKey: room.heating.key,
-            }) : null,
-            outdoorAt: makeOutdoorAt(outForecast, outsideLatest),
-            stepMin: PRED_STEP_MIN,
-          });
-        }
+              startTemp,
+              params: model,
+              targetAt: heatingActive ? makeTargetAt({
+                startMin,
+                slots,
+                status: sc,
+                deviceTarget: thermoCaps.target_temperature != null ? thermoCaps.target_temperature : null,
+                weekend,
+                roomKey: room.heating.key,
+              }) : null,
+              outdoorAt: makeOutdoorAt(outForecast, outsideLatest),
+              stepMin: PRED_STEP_MIN,
+            });
+          }
 
-        const slot = room.heating ? heatingSlot(room.heating.key, weekend, nowMin) : null;
-        const mode = sc && sc.mode && sc.mode !== 'auto' ? sc.mode : null;
-        const power = thermoCaps.tado_heating_power;
-        const sensorLatest = room.sensors.find((s) => typeof s.latest === 'number');
-        const curTemp = thermoCaps.measure_temperature != null ? thermoCaps.measure_temperature
-          : lastPoint ? lastPoint.v
-            : sensorLatest ? sensorLatest.latest : null;
-        const target = thermoCaps.target_temperature != null ? thermoCaps.target_temperature
-          : sc && sc.effectiveTarget != null ? sc.effectiveTarget
-            : slot ? slot.target : null;
+          const slot = room.heating ? heatingSlot(room.heating.key, weekend, nowMin) : null;
+          const mode = sc && sc.mode && sc.mode !== 'auto' ? sc.mode : null;
+          const power = thermoCaps.tado_heating_power;
+          const sensorLatest = room.sensors.find((s) => typeof s.latest === 'number');
+          const curTemp = thermoCaps.measure_temperature != null ? thermoCaps.measure_temperature
+            : lastPoint ? lastPoint.v
+              : sensorLatest ? sensorLatest.latest : null;
+          const target = thermoCaps.target_temperature != null ? thermoCaps.target_temperature
+            : sc && sc.effectiveTarget != null ? sc.effectiveTarget
+              : slot ? slot.target : null;
 
-        const hasLights = room.lights.length > 0;
-        // Show the climate panel for any room with history sensors OR heating config —
-        // the schedule/forecast/controls must not depend on Insights being reachable.
-        const hasClimate = room.sensors.length > 0 || !!room.heating;
-        const uid = room.path.replace(/[^a-z0-9]/gi, '');
+          const hasLights = room.lights.length > 0;
+          // Show the climate panel for any room with history sensors OR heating config —
+          // the schedule/forecast/controls must not depend on Insights being reachable.
+          const hasClimate = room.sensors.length > 0 || !!room.heating;
+          const uid = room.path.replace(/[^a-z0-9]/gi, '');
 
-        return (
-          <div key={room.path} className="r2-room">
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, margin: '0 0 8px', flexWrap: 'wrap' }}>
-              <h3 className="r2-room-title">{room.name}</h3>
-              {mode && HEAT_MODE[mode] && (
-                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: HEAT_MODE[mode].bg, color: HEAT_MODE[mode].color, fontWeight: 600 }}>
-                  {HEAT_MODE[mode].label}
-                </span>
-              )}
-            </div>
+          const lightsOn = room.lights.filter((d) => d.capabilities && d.capabilities.onoff).length;
+          const motionNow = room.devices.some((d) => !!(d.capabilities || {}).alarm_motion);
+          const heatMode = mode && HEAT_MODE[mode] ? HEAT_MODE[mode] : null;
+          const HeatModeIcon = heatMode ? heatMode.icon : null;
+          const busyAll = applying === room.path;
 
-            <div className="r2-row">
-              <StatusPanel
-                room={room}
-                zone={zones && room.devices[0] ? zones[room.devices[0].zoneId] : null}
-                onControl={onControl}
-                heatingWindowOpen={!!(room.heating && windowOpen)}
-              />
+          // explain empty states instead of drawing nothing silently
+          const notes = [];
+          if (hasClimate) {
+            if (!room.sensors.length) {
+              notes.push('no Insights temperature log matched this room — measured line unavailable');
+            } else if (!series.some((s) => s.points.length)) {
+              notes.push('temperature history matched but has no samples for today yet');
+            }
+            if ((room.heating || room.sensors.length) && !prediction.length) {
+              notes.push('no current temperature reading — forecast unavailable');
+            }
+          }
 
-              {(hasClimate || hasLights) && (
-                <div style={{ background: '#fff', border: '1px solid #e3e6ea', borderRadius: 12, padding: '12px 14px', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4, flexWrap: 'wrap' }}>
-                    {/* One identical title on every room card; the legend tells the rest. */}
-                    <div style={{ fontSize: 11, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.05em' }}>
-                      📈 Today
-                    </div>
-                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, fontSize: 10.5, color: '#6b7280', flexWrap: 'wrap' }}>
-                      {hasClimate && <span><i style={{ display: 'inline-block', width: 14, borderTop: '2.5px solid #2563eb', verticalAlign: 'middle', marginRight: 4 }} />measured</span>}
-                      {room.heating && <span><i style={{ display: 'inline-block', width: 14, borderTop: `2px solid ${TARGET_COLOR}`, verticalAlign: 'middle', marginRight: 4 }} />scheduled target</span>}
-                      {prediction.length > 1 && <span><i style={{ display: 'inline-block', width: 14, borderTop: '2px dashed #2563eb', verticalAlign: 'middle', marginRight: 4 }} />forecast</span>}
-                      {profiles && <span><i style={{ display: 'inline-block', width: 14, borderTop: '2px solid #f59e0b', opacity: 0.6, verticalAlign: 'middle', marginRight: 4 }} />💡 light level</span>}
-                    </div>
-                  </div>
-
-                  <ClimateChart
-                    series={hasClimate ? series : []} slots={hasClimate ? slots : []}
-                    prediction={hasClimate ? prediction : []} nowMin={nowMin}
-                    lighting={profiles ? { profiles, sun } : null} uid={uid}
-                  />
-
-                  {series.length > 1 && (
-                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 10.5, color: '#6b7280', marginTop: 4 }}>
-                      {series.map((s, i) => (
-                        <span key={s.key}><i style={{ display: 'inline-block', width: 12, borderTop: `2px solid ${SERIES_COLORS[i % SERIES_COLORS.length]}`, verticalAlign: 'middle', marginRight: 4, opacity: i === 0 ? 1 : 0.55 }} />{s.name}</span>
-                      ))}
-                    </div>
+          return (
+            <section key={room.path} className={`hd-card hd-fade-in ${styles.room}`}>
+              <header className={styles.roomHead}>
+                <div className={styles.roomTitle}>
+                  <h3 className={styles.roomName}>{room.name}</h3>
+                  {motionNow && <span className={`hd-live-dot ${styles.liveDot}`} title="Motion right now" />}
+                  {room.path !== room.name && <span className={styles.roomPath}>{room.path}</span>}
+                </div>
+                <div className={styles.headTags}>
+                  {heatMode && (
+                    <span className={`hd-tag ${heatMode.tag}`}>
+                      <HeatModeIcon size={12} strokeWidth={2.2} />{heatMode.label}
+                    </span>
                   )}
-
-                  {prediction.length > 1 && (
-                    <div style={{ fontSize: 10.5, color: '#9ca3af', marginTop: 4 }}
-                      title="Forecast model: the room drifts toward the outdoor temperature plus its internal gains; the radiator lifts it toward the thermostat target but never above it. Parameters fit from the last 7 days of Insights (room, outdoor, heating output).">
-                      🧠 {model.learned
-                        ? `fit from ${model.samples} h this week: heat loss τ≈${(1 / (model.k * 60)).toFixed(1)} h · gains ${model.c >= 0 ? '+' : ''}${(model.c * 60).toFixed(2)} °C/h`
-                        : 'model defaults (not enough history yet)'}
-                      {room.heating && ` · radiator ≈${(model.g * 60).toFixed(1)} °C/h${model.gLearned ? '' : ' (default)'}`}
-                      {' · outdoor: '}
-                      {outForecast.length ? 'Open-Meteo forecast (home location)' : outsideLatest != null ? `current reading ${outsideLatest.toFixed(1)}°` : 'unknown'}
-                      {room.heating && !heatingActive && (heatingEnabled === false ? ' · heating off' : ' · window open — heating paused')}
-                    </div>
+                  {room.heating && windowOpen && (
+                    <span className="hd-tag hd-tag-warn" title="Window open — heating paused">
+                      <AppWindow size={12} strokeWidth={2.2} />Window open
+                    </span>
                   )}
-
-                  {/* explain empty states instead of drawing nothing silently */}
-                  {hasClimate && (() => {
-                    const notes = [];
-                    if (!room.sensors.length) {
-                      notes.push('no Insights temperature log matched this room — measured line unavailable');
-                    } else if (!series.some((s) => s.points.length)) {
-                      notes.push('temperature history matched but has no samples for today yet');
-                    }
-                    if ((room.heating || room.sensors.length) && !prediction.length) {
-                      notes.push('no current temperature reading — forecast unavailable');
-                    }
-                    return notes.length ? (
-                      <div style={{ fontSize: 10.5, color: '#b45309', marginTop: 4 }}>
-                        ⚠ {notes.join(' · ')}
-                      </div>
-                    ) : null;
-                  })()}
-
-                  {/* Temperature footers render last (flex order) — at the very bottom. */}
-                  {hasClimate && !room.heating && curTemp != null && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 'auto', order: 3, paddingTop: 10, borderTop: '1px solid #eef0f2', flexWrap: 'wrap', minHeight: 28, boxSizing: 'content-box' }}>
-                      <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>{curTemp.toFixed(1)}°</div>
-                      {sensorLatest && <span style={{ fontSize: 11.5, color: '#9ca3af' }}>🌡️ {sensorLatest.name}</span>}
-                    </div>
+                  {curTemp != null && (
+                    <span className="hd-tag hd-num" title="Current temperature">
+                      <Thermometer size={12} strokeWidth={2.2} />{curTemp.toFixed(1)}°
+                    </span>
                   )}
-
-                  {room.heating && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 'auto', order: 3, paddingTop: 10, borderTop: '1px solid #eef0f2', flexWrap: 'wrap', minHeight: 28, boxSizing: 'content-box' }}>
-                      <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
-                        {curTemp != null ? `${curTemp.toFixed(1)}°` : '—'}
-                      </div>
-                      {room.heating.thermostatId && target != null ? (
-                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#6b7280' }}>
-                          target
-                          <button onClick={() => adjustTarget(room, -0.5)} disabled={heatingEnabled === false}
-                            style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid #e3e6ea', background: '#fff', cursor: 'pointer', lineHeight: 1 }}>−</button>
-                          <b style={{ minWidth: 36, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{target}°</b>
-                          <button onClick={() => adjustTarget(room, 0.5)} disabled={heatingEnabled === false}
-                            style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid #e3e6ea', background: '#fff', cursor: 'pointer', lineHeight: 1 }}>＋</button>
-                        </div>
-                      ) : target != null && (
-                        <span style={{ fontSize: 12.5, color: '#6b7280' }}>target <b>{target}°</b></span>
-                      )}
-                      {power != null && (
-                        <span style={{ fontSize: 11.5, color: '#6b7280' }}>🔥 {Math.round(power)}%</span>
-                      )}
-                      {slot && (
-                        <span style={{ fontSize: 11.5, color: '#9ca3af' }}>📅 {slot.name} · {slot.target}°</span>
-                      )}
-                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        {HEATING_ACTIONS.map((a) => {
-                          const bk = `${room.heating.key}:${a.key}`;
-                          const disabled = busy.has(bk) || heatingEnabled === false;
-                          return (
-                            <button key={a.key} onClick={() => runHeatAction(room, a)} disabled={disabled}
-                              style={heatBtn(a.key, disabled)}
-                              title={heatingEnabled === false ? 'Heating system is off' : `Run the ${a.key} flow for ${room.heating.label}`}>
-                              {busy.has(bk) ? '…' : a.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Lights: chips + tiles + footer, under the temperature footer. */}
                   {hasLights && (
-                    <>
-                      <div style={{ order: 1, marginTop: 10, paddingTop: 10, borderTop: hasClimate ? '1px solid #eef0f2' : 'none' }}>
+                    <span className={`hd-tag hd-num${lightsOn ? ' hd-tag-warn' : ''}`} title="Lights on">
+                      <Lightbulb size={12} strokeWidth={2.2} />{lightsOn}/{room.lights.length}
+                    </span>
+                  )}
+                </div>
+              </header>
+
+              <div className={styles.grid}>
+                <StatusPanel
+                  room={room}
+                  zone={zones && room.devices[0] ? zones[room.devices[0].zoneId] : null}
+                  onControl={onControl}
+                  heatingWindowOpen={!!(room.heating && windowOpen)}
+                />
+
+                {(hasClimate || hasLights) && (
+                  <div className={styles.col}>
+                    {/* Today: temperature + schedule + forecast + light level on one chart. */}
+                    <div className={`hd-inset ${styles.panel} ${styles.stack}`}>
+                      <div className={styles.panelHead}>
+                        {/* One identical title on every room card; the legend tells the rest. */}
+                        <Eyebrow icon={ChartSpline}>Today</Eyebrow>
+                        <div className={styles.legend}>
+                          {hasClimate && <LegendItem color={SERIES_COLORS[0]} width={2.5}>measured</LegendItem>}
+                          {room.heating && <LegendItem color={TARGET_COLOR}>scheduled target</LegendItem>}
+                          {prediction.length > 1 && <LegendItem color={FORECAST_COLOR} dashed>forecast</LegendItem>}
+                          {profiles && <LegendItem color={LIGHT_LEVEL_COLOR} opacity={0.7}>light level</LegendItem>}
+                        </div>
+                      </div>
+
+                      <ClimateChart
+                        series={hasClimate ? series : []} slots={hasClimate ? slots : []}
+                        prediction={hasClimate ? prediction : []} nowMin={nowMin}
+                        lighting={profiles ? { profiles, sun } : null} uid={uid}
+                      />
+
+                      {series.length > 1 && (
+                        <div className={`${styles.legend} ${styles.legendLeft}`}>
+                          {series.map((s, i) => (
+                            <LegendItem key={s.key} color={SERIES_COLORS[i % SERIES_COLORS.length]} opacity={i === 0 ? 1 : 0.6}>
+                              {s.name}
+                            </LegendItem>
+                          ))}
+                        </div>
+                      )}
+
+                      {prediction.length > 1 && (
+                        <div className={styles.note}
+                          title="Forecast model: the room drifts toward the outdoor temperature plus its internal gains; the radiator lifts it toward the thermostat target but never above it. Parameters fit from the last 7 days of Insights (room, outdoor, heating output).">
+                          <Brain size={13} className={styles.noteIcon} />
+                          <span>
+                            {model.learned
+                              ? `fit from ${model.samples} h this week: heat loss τ≈${(1 / (model.k * 60)).toFixed(1)} h · gains ${model.c >= 0 ? '+' : ''}${(model.c * 60).toFixed(2)} °C/h`
+                              : 'model defaults (not enough history yet)'}
+                            {room.heating && ` · radiator ≈${(model.g * 60).toFixed(1)} °C/h${model.gLearned ? '' : ' (default)'}`}
+                            {' · outdoor: '}
+                            {outForecast.length ? 'Open-Meteo forecast (home location)' : outsideLatest != null ? `current reading ${outsideLatest.toFixed(1)}°` : 'unknown'}
+                            {room.heating && !heatingActive && (heatingEnabled === false ? ' · heating off' : ' · window open — heating paused')}
+                          </span>
+                        </div>
+                      )}
+
+                      {notes.length > 0 && (
+                        <div className={`${styles.note} ${styles.noteWarn}`}>
+                          <TriangleAlert size={13} className={styles.noteIcon} />
+                          <span>{notes.join(' · ')}</span>
+                        </div>
+                      )}
+
+                      {/* Temperature footer — sensor-only rooms */}
+                      {hasClimate && !room.heating && curTemp != null && (
+                        <div className={styles.footer}>
+                          <span className={`hd-big-num ${styles.bigTemp}`}>{curTemp.toFixed(1)}°</span>
+                          {sensorLatest && (
+                            <span className="hd-tag"><Thermometer size={12} strokeWidth={2.2} />{sensorLatest.name}</span>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Temperature footer — heating rooms, with inline controls */}
+                      {room.heating && (
+                        <div className={styles.footer}>
+                          <span className={`hd-big-num ${styles.bigTemp}`} title="Current temperature">
+                            {curTemp != null ? `${curTemp.toFixed(1)}°` : '—'}
+                          </span>
+                          {room.heating.thermostatId && target != null ? (
+                            <div className={styles.stepper}>
+                              <span className={styles.stepLabel}>Target</span>
+                              <button type="button" className="hd-step" onClick={() => adjustTarget(room, -0.5)}
+                                disabled={heatingEnabled === false} aria-label="Lower target 0.5°" title="Lower target 0.5°">
+                                <Minus size={14} strokeWidth={2.4} />
+                              </button>
+                              <b className={styles.stepValue}>{target}°</b>
+                              <button type="button" className="hd-step" onClick={() => adjustTarget(room, 0.5)}
+                                disabled={heatingEnabled === false} aria-label="Raise target 0.5°" title="Raise target 0.5°">
+                                <Plus size={14} strokeWidth={2.4} />
+                              </button>
+                            </div>
+                          ) : target != null && (
+                            <span className={`${styles.stepper} ${styles.stepperStatic}`}>
+                              <span className={styles.stepLabel}>Target</span>
+                              <b className={styles.stepValue}>{target}°</b>
+                            </span>
+                          )}
+                          {power != null && (
+                            <span className="hd-tag hd-tag-heat hd-num" title="Heating power">
+                              <Flame size={12} strokeWidth={2.2} />{Math.round(power)}%
+                            </span>
+                          )}
+                          {slot && (
+                            <span className="hd-tag" title="Current schedule slot">
+                              <CalendarClock size={12} strokeWidth={2.2} />{slot.name} · {slot.target}°
+                            </span>
+                          )}
+                          <div className={styles.actions}>
+                            {HEATING_ACTIONS.map((a) => {
+                              const bk = `${room.heating.key}:${a.key}`;
+                              const disabled = busy.has(bk) || heatingEnabled === false;
+                              const ui = HEAT_ACTION_UI[a.key] || { icon: null, className: '' };
+                              const ActionIcon = busy.has(bk) ? LoaderCircle : ui.icon;
+                              return (
+                                <button key={a.key} type="button" onClick={() => runHeatAction(room, a)} disabled={disabled}
+                                  className={`hd-btn ${ui.className} ${styles.actionBtn}`}
+                                  title={heatingEnabled === false ? 'Heating system is off' : `Run the ${a.key} flow for ${room.heating.label}`}>
+                                  {ActionIcon && <ActionIcon size={14} strokeWidth={2.2} className={busy.has(bk) ? styles.spin : undefined} />}
+                                  {actionText(a.label)}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Lights: count + all on/off, phase chips, live tiles. */}
+                    {hasLights && (
+                      <div className={`hd-inset ${styles.panel} ${styles.stack}`}>
+                        <div className={styles.panelHead}>
+                          <Eyebrow icon={Lightbulb}>Lights</Eyebrow>
+                          <span className={styles.lightCount}>
+                            <b className="hd-big-num">{lightsOn}</b>
+                            <span className="hd-muted">/ {room.lights.length} on</span>
+                          </span>
+                          <div className={styles.actions}>
+                            {[['All on', true], ['All off', false]].map(([label, on]) => (
+                              <button
+                                key={label} type="button" onClick={() => setAllLights(room, on)} disabled={busyAll}
+                                title={`Turn all lights in ${room.name} ${on ? 'on' : 'off'}`}
+                                className={`hd-btn ${on ? styles.allOn : ''} ${styles.actionBtn}`}
+                              >
+                                {busyAll
+                                  ? <LoaderCircle size={14} strokeWidth={2.2} className={styles.spin} />
+                                  : on ? <Lightbulb size={14} strokeWidth={2.2} /> : <Power size={14} strokeWidth={2.2} />}
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
                         {profiles && (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+                          <div className={styles.phases}>
                             {phaseList(profiles, sun).map((p) => {
                               const active = isActive(p, nowMin);
                               return (
                                 <button
                                   key={p.name}
+                                  type="button"
                                   onClick={() => applyPhase(room, p.name)}
                                   disabled={applying === room.path}
+                                  aria-pressed={active}
                                   title={`Set these lights to ${p.name} now (${Math.round(p.brightness * 100)}%)`}
-                                  style={{
-                                    display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, padding: '3px 8px',
-                                    borderRadius: 6, border: `1px solid ${active ? '#2563eb' : '#e3e6ea'}`,
-                                    background: active ? '#eff4ff' : '#fff', color: '#374151',
-                                    cursor: applying === room.path ? 'default' : 'pointer', opacity: applying === room.path ? 0.6 : 1,
-                                  }}
+                                  className={`${styles.phase}${active ? ` ${styles.phaseActive}` : ''}`}
                                 >
-                                  <span style={{ width: 8, height: 8, borderRadius: 2, background: tempColor(p.temperature), border: '1px solid rgba(0,0,0,0.15)' }} />
-                                  {p.name} {fmtMinutes(p.start)}
+                                  <span className={styles.swatch} style={{ background: tempColor(p.temperature) }} />
+                                  {p.name}
+                                  <span className={styles.phaseTime}>{fmtMinutes(p.start)}</span>
                                 </button>
                               );
                             })}
                           </div>
                         )}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 6 }}>
+
+                        <div className={styles.tiles}>
                           {room.lights.map((d) => {
                             const al = room.alMembers.find((m) => m.id === d.id);
                             return (
@@ -1151,45 +1338,18 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
                           })}
                         </div>
                       </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </section>
+          );
+        })}
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: hasClimate ? 10 : 'auto', order: 2, paddingTop: 10, borderTop: '1px solid #eef0f2', flexWrap: 'wrap', minHeight: 28, boxSizing: 'content-box' }}>
-                        <div style={{ fontSize: 22, fontWeight: 700, lineHeight: 1 }}>
-                          {room.lights.filter((d) => d.capabilities && d.capabilities.onoff).length}
-                          <span style={{ fontSize: 13, fontWeight: 400, color: '#6b7280' }}> / {room.lights.length} on</span>
-                        </div>
-                        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {[['💡 All on', true, '#16a34a'], ['⏻ All off', false, '#6b7280']].map(([label, on, color]) => {
-                            const busyAll = applying === room.path;
-                            return (
-                              <button
-                                key={label} onClick={() => setAllLights(room, on)} disabled={busyAll}
-                                title={`Turn all lights in ${room.name} ${on ? 'on' : 'off'}`}
-                                style={{
-                                  padding: '4px 11px', borderRadius: 999, border: `1px solid ${color}`,
-                                  background: '#fff', color, fontSize: 11.5, whiteSpace: 'nowrap',
-                                  cursor: busyAll ? 'default' : 'pointer', opacity: busyAll ? 0.45 : 1,
-                                }}
-                              >
-                                {busyAll ? '…' : label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })}
-
-      {rooms.length === 0 && (
-        <div style={{ color: '#9ca3af', fontSize: 13, padding: '30px 0', textAlign: 'center' }}>
-          No rooms with lights or temperature sensors found yet.
-        </div>
-      )}
+        {rooms.length === 0 && (
+          <div className="hd-empty">No rooms with lights or temperature sensors found yet.</div>
+        )}
+      </div>
     </div>
   );
 }

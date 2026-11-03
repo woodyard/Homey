@@ -112,6 +112,7 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 ## Project structure
 
 - `app/page.js` — the dashboard UI (client-side, polls every 20s)
+- `app/globals.css` — design tokens (light/dark theme) and shared classes; `app/*.module.css` hold each view's own styles
 - `app/api/auth/*` — OAuth login/callback/logout/status routes
 - `app/api/homey/*` — proxies that call your Homey via the Athom Cloud API
 - `lib/homey.js` — Athom/Homey API client (token refresh, delegation login)
@@ -119,6 +120,19 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.19.0** (2026-11-03) — A new look; what the dashboard shows and does is unchanged.
+  - **Theme:** a design system in `app/globals.css` with colour tokens, a light and a dark
+    theme, glass cards and the Inter font. The theme follows the system setting, and the header
+    button switches it between system, light and dark.
+  - **Header:** a sticky bar with the clock and date, the Live status, refresh, theme and
+    Disconnect, plus the tabs with icons. On phones the active tab scrolls into view.
+  - **Weather:** the hero card's colours follow the weather and day/night. The next 24 hours
+    have a temperature curve, and the 7-day rows have range bars. A moon replaces the sun in
+    hours after dark.
+  - **Heating:** ring gauges for heating power.
+  - **Other tabs:** a timeline for Live activity, light tiles in Rooms 2.0 that glow in the
+    light's own colour, and min/max cards per sensor in Temperatures.
+  - **Icons:** `lucide-react` icons replace the emoji used as buttons and labels.
 - **1.18.3** (2026-11-03) — Lighting follows AdaptiveLighting 2.32.4: the schedule's sunrise and
   sunset are today's again — they were for a date 13 days later (today 07:46/16:03 instead of
   07:20/16:26), so sun-based phase changes were shown up to ~30 min off, as AL ran them. The

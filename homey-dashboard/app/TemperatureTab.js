@@ -1,6 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  LoaderCircle, MapPin, RefreshCw, Search, Thermometer, ThermometerSnowflake, ThermometerSun,
+  TriangleAlert, CheckCheck, X,
+} from 'lucide-react';
+import styles from './TemperatureTab.module.css';
 
 const PERIODS = [
   ['last6Hours', '6 timer'],
@@ -11,9 +16,10 @@ const PERIODS = [
 ];
 const PERIOD_KEY = 'homey-temperature-period-v1';
 const SELECTED_KEY = 'homey-temperature-sensors-v1';
+// Series palette: vivid but not neon, readable on both the light and the dark card.
 const COLORS = [
-  '#2563eb', '#ea580c', '#16a34a', '#9333ea', '#0891b2', '#db2777',
-  '#4f46e5', '#ca8a04', '#0f766e', '#c2410c', '#7c3aed', '#0369a1',
+  '#5b7cff', '#f97316', '#22c55e', '#a855f7', '#06b6d4', '#ec4899',
+  '#6366f1', '#eab308', '#14b8a6', '#ef4444', '#8b5cf6', '#0ea5e9',
 ];
 const DASHES = ['', '8 4', '3 4'];
 
@@ -34,6 +40,10 @@ function fmtTemp(value) {
   return typeof value === 'number' ? `${value.toLocaleString('da-DK', { maximumFractionDigits: 1 })} °C` : '—';
 }
 
+function fmtNum(value) {
+  return typeof value === 'number' ? value.toLocaleString('da-DK', { maximumFractionDigits: 1 }) : '—';
+}
+
 function closestEntry(entries, targetMs) {
   if (!entries.length) return null;
   let low = 0;
@@ -50,12 +60,60 @@ function closestEntry(entries, targetMs) {
     ? previous : current;
 }
 
+// Colour key for a sensor: a dot, or a short dashed stroke for the sensors whose
+// colour repeats (index ≥ 12) and are told apart in the chart by their dash.
+function SensorSwatch({ color, dash, off }) {
+  const c = off ? 'var(--toggle-off)' : color;
+  if (!dash) return <i className={styles.dot} style={{ background: c }} />;
+  const scaled = dash.split(' ').map((n) => Number(n) / 2).join(' ');
+  return (
+    <svg className={styles.dashSwatch} width="16" height="8" viewBox="0 0 16 8" aria-hidden="true">
+      <line x1="1" x2="15" y1="4" y2="4" style={{ stroke: c }} strokeWidth="2.5" strokeDasharray={scaled} />
+    </svg>
+  );
+}
+
+function Kpi({ label, icon: Icon, tone, value, unit }) {
+  return (
+    <div className={`hd-card ${styles.kpi}`}>
+      <div className={styles.kpiHead}>
+        <span className="hd-eyebrow">{label}</span>
+        <span className={styles.kpiIcon} style={{ background: `var(--${tone}-soft)`, color: `var(--${tone})` }}>
+          <Icon size={15} strokeWidth={2} />
+        </span>
+      </div>
+      <div className={`hd-big-num ${styles.kpiValue}`}>
+        {value}
+        {unit ? <span className={styles.kpiUnit}>{unit}</span> : null}
+      </div>
+    </div>
+  );
+}
+
 function TemperatureChart({ sensors, series, period, loading }) {
   const wrapRef = useRef(null);
   const [hover, setHover] = useState(null);
-  const W = 1100;
-  const H = 480;
-  const margin = { left: 62, right: 24, top: 24, bottom: 54 };
+  // Draw in real pixels (viewBox = rendered width) so labels stay 11px on a phone too.
+  const [width, setWidth] = useState(1100);
+  const gradientId = `temp-area-${useId().replace(/:/g, '')}`;
+
+  useEffect(() => {
+    const node = wrapRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') return undefined;
+    const update = () => {
+      const w = Math.round(node.clientWidth);
+      if (w > 0) setWidth(w);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const W = width;
+  const H = Math.round(Math.max(240, Math.min(420, width * 0.42)));
+  const compact = width < 560;
+  const margin = { left: compact ? 34 : 44, right: compact ? 10 : 18, top: 14, bottom: 32 };
 
   const chart = useMemo(() => {
     const byKey = new Map(series.map((item) => [item.key, [...item.entries].sort((a, b) => new Date(a.t) - new Date(b.t))]));
@@ -73,18 +131,22 @@ function TemperatureChart({ sensors, series, period, loading }) {
     const ySpan = Math.max(1, yMax - yMin);
     const x = (ms) => margin.left + ((ms - xMin) / xSpan) * (W - margin.left - margin.right);
     const y = (value) => H - margin.bottom - ((value - yMin) / ySpan) * (H - margin.top - margin.bottom);
-    const paths = usable.map((item) => ({
-      ...item,
-      d: item.entries.map((entry, index) => `${index ? 'L' : 'M'} ${x(new Date(entry.t).getTime()).toFixed(1)} ${y(entry.v).toFixed(1)}`).join(' '),
-    }));
+    const baseY = (H - margin.bottom).toFixed(1);
+    const paths = usable.map((item) => {
+      const d = item.entries.map((entry, index) => `${index ? 'L' : 'M'} ${x(new Date(entry.t).getTime()).toFixed(1)} ${y(entry.v).toFixed(1)}`).join(' ');
+      const firstX = x(new Date(item.entries[0].t).getTime()).toFixed(1);
+      const lastX = x(new Date(item.entries[item.entries.length - 1].t).getTime()).toFixed(1);
+      return { ...item, d, area: `${d} L ${lastX} ${baseY} L ${firstX} ${baseY} Z` };
+    });
     // Whole-degree ticks at a "nice" step (1/2/5/10°) — dividing the span into equal
     // fifths produced fractional ticks that rounded to an odd-looking 18,20,21,23,24,26.
     const step = ySpan <= 6 ? 1 : ySpan <= 12 ? 2 : ySpan <= 30 ? 5 : 10;
     const yTicks = [];
     for (let v = Math.ceil(yMin / step) * step; v <= yMax; v += step) yTicks.push(v);
-    const xTicks = Array.from({ length: 7 }, (_, i) => xMin + (i * xSpan) / 6);
+    const xCount = Math.max(3, Math.min(7, Math.floor((W - margin.left - margin.right) / 90) + 1));
+    const xTicks = Array.from({ length: xCount }, (_, i) => xMin + (i * xSpan) / (xCount - 1));
     return { usable, paths, rawMin, rawMax, yMin, yMax, xMin, xMax, x, y, yTicks, xTicks, empty: false };
-  }, [sensors, series]);
+  }, [sensors, series, W, H, margin.left, margin.right, margin.top, margin.bottom]);
 
   function xLabel(ms) {
     const date = new Date(ms);
@@ -102,53 +164,109 @@ function TemperatureChart({ sensors, series, period, loading }) {
     setHover({ x: relativeX, ms, values });
   }
 
-  if (chart.empty) {
-    return (
-      <div className="temp-empty-chart">
-        {loading ? 'Henter temperaturmålinger…' : 'Vælg mindst én måler med tilgængelige data.'}
-      </div>
-    );
-  }
+  // Tooltip sits on the side of the crosshair with the most room.
+  const hoverPct = hover ? (hover.x / W) * 100 : 0;
+  const tooltipStyle = hover && hoverPct > 50
+    ? { right: `calc(${100 - hoverPct}% + 12px)` }
+    : { left: `calc(${hoverPct}% + 12px)` };
 
-  const tooltipLeft = hover ? Math.max(10, Math.min(86, (hover.x / W) * 100)) : 0;
   return (
-    <div className="temp-chart-wrap" ref={wrapRef}>
-      <svg
-        viewBox={`0 0 ${W} ${H}`} role="img"
-        aria-label={`Temperaturmålinger for ${sensors.length} valgte målere`}
-        onMouseMove={onMove} onMouseLeave={() => setHover(null)}
-      >
-        {chart.yTicks.map((tick) => (
-          <g key={tick}>
-            <line x1={margin.left} x2={W - margin.right} y1={chart.y(tick)} y2={chart.y(tick)} stroke="#e5e7eb" />
-            <text x={margin.left - 12} y={chart.y(tick) + 4} textAnchor="end" fontSize="12" fill="#6b7280">
-              {tick}°
+    <div className={styles.chartWrap} ref={wrapRef}>
+      {chart.empty && loading && (
+        <div className={`hd-skeleton ${styles.chartSkeleton}`}>
+          <span className={styles.chartSkeletonLabel}>
+            <LoaderCircle size={14} className={styles.spin} />
+            Henter temperaturmålinger…
+          </span>
+        </div>
+      )}
+      {chart.empty && !loading && (
+        <div className={`hd-empty ${styles.chartEmpty}`}>Vælg mindst én måler med tilgængelige data.</div>
+      )}
+      {!chart.empty && (
+        <svg
+          viewBox={`0 0 ${W} ${H}`} role="img"
+          aria-label={`Temperaturmålinger for ${sensors.length} valgte målere`}
+          onMouseMove={onMove} onMouseLeave={() => setHover(null)}
+        >
+          {chart.paths.length === 1 && (
+            <defs>
+              <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor={chart.paths[0].sensor.color} stopOpacity="0.24" />
+                <stop offset="100%" stopColor={chart.paths[0].sensor.color} stopOpacity="0" />
+              </linearGradient>
+            </defs>
+          )}
+          {chart.yTicks.map((tick) => (
+            <g key={tick}>
+              <line
+                x1={margin.left} x2={W - margin.right} y1={chart.y(tick)} y2={chart.y(tick)}
+                style={{ stroke: 'var(--chart-grid)' }}
+              />
+              <text
+                x={margin.left - 10} y={chart.y(tick) + 4} textAnchor="end"
+                className={styles.axisText} style={{ fill: 'var(--chart-axis)' }}
+              >
+                {tick}°
+              </text>
+            </g>
+          ))}
+          {chart.xTicks.map((tick) => (
+            <text
+              key={tick} x={chart.x(tick)} y={H - 10} textAnchor="middle"
+              className={styles.axisText} style={{ fill: 'var(--chart-axis)' }}
+            >
+              {xLabel(tick)}
             </text>
-          </g>
-        ))}
-        {chart.xTicks.map((tick) => (
-          <text key={tick} x={chart.x(tick)} y={H - 18} textAnchor="middle" fontSize="12" fill="#6b7280">
-            {xLabel(tick)}
-          </text>
-        ))}
-        <line x1={margin.left} x2={W - margin.right} y1={H - margin.bottom} y2={H - margin.bottom} stroke="#cbd5e1" />
-        {chart.paths.map((item) => (
-          <path
-            key={item.sensor.key} d={item.d} fill="none" stroke={item.sensor.color}
-            strokeWidth="2.6" strokeDasharray={item.sensor.dash} strokeLinecap="round" strokeLinejoin="round"
+          ))}
+          <line
+            x1={margin.left} x2={W - margin.right} y1={H - margin.bottom} y2={H - margin.bottom}
+            style={{ stroke: 'var(--border-strong)' }}
           />
-        ))}
-        {hover && (
-          <line x1={hover.x} x2={hover.x} y1={margin.top} y2={H - margin.bottom} stroke="#475569" strokeWidth="1" strokeDasharray="4 4" />
-        )}
-      </svg>
-      {hover && (
-        <div className="temp-tooltip" style={{ left: `${tooltipLeft}%` }}>
-          <b>{new Date(hover.ms).toLocaleString('da-DK', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</b>
+          {chart.paths.length === 1 && (
+            <path d={chart.paths[0].area} style={{ fill: `url(#${gradientId})`, stroke: 'none' }} />
+          )}
+          {chart.paths.map((item) => (
+            <path
+              key={item.sensor.key} d={item.d} className={styles.line}
+              style={{ fill: 'none', stroke: item.sensor.color }}
+              strokeWidth="2" strokeDasharray={item.sensor.dash || undefined}
+              strokeLinecap="round" strokeLinejoin="round"
+            />
+          ))}
+          {hover && (
+            <line
+              x1={hover.x} x2={hover.x} y1={margin.top} y2={H - margin.bottom}
+              style={{ stroke: 'var(--border-strong)' }} strokeWidth="1" strokeDasharray="4 4"
+            />
+          )}
+          {hover && hover.values.map(({ sensor, entry }) => (
+            <circle
+              key={sensor.key} r="4"
+              cx={chart.x(new Date(entry.t).getTime())} cy={chart.y(entry.v)}
+              style={{ fill: sensor.color, stroke: 'var(--surface-solid)' }} strokeWidth="2"
+            />
+          ))}
+        </svg>
+      )}
+      {!chart.empty && loading && (
+        <div className={styles.busy}>
+          <span className={styles.chartSkeletonLabel}>
+            <LoaderCircle size={14} className={styles.spin} />
+            Opdaterer…
+          </span>
+        </div>
+      )}
+      {!chart.empty && hover && (
+        <div className={styles.tooltip} style={tooltipStyle}>
+          <span className={styles.tooltipTime}>
+            {new Date(hover.ms).toLocaleString('da-DK', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+          </span>
           {hover.values.map(({ sensor, entry }) => (
-            <span key={sensor.key}>
-              <i style={{ background: sensor.color }} />
-              {sensor.name}: <strong>{fmtTemp(entry.v)}</strong>
+            <span key={sensor.key} className={styles.tooltipRow}>
+              <SensorSwatch color={sensor.color} dash={sensor.dash} />
+              <span className={styles.tooltipName}>{sensor.name}</span>
+              <span className={styles.tooltipValue}>{fmtTemp(entry.v)}</span>
             </span>
           ))}
         </div>
@@ -222,7 +340,7 @@ export default function TemperatureTab() {
 
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   // Stable colour per sensor (index in the FULL list) — used identically by the
-  // checkbox swatches, the chart lines, and the tooltip, regardless of selection.
+  // chips, the chart lines, the tooltip and the stat cards, regardless of selection.
   const coloredSensors = useMemo(
     () => sensors.map((sensor, i) => ({ ...sensor, color: sensorColor(i), dash: sensorDash(i) })),
     [sensors],
@@ -232,98 +350,187 @@ export default function TemperatureTab() {
     if (!term) return coloredSensors;
     return coloredSensors.filter((sensor) => `${sensor.name} ${sensor.zone}`.toLocaleLowerCase('da-DK').includes(term));
   }, [coloredSensors, search]);
+  // The API sorts sensors by zone, so consecutive runs of one zone form a room group.
+  const visibleGroups = useMemo(() => {
+    const groups = [];
+    visibleSensors.forEach((sensor) => {
+      const last = groups[groups.length - 1];
+      if (last && last.zone === sensor.zone) last.sensors.push(sensor);
+      else groups.push({ zone: sensor.zone, sensors: [sensor] });
+    });
+    return groups;
+  }, [visibleSensors]);
   const activeSensors = useMemo(() => coloredSensors.filter((sensor) => selectedSet.has(sensor.key)), [coloredSensors, selectedSet]);
   const allEntries = useMemo(() => series.flatMap((item) => item.entries || []), [series]);
   const min = allEntries.length ? Math.min(...allEntries.map((entry) => entry.v)) : null;
   const max = allEntries.length ? Math.max(...allEntries.map((entry) => entry.v)) : null;
+  // Per-sensor min / max / newest sample over the loaded period, for the stat cards.
+  const statsByKey = useMemo(() => {
+    const map = new Map();
+    series.forEach((item) => {
+      const entries = item.entries || [];
+      if (!entries.length) return;
+      let lo = Infinity;
+      let hi = -Infinity;
+      let last = null;
+      let lastMs = -Infinity;
+      entries.forEach((entry) => {
+        if (entry.v < lo) lo = entry.v;
+        if (entry.v > hi) hi = entry.v;
+        const ms = new Date(entry.t).getTime();
+        if (ms >= lastMs) { lastMs = ms; last = entry.v; }
+      });
+      map.set(item.key, { min: lo, max: hi, last });
+    });
+    return map;
+  }, [series]);
 
   function toggle(key) {
     setSelected((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
   }
 
   return (
-    <section className="temperature-tab">
-      <style>{`
-        .temperature-tab { display:grid; grid-template-columns:minmax(230px,280px) minmax(0,1fr); gap:16px; }
-        .temp-panel { background:#fff; border:1px solid #e3e6ea; border-radius:10px; }
-        .temp-controls { padding:14px; align-self:start; position:sticky; top:12px; }
-        .temp-control-row { display:flex; gap:8px; align-items:center; justify-content:space-between; margin-bottom:12px; }
-        .temp-control-row label { color:#6b7280; font-size:12px; }
-        .temp-control-row select { border:1px solid #d1d5db; border-radius:7px; padding:6px 8px; background:#fff; font-size:12.5px; }
-        .temp-search { width:100%; border:1px solid #d1d5db; border-radius:7px; padding:7px 9px; font-size:12.5px; margin-bottom:9px; }
-        .temp-actions { display:flex; gap:6px; margin-bottom:10px; }
-        .temp-actions button { border:1px solid #dbe3ef; border-radius:999px; background:#fff; color:#2563eb; padding:4px 9px; font-size:11.5px; cursor:pointer; }
-        .temp-list { max-height:520px; overflow:auto; display:flex; flex-direction:column; gap:3px; }
-        .temp-sensor { display:grid; grid-template-columns:18px 12px 1fr auto; gap:7px; align-items:center; padding:6px 5px; border-radius:7px; cursor:pointer; font-size:12px; }
-        .temp-sensor:hover { background:#f8fafc; }
-        .temp-swatch { width:11px; height:3px; border-radius:3px; }
-        .temp-sensor-name { min-width:0; }
-        .temp-sensor-name b, .temp-sensor-name small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .temp-sensor-name small { color:#8a919c; margin-top:1px; }
-        .temp-latest { color:#4b5563; white-space:nowrap; font-variant-numeric:tabular-nums; }
-        .temp-main { min-width:0; }
-        .temp-kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:12px; }
-        .temp-kpi { background:#fff; border:1px solid #e3e6ea; border-radius:10px; padding:12px 14px; }
-        .temp-kpi small { color:#6b7280; display:block; font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
-        .temp-kpi b { font-size:20px; display:block; margin-top:2px; }
-        .temp-chart-panel { padding:14px; position:relative; }
-        .temp-chart-head { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:4px; }
-        .temp-chart-head h2 { margin:0; font-size:15px; }
-        .temp-chart-status { display:flex; align-items:center; gap:8px; font-size:11.5px; color:#6b7280; }
-        .temp-chart-status button { border:1px solid #dbe3ef; border-radius:999px; background:#fff; color:#2563eb; padding:4px 9px; font-size:11.5px; cursor:pointer; }
-        .temp-chart-wrap { position:relative; min-height:390px; }
-        .temp-chart-wrap svg { width:100%; height:auto; display:block; overflow:visible; }
-        .temp-empty-chart { min-height:390px; display:grid; place-items:center; color:#6b7280; font-size:13px; }
-        .temp-tooltip { position:absolute; top:16px; transform:translateX(-50%); max-width:290px; max-height:260px; overflow:auto; background:rgba(255,255,255,.96); border:1px solid #dbe3ef; box-shadow:0 8px 24px rgba(15,23,42,.13); border-radius:9px; padding:9px 11px; pointer-events:none; font-size:11.5px; z-index:2; }
-        .temp-tooltip b { display:block; margin-bottom:5px; }
-        .temp-tooltip span { display:grid; grid-template-columns:8px 1fr auto; gap:5px; align-items:center; white-space:nowrap; }
-        .temp-tooltip i { width:7px; height:7px; border-radius:50%; }
-        .temp-error { grid-column:1/-1; background:#fef2f2; color:#b91c1c; border:1px solid #fecaca; border-radius:8px; padding:8px 12px; font-size:12px; }
-        @media (max-width:800px) { .temperature-tab { grid-template-columns:1fr; } .temp-controls { position:static; } .temp-list { max-height:300px; } .temp-kpis { grid-template-columns:repeat(3,1fr); } }
-      `}</style>
-      {error && <div className="temp-error">{error}</div>}
-      <aside className="temp-panel temp-controls">
-        <div className="temp-control-row">
-          <label htmlFor="temperature-period">Periode</label>
-          <select id="temperature-period" value={period} onChange={(e) => setPeriod(e.target.value)}>
-            {PERIODS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
+    <section className={styles.tab}>
+      <header className={styles.header}>
+        <div className={styles.headingBlock}>
+          <h2 className="hd-section-title" style={{ margin: 0 }}>
+            <span className={styles.headingIcon}><Thermometer size={15} strokeWidth={2} /></span>
+            Temperaturudvikling
+          </h2>
+          <span className={`hd-faint ${styles.status}`}>
+            {loadingData
+              ? (<><LoaderCircle size={12} className={styles.spin} />Opdaterer…</>)
+              : `${allEntries.length.toLocaleString('da-DK')} målepunkter`}
+          </span>
         </div>
-        <input className="temp-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Søg efter måler eller rum…" />
-        <div className="temp-actions">
-          <button type="button" onClick={() => setSelected(sensors.map((sensor) => sensor.key))}>Vælg alle</button>
-          <button type="button" onClick={() => setSelected([])}>Fravælg alle</button>
-        </div>
-        <div className="temp-list" aria-label="Temperaturmålere">
-          {loadingSensors && <span style={{ color: '#6b7280', fontSize: 12 }}>Finder temperaturmålere…</span>}
-          {visibleSensors.map((sensor) => {
-            const checked = selectedSet.has(sensor.key);
-            return (
-              <label className="temp-sensor" key={sensor.key}>
-                <input type="checkbox" checked={checked} onChange={() => toggle(sensor.key)} />
-                <i className="temp-swatch" style={{ background: checked ? sensor.color : '#cbd5e1' }} />
-                <span className="temp-sensor-name"><b>{sensor.name}</b><small>{shortZone(sensor.zone)}</small></span>
-                <span className="temp-latest">{fmtTemp(sensor.latest)}</span>
-              </label>
-            );
-          })}
-        </div>
-      </aside>
-      <div className="temp-main">
-        <div className="temp-kpis">
-          <div className="temp-kpi"><small>Valgte målere</small><b>{selected.length} / {sensors.length}</b></div>
-          <div className="temp-kpi"><small>Laveste</small><b>{fmtTemp(min)}</b></div>
-          <div className="temp-kpi"><small>Højeste</small><b>{fmtTemp(max)}</b></div>
-        </div>
-        <div className="temp-panel temp-chart-panel">
-          <div className="temp-chart-head">
-            <h2>Temperaturudvikling</h2>
-            <div className="temp-chart-status">
-              <span>{loadingData ? 'Opdaterer…' : `${allEntries.length.toLocaleString('da-DK')} målepunkter`}</span>
-              <button type="button" onClick={() => setReloadKey((value) => value + 1)} disabled={loadingData}>↻ Opdater</button>
-            </div>
+        <div className={styles.headerControls}>
+          <div className={`hd-seg ${styles.periods}`} role="group" aria-label="Periode">
+            {PERIODS.map(([value, label]) => (
+              <button
+                key={value} type="button" className={styles.periodBtn}
+                aria-pressed={period === value} onClick={() => setPeriod(value)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          <TemperatureChart sensors={activeSensors} series={series} period={period} loading={loadingData} />
+          <button
+            type="button" className={`hd-btn hd-btn-sm ${styles.reloadBtn}`}
+            onClick={() => setReloadKey((value) => value + 1)} disabled={loadingData}
+            aria-label="Opdater" title="Opdater"
+          >
+            <RefreshCw size={14} strokeWidth={2} className={loadingData ? styles.spin : undefined} />
+            <span className={styles.reloadLabel}>Opdater</span>
+          </button>
+        </div>
+      </header>
+
+      {error && (
+        <div className="hd-error" role="alert" style={{ margin: 0 }}>
+          <TriangleAlert size={16} strokeWidth={2} style={{ flex: 'none', marginTop: 1 }} />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className={styles.layout}>
+        <aside className={`hd-card ${styles.picker}`}>
+          <div className={styles.pickerHead}>
+            <span className="hd-eyebrow">Målere</span>
+            <span className="hd-faint hd-num" style={{ fontSize: 12 }}>{selected.length} / {sensors.length} valgt</span>
+          </div>
+          <div className={styles.searchWrap}>
+            <Search size={15} strokeWidth={2} className={styles.searchIcon} />
+            <input
+              className={`hd-input ${styles.search}`} style={{ paddingLeft: 34 }}
+              value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Søg efter måler eller rum…" aria-label="Søg efter måler eller rum"
+            />
+          </div>
+          <div className={styles.actions}>
+            <button type="button" className="hd-btn hd-btn-ghost hd-btn-sm" onClick={() => setSelected(sensors.map((sensor) => sensor.key))}>
+              <CheckCheck size={14} strokeWidth={2} />Vælg alle
+            </button>
+            <button type="button" className="hd-btn hd-btn-ghost hd-btn-sm" onClick={() => setSelected([])}>
+              <X size={14} strokeWidth={2} />Fravælg alle
+            </button>
+          </div>
+          <div className={styles.list} aria-label="Temperaturmålere">
+            {loadingSensors && (
+              <span className={styles.loadingNote}>
+                <LoaderCircle size={14} className={styles.spin} />
+                Finder temperaturmålere…
+              </span>
+            )}
+            {!loadingSensors && sensors.length > 0 && !visibleSensors.length && (
+              <span className="hd-faint" style={{ fontSize: 12.5 }}>Ingen målere matcher søgningen.</span>
+            )}
+            {visibleGroups.map((group, index) => (
+              <div className={styles.group} key={`${group.zone}-${index}`}>
+                <span className={`hd-eyebrow ${styles.groupLabel}`} title={group.zone || 'Uden rum'}>
+                  <MapPin size={11} strokeWidth={2.2} />
+                  {shortZone(group.zone)}
+                </span>
+                <div className={styles.chips}>
+                  {group.sensors.map((sensor) => {
+                    const checked = selectedSet.has(sensor.key);
+                    return (
+                      <button
+                        key={sensor.key} type="button" aria-pressed={checked}
+                        className={`${styles.chip} ${checked ? styles.chipOn : ''}`}
+                        style={{ '--chip': sensor.color }}
+                        title={`${sensor.name} · ${shortZone(sensor.zone)}`}
+                        onClick={() => toggle(sensor.key)}
+                      >
+                        <SensorSwatch color={sensor.color} dash={sensor.dash} off={!checked} />
+                        <span className={styles.chipName}>{sensor.name}</span>
+                        <span className={styles.chipValue}>{fmtTemp(sensor.latest)}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <div className={styles.main}>
+          <div className={styles.kpis}>
+            <Kpi label="Valgte målere" icon={Thermometer} tone="accent" value={selected.length} unit={`/ ${sensors.length}`} />
+            <Kpi label="Laveste" icon={ThermometerSnowflake} tone="cool" value={fmtNum(min)} unit={min === null ? '' : '°C'} />
+            <Kpi label="Højeste" icon={ThermometerSun} tone="heat" value={fmtNum(max)} unit={max === null ? '' : '°C'} />
+          </div>
+
+          <div className={`hd-card ${styles.chartCard}`}>
+            <TemperatureChart sensors={activeSensors} series={series} period={period} loading={loadingData} />
+          </div>
+
+          {activeSensors.length > 0 && (
+            <div className={styles.stats}>
+              {activeSensors.map((sensor) => {
+                const stat = statsByKey.get(sensor.key);
+                const latest = typeof sensor.latest === 'number' ? sensor.latest : (stat ? stat.last : null);
+                return (
+                  <div
+                    key={sensor.key} className={styles.stat} style={{ '--chip': sensor.color }}
+                    title={`${sensor.name} · ${sensor.zone || 'Uden rum'}`}
+                  >
+                    <span className={`hd-eyebrow ${styles.statName}`}>
+                      <SensorSwatch color={sensor.color} dash={sensor.dash} />
+                      <span className={styles.statNameText}>{sensor.name}</span>
+                    </span>
+                    <span className={`hd-big-num ${styles.statValue}`}>
+                      {fmtNum(latest)}
+                      {typeof latest === 'number' ? <span className={styles.kpiUnit}>°C</span> : null}
+                    </span>
+                    <span className={styles.statRange}>
+                      <span>min <b>{fmtTemp(stat ? stat.min : null)}</b></span>
+                      <span>maks <b>{fmtTemp(stat ? stat.max : null)}</b></span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </section>

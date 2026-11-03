@@ -1,6 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  Activity, AppWindow, ArrowUp, Bell, Blinds, Bot, Calendar, Check, ChevronDown, CircleCheck, CircleDot,
+  Clock, CloudSun, Coffee, DoorOpen, Droplets, Fan, Flame, Footprints, Hand, House, LayoutGrid, Lightbulb,
+  LoaderCircle, LocateFixed, LogOut, MapPin, Monitor, Moon, Pause, Pin, Plug, Power, Radar, Refrigerator,
+  RefreshCw, RotateCcw, Search, Settings2, Snowflake, Sparkles, Speaker, Sun, SunMedium, Sunrise, Sunset,
+  Target, Thermometer, TriangleAlert, Tv, Umbrella, WashingMachine, Wind,
+} from 'lucide-react';
 import {
   AL_ROOMS, getSunTimes, phaseList, isActive, activePhase, tempColor, fmtMinutes,
   copenhagenMinutesNow, isWeekendNow, isWeekendScheduleNow, resolveLightMode, describeLightStatus, isIdle,
@@ -8,12 +15,14 @@ import {
 import TemperatureTab from './TemperatureTab';
 import RoomsV2Tab from './RoomsV2Tab';
 import { HEATING_ROOMS, HEATING_ACTIONS, heatingSlot, guessHeatFlow } from '../lib/heating';
+import styles from './page.module.css';
 
+// Device class → lucide icon (device rows in the Rooms tab).
 const TYPE_ICON = {
-  light: '💡', thermostat: '🌡️', sensor: '📡', socket: '🔌', tv: '📺',
-  mediaplayer: '🔊', coffeemachine: '☕', fridge: '🧊', freezer: '❄️',
-  washer: '🧺', vacuumcleaner: '🤖', heater: '🔥', curtain: '🪟',
-  fan: '🌀', button: '🔘', other: '🏠',
+  light: Lightbulb, thermostat: Thermometer, sensor: Radar, socket: Plug, tv: Tv,
+  mediaplayer: Speaker, coffeemachine: Coffee, fridge: Refrigerator, freezer: Snowflake,
+  washer: WashingMachine, vacuumcleaner: Bot, heater: Flame, curtain: Blinds,
+  fan: Fan, button: CircleDot, other: House,
 };
 
 const LOUD_CAPS = new Set([
@@ -26,7 +35,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '1.18.3';
+const APP_VERSION = '1.19.0';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).
@@ -35,6 +44,30 @@ const LIVE_REFRESH_SECONDS = 120;
 // Live server-push updates (SSE) are only enabled on the local/NAS build, which sets
 // NEXT_PUBLIC_LIVE=1. On Vercel (serverless) it stays off and the app polls as before.
 const LIVE_ENABLED = process.env.NEXT_PUBLIC_LIVE === '1';
+
+const TZ = 'Europe/Copenhagen';
+
+const TABS = [
+  ['weather', 'Weather', CloudSun],
+  ['rooms', 'Rooms', LayoutGrid],
+  ['rooms2', 'Rooms 2.0', Sparkles],
+  ['activity', 'Live activity', Activity],
+  ['temperatures', 'Temperatures', Thermometer],
+  ['heating', 'Heating', Flame],
+  ['lighting', 'Adaptive lighting', Lightbulb],
+];
+
+// Header theme toggle: system → light → dark (stored as 'hd-theme', applied as data-theme).
+const THEME_META = {
+  system: { Icon: Monitor, label: 'System', next: 'light' },
+  light: { Icon: Sun, label: 'Light', next: 'dark' },
+  dark: { Icon: Moon, label: 'Dark', next: 'system' },
+};
+
+// Spinning icon (keyframes live in globals.css).
+const SPIN = { animation: 'hd-spin 0.8s linear infinite' };
+
+const cx = (...a) => a.filter(Boolean).join(' ');
 
 function mergeDevices(prev, changed) {
   const byId = new Map(prev.map((d) => [d.id, d]));
@@ -68,11 +101,11 @@ function deviceStateLine(state) {
   if (s.dim != null) parts.push(Math.round(s.dim * 100) + '%');
   if (s.measure_temperature != null) parts.push(s.measure_temperature + '°C');
   if (s.measure_humidity != null) parts.push(s.measure_humidity + '% RH');
-  if (s.target_temperature != null) parts.push('🎯' + s.target_temperature + '°C');
+  if (s.target_temperature != null) parts.push('target ' + s.target_temperature + '°C');
   if (s.thermostat_mode) parts.push('mode:' + s.thermostat_mode);
-  if ('alarm_motion' in s) parts.push(s.alarm_motion ? '🏃 motion' : 'no motion');
-  if ('alarm_contact' in s) parts.push(s.alarm_contact ? '🚪 open' : '🚪 closed');
-  if (s.alarm_water) parts.push('💧 leak!');
+  if ('alarm_motion' in s) parts.push(s.alarm_motion ? 'motion' : 'no motion');
+  if ('alarm_contact' in s) parts.push(s.alarm_contact ? 'open' : 'closed');
+  if (s.alarm_water) parts.push('leak!');
   if (s.display_status) parts.push(s.display_status);
   if (s.operational_state != null) parts.push('state:' + s.operational_state);
   return parts.length ? parts.join(' · ') : '—';
@@ -108,8 +141,11 @@ export default function Page() {
   const [refreshing, setRefreshing] = useState(false);
   const [live, setLive] = useState(false);
   const [alStatus, setAlStatus] = useState(null); // AdaptiveLightingStatus (script-published)
+  const [clock, setClock] = useState(null); // header date/time — set after mount (no hydration mismatch)
+  const [themePref, setThemePref] = useState('system'); // system | light | dark
   const snapshotRef = useRef({});
   const sseSeeded = useRef(false);
+  const navRef = useRef(null);
   const openRooms = useRef(new Set());
   const nextRefreshAt = useRef(0);
   const refreshingRef = useRef(false);
@@ -123,6 +159,29 @@ export default function Page() {
     const t = params.get('tab');
     if (t && ['weather', 'rooms', 'rooms2', 'activity', 'temperatures', 'heating', 'lighting'].includes(t)) setTab(t);
   }, []);
+
+  // Header clock (ticks every 30 s) + the theme picked earlier with the header toggle.
+  useEffect(() => {
+    setClock(new Date());
+    const iv = setInterval(() => setClock(new Date()), 30000);
+    try {
+      const t = localStorage.getItem('hd-theme');
+      if (t === 'light' || t === 'dark') setThemePref(t);
+    } catch { /* storage blocked: follow the system */ }
+    return () => clearInterval(iv);
+  }, []);
+
+  function cycleTheme() {
+    const next = THEME_META[themePref].next;
+    setThemePref(next);
+    const root = document.documentElement;
+    if (next === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', next);
+    try {
+      if (next === 'system') localStorage.removeItem('hd-theme');
+      else localStorage.setItem('hd-theme', next);
+    } catch { /* storage blocked: the attribute still applies for this visit */ }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -356,152 +415,259 @@ export default function Page() {
     })
     .sort((a, b) => cmpZonePath(roomGroups[a].path, roomGroups[b].path));
 
-  const errBox = error ? (
-    <div style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 14px', fontSize: 12.5, margin: '14px 0' }}>
-      {error}
-    </div>
-  ) : null;
+  const errBox = error ? <ErrorBox>{error}</ErrorBox> : null;
+
+  // Keep the active tab in view in the sideways-scrolling tab row (phones).
+  useEffect(() => {
+    const nav = navRef.current;
+    const el = nav && nav.querySelector('[aria-current="page"]');
+    if (!nav || !el || nav.scrollWidth <= nav.clientWidth) return;
+    nav.scrollTo({ left: el.offsetLeft - (nav.clientWidth - el.offsetWidth) / 2, behavior: 'smooth' });
+  }, [tab]);
 
   const homeyTab = tab !== 'weather';
+  const signedIn = authState === 'signedIn';
+  const theme = THEME_META[themePref] || THEME_META.system;
+  const ThemeIcon = theme.Icon;
+  const dateLabel = clock ? clock.toLocaleDateString('en-GB', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' }) : '';
+  const dateShort = clock ? clock.toLocaleDateString('en-GB', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' }) : '';
+  const timeLabel = clock ? clock.toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }) : '';
 
   return (
     <Shell>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <h1 style={{ fontSize: 20, margin: 0 }}>
-          Skovgaard Dashboard <span style={{ fontSize: 11, color: '#cbd5e1', fontWeight: 400 }}>v{APP_VERSION}</span>
-        </h1>
-        {authState === 'signedIn' && (
-          <a href="/api/auth/logout" style={{ fontSize: 12.5, color: '#6b7280' }}>
-            Disconnect{homeyName ? ` (${homeyName})` : ''}
-          </a>
-        )}
-      </div>
-
-      <div style={{ ...TAB_BAR, flexWrap: 'wrap' }}>
-        {[['weather', 'Weather'], ['rooms', 'Rooms'], ['rooms2', 'Rooms 2.0'], ['activity', 'Live activity'], ['temperatures', 'Temperatures'], ['heating', 'Heating'], ['lighting', 'Adaptive lighting']].map(([t, label]) => (
-          <div key={t} onClick={() => setTab(t)} style={tabItem(tab === t)}>{label}</div>
-        ))}
-      </div>
-
-      {tab === 'weather' && <WeatherTab />}
-
-      {homeyTab && authState === 'checking' && (
-        <p style={{ color: '#6b7280' }}>Checking your Homey connection…</p>
-      )}
-
-      {homeyTab && authState === 'signedOut' && (
-        <div style={{ maxWidth: 480, margin: '48px auto', textAlign: 'center' }}>
-          <h2 style={{ fontSize: 20, margin: '0 0 8px' }}>Connect to Homey</h2>
-          <p style={{ color: '#6b7280', marginBottom: 20 }}>
-            Log in to see live room status, activity, heating, and adaptive lighting.
-          </p>
-          {errBox}
-          <a
-            href="/api/auth/login"
-            style={{ display: 'inline-block', padding: '10px 22px', borderRadius: 8, background: '#2563eb', color: '#fff', textDecoration: 'none', fontSize: 14 }}
-          >
-            Connect to Homey
-          </a>
-        </div>
-      )}
-
-      {homeyTab && authState === 'signedIn' && (
-        <div>
-          {errBox}
-          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: 8, margin: '2px 0 12px' }}>
-            <style>{'@keyframes hd-spin { to { transform: rotate(360deg); } }'}</style>
-            {LIVE_ENABLED && (
-              <span style={{ fontSize: 11.5, color: live ? '#16a34a' : '#b45309' }}>
-                {live ? '🟢 Live' : '🟠 Connecting…'}
-              </span>
-            )}
-            <button
-              onClick={() => refreshRef.current()} disabled={refreshing} title="Refresh"
-              style={{
-                width: 28, height: 28, borderRadius: 999, border: '1px solid #e3e6ea', background: '#fff',
-                color: '#2563eb', cursor: refreshing ? 'default' : 'pointer', fontSize: 14, lineHeight: 1,
-              }}
-            >
-              <span style={{ display: 'inline-block', animation: refreshing ? 'hd-spin 0.8s linear infinite' : 'none' }}>↻</span>
-            </button>
+      <header className={styles.topbar}>
+        <div className={styles.topRow}>
+          <div className={styles.brand}>
+            <div className={styles.brandMark} aria-hidden="true"><House size={18} strokeWidth={2.2} /></div>
+            <div className={styles.brandText}>
+              <h1 className={styles.brandTitle} style={{ margin: 0 }}>
+                Skovgaard<span className={styles.version}>v{APP_VERSION}</span>
+              </h1>
+              <div className={styles.brandSub}>
+                {clock ? (
+                  <>
+                    <span className={styles.hideSm}>{dateLabel}</span>
+                    <span className={styles.showSm}>{dateShort}</span>
+                    {' · '}<b>{timeLabel}</b>
+                  </>
+                ) : ' '}
+              </div>
+            </div>
           </div>
 
-          {tab === 'rooms' && (
-            <div>
-              <input
-                type="text" placeholder="Filter rooms or devices…" value={roomFilter}
-                onChange={(e) => setRoomFilter(e.target.value)}
-                style={inputStyle}
-              />
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-                {filteredRoomKeys.map((key) => (
-                  <RoomCard key={key} group={roomGroups[key]} zone={zones[key]} openRooms={openRooms} onControl={controlDevice} />
-                ))}
-                {filteredRoomKeys.length === 0 && <Empty>No rooms or devices match your filter.</Empty>}
-              </div>
-            </div>
-          )}
-
-          {tab === 'activity' && (
-            <div>
-              <p style={{ color: '#6b7280', fontSize: 13, marginTop: -4 }}>
-                Live feed of Homey <b>Timeline notifications</b> (🔔) plus real <b>device-state changes</b> —
-                since Homey has no "flow currently running" signal, state changes are the closest proxy for
-                flows and scripts acting on your home.
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {feed.length === 0 && (
-                  <Empty>Nothing yet. Notifications and device changes will appear here as they happen.</Empty>
-                )}
-                {feed.map((item) => (
-                  <div key={item.key} style={{
-                    background: item.type === 'notif' ? '#f8fafc' : '#fff',
-                    border: `1px solid ${item.type === 'notif' ? '#dbe4f0' : '#e3e6ea'}`,
-                    borderLeft: item.type === 'notif' ? '3px solid #2563eb' : '1px solid #e3e6ea',
-                    borderRadius: 8, padding: '8px 12px', fontSize: 12.5,
-                    display: 'flex', justifyContent: 'space-between', gap: 10,
-                  }}>
-                    {item.type === 'notif' ? (
-                      <span>🔔 {item.ownerName && <b>{item.ownerName}: </b>}{renderExcerpt(item.excerpt)}</span>
-                    ) : (
-                      <span>{item.room} — <b>{item.name}</b>: {item.cap} {fmtVal(item.from)} → {fmtVal(item.to)}</span>
-                    )}
-                    <span style={{ color: '#6b7280', fontSize: 11, whiteSpace: 'nowrap' }}>
-                      {item.ts.toLocaleTimeString()}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {tab === 'rooms2' && (
-            <RoomsV2Tab
-              devices={devices} zones={zones} flows={flows} alStatus={alStatus}
-              onControl={controlDevice} onReload={() => refreshRef.current()}
-            />
-          )}
-
-          {tab === 'temperatures' && <TemperatureTab />}
-
-          {tab === 'heating' && <HeatingTab devices={devices} zones={zones} flows={flows} onControl={controlDevice} onReload={() => refreshRef.current()} />}
-
-          {tab === 'lighting' && <LightingTab devices={devices} flows={flows} alStatus={alStatus} onReload={() => refreshRef.current()} />}
+          <div className={styles.actions}>
+            {LIVE_ENABLED && signedIn && (
+              <span
+                className={cx('hd-pill', styles.livePill)}
+                style={{ color: live ? 'var(--good)' : 'var(--warn)' }}
+                title={live ? 'Live — updates stream in from Homey' : 'Connecting to the live stream…'}
+              >
+                {live ? <span className="hd-live-dot" /> : <LoaderCircle size={13} style={SPIN} />}
+                {live ? <span>Live</span> : <span className={styles.hideSm}>Connecting…</span>}
+              </span>
+            )}
+            {homeyTab && signedIn && (
+              <button
+                type="button" className="hd-icon-btn" aria-label="Refresh"
+                onClick={() => refreshRef.current()} disabled={refreshing}
+                title={refreshing ? 'Refreshing…' : live ? 'Refresh now (updates stream in live)' : `Refresh now · next refresh in ${countdown}s`}
+              >
+                <RefreshCw size={16} style={refreshing ? SPIN : undefined} />
+              </button>
+            )}
+            <button
+              type="button" className="hd-icon-btn" onClick={cycleTheme}
+              aria-label={`Theme: ${theme.label}`}
+              title={`Theme: ${theme.label} — click for ${THEME_META[theme.next].label}`}
+            >
+              <ThemeIcon size={16} />
+            </button>
+            {signedIn && (
+              <a
+                href="/api/auth/logout" className={cx('hd-btn hd-btn-ghost', styles.disconnect)}
+                title={`Disconnect${homeyName ? ` (${homeyName})` : ''}`}
+              >
+                <LogOut size={15} />
+                <span className={styles.hideSm}>Disconnect{homeyName ? ` (${homeyName})` : ''}</span>
+              </a>
+            )}
+          </div>
         </div>
-      )}
+
+        <nav ref={navRef} className={styles.nav} aria-label="Sections">
+          {TABS.map(([t, label, Icon]) => (
+            <button
+              key={t} type="button" onClick={() => setTab(t)}
+              className={cx(styles.navBtn, tab === t && styles.navBtnActive)}
+              aria-current={tab === t ? 'page' : undefined}
+            >
+              <Icon size={15} strokeWidth={2} />
+              {label}
+            </button>
+          ))}
+        </nav>
+      </header>
+
+      <main key={tab} className="hd-fade-in">
+        {tab === 'weather' && <WeatherTab />}
+
+        {homeyTab && authState === 'checking' && (
+          <div className={styles.checking}>
+            <LoaderCircle size={16} style={SPIN} /> Checking your Homey connection…
+          </div>
+        )}
+
+        {homeyTab && authState === 'signedOut' && (
+          <div className={cx('hd-card', styles.connectCard)}>
+            <div className={styles.connectIcon} aria-hidden="true"><Plug size={26} strokeWidth={2} /></div>
+            <h2 className={styles.connectTitle}>Connect to Homey</h2>
+            <p className={styles.connectText}>
+              Log in to see live room status, activity, heating, and adaptive lighting.
+            </p>
+            {errBox}
+            <a href="/api/auth/login" className={cx('hd-btn hd-btn-primary', styles.btnLg)}>
+              <Plug size={16} /> Connect to Homey
+            </a>
+          </div>
+        )}
+
+        {homeyTab && signedIn && (
+          <div>
+            {errBox}
+
+            {tab === 'rooms' && (
+              <div>
+                <div className={cx(styles.searchWrap, styles.filterWrap)}>
+                  <Search size={15} className={styles.searchIcon} />
+                  <input
+                    type="text" className="hd-input" placeholder="Filter rooms or devices…" value={roomFilter}
+                    onChange={(e) => setRoomFilter(e.target.value)} aria-label="Filter rooms or devices"
+                  />
+                </div>
+                <div className="hd-grid">
+                  {filteredRoomKeys.map((key) => (
+                    <RoomCard key={key} group={roomGroups[key]} zone={zones[key]} openRooms={openRooms} onControl={controlDevice} />
+                  ))}
+                  {filteredRoomKeys.length === 0 && <Empty icon={Search}>No rooms or devices match your filter.</Empty>}
+                </div>
+              </div>
+            )}
+
+            {tab === 'activity' && (
+              <div>
+                <p className="hd-lede">
+                  Live feed of Homey <b>Timeline notifications</b> (<Bell size={12} style={{ verticalAlign: '-1px' }} />) plus
+                  real <b>device-state changes</b> — since Homey has no &quot;flow currently running&quot; signal, state
+                  changes are the closest proxy for flows and scripts acting on your home.
+                </p>
+                {feed.length === 0 ? (
+                  <Empty icon={Activity}>Nothing yet. Notifications and device changes will appear here as they happen.</Empty>
+                ) : (
+                  <div className={cx('hd-card', styles.timeline)}>
+                    {feed.map((item) => <FeedItem key={item.key} item={item} />)}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === 'rooms2' && (
+              <RoomsV2Tab
+                devices={devices} zones={zones} flows={flows} alStatus={alStatus}
+                onControl={controlDevice} onReload={() => refreshRef.current()}
+              />
+            )}
+
+            {tab === 'temperatures' && <TemperatureTab />}
+
+            {tab === 'heating' && <HeatingTab devices={devices} zones={zones} flows={flows} onControl={controlDevice} onReload={() => refreshRef.current()} />}
+
+            {tab === 'lighting' && <LightingTab devices={devices} flows={flows} alStatus={alStatus} onReload={() => refreshRef.current()} />}
+          </div>
+        )}
+      </main>
     </Shell>
   );
 }
 
-const TAB_BAR = { display: 'flex', gap: 4, borderBottom: '1px solid #e3e6ea', marginBottom: 18 };
-function tabItem(active) {
-  return {
-    padding: '9px 16px', cursor: 'pointer', fontSize: 13.5,
-    color: active ? '#2563eb' : '#6b7280',
-    borderBottom: active ? '2px solid #2563eb' : '2px solid transparent',
-    fontWeight: active ? 600 : 400,
-  };
+function ErrorBox({ children, style }) {
+  return (
+    <div className="hd-error" role="alert" style={style}>
+      <TriangleAlert size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+      <span>{children}</span>
+    </div>
+  );
 }
+
+// ---------- live activity ----------
+
+const TONE = {
+  accent: ['var(--accent-soft)', 'var(--accent)'],
+  good: ['var(--good-soft)', 'var(--good)'],
+  warn: ['var(--warn-soft)', 'var(--warn)'],
+  bad: ['var(--bad-soft)', 'var(--bad)'],
+  heat: ['var(--heat-soft)', 'var(--heat)'],
+  neutral: ['var(--neutral-soft)', 'var(--muted)'],
+};
+
+function feedVisual(item) {
+  if (item.type === 'notif') return { Icon: Bell, tone: 'accent' };
+  const cap = item.cap || '';
+  let Icon = Activity;
+  if (cap === 'onoff') Icon = Power;
+  else if (cap === 'target_temperature') Icon = Thermometer;
+  else if (cap === 'thermostat_mode' || cap === 'tado_presence_mode') Icon = Flame;
+  else if (cap === 'alarm_motion') Icon = Footprints;
+  else if (cap === 'alarm_contact') Icon = DoorOpen;
+  else if (cap === 'alarm_water') Icon = Droplets;
+  else if (cap === 'alarm_open_window_detected') Icon = AppWindow;
+  else if (cap.startsWith('windowcoverings') || cap.startsWith('curtain')) Icon = Blinds;
+  else if (cap.startsWith('vacuumcleaner') || cap.startsWith('alarm_bin') || cap.startsWith('alarm_cleaning')) Icon = Bot;
+  else if (cap.startsWith('alarm_')) Icon = TriangleAlert;
+
+  let tone = 'accent';
+  if (item.to === true) {
+    if (cap === 'alarm_water') tone = 'bad';
+    else if (cap.startsWith('alarm_') && cap !== 'alarm_motion') tone = 'warn';
+    else tone = 'good';
+  } else if (item.to === false) tone = 'neutral';
+  else if (cap === 'target_temperature' || cap === 'thermostat_mode') tone = 'heat';
+  return { Icon, tone };
+}
+
+function FeedItem({ item }) {
+  const { Icon, tone } = feedVisual(item);
+  const [bg, color] = TONE[tone];
+  return (
+    <div className={styles.tlItem}>
+      <span className={styles.tlIconWrap}>
+        <span className={styles.tlIcon} style={{ background: bg, color }}><Icon size={14} strokeWidth={2.2} /></span>
+      </span>
+      <div className={styles.tlBody}>
+        {item.type === 'notif' ? (
+          <>
+            {item.ownerName && <b>{item.ownerName}</b>}
+            <div className={styles.tlExcerpt}>{renderExcerpt(item.excerpt)}</div>
+          </>
+        ) : (
+          <>
+            <b>{item.name}</b> <span className={styles.tlRoom}>· {item.room}</span>
+            <div className={styles.tlSub}>
+              <span className={styles.tlCap}>{item.cap}</span>
+              <span className="hd-tag">{fmtVal(item.from)}</span>
+              <span aria-hidden="true">→</span>
+              <span className={cx('hd-tag', item.to === true ? 'hd-tag-good' : item.to === false ? '' : 'hd-tag-accent')}>
+                {fmtVal(item.to)}
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+      <span className={styles.tlTime}>{item.ts.toLocaleTimeString()}</span>
+    </div>
+  );
+}
+
+// ---------- weather ----------
 
 const WMO = {
   0: ['☀️', 'Clear sky'], 1: ['🌤️', 'Mainly clear'], 2: ['⛅', 'Partly cloudy'], 3: ['☁️', 'Overcast'],
@@ -516,6 +682,8 @@ const WMO = {
   95: ['⛈️', 'Thunderstorm'], 96: ['⛈️', 'Thunderstorm, hail'], 99: ['⛈️', 'Thunderstorm, hail'],
 };
 const wmo = (code) => WMO[code] || ['❓', '—'];
+// Clear / mainly clear at night shows a moon, partly cloudy a plain cloud (no sun after dark).
+const wmoGlyph = (code, isDay) => (isDay === 0 && (code === 0 || code === 1) ? '🌙' : isDay === 0 && code === 2 ? '☁️' : wmo(code)[0]);
 const timeOnly = (iso) => { const m = String(iso).match(/T(\d{2}:\d{2})/); return m ? m[1] : iso; };
 const hourLabel = (iso) => { const m = String(iso).match(/T(\d{2})/); return m ? m[1] : iso; };
 function dayLabel(iso) {
@@ -544,10 +712,115 @@ function yrIcon(code) {
   return '🌡️';
 }
 
-const LOC_BTN = (disabled) => ({
-  fontSize: 11.5, padding: '4px 10px', borderRadius: 999, border: '1px solid #e3e6ea',
-  background: '#fff', color: '#2563eb', cursor: disabled ? 'default' : 'pointer',
-});
+// Hero background per condition (data colours — the hero carries its own white text).
+function heroTheme(code, isDay) {
+  if (isDay === 0) return 'night';
+  if ([95, 96, 99].includes(code)) return 'thunder';
+  if ([71, 73, 75, 77, 85, 86].includes(code)) return 'snow';
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return 'rain';
+  if (code === 3 || code === 45 || code === 48) return 'overcast';
+  if (code === 2) return 'partly';
+  return 'clear';
+}
+const HERO_BG = {
+  clear: 'radial-gradient(circle at 86% 14%, rgba(255, 228, 140, 0.6) 0%, rgba(255, 228, 140, 0) 42%), linear-gradient(160deg, #3b82f6 0%, #60a5fa 55%, #93c5fd 100%)',
+  partly: 'radial-gradient(circle at 86% 12%, rgba(255, 236, 170, 0.32) 0%, rgba(255, 236, 170, 0) 40%), linear-gradient(160deg, #46699f 0%, #6b8bbb 55%, #a3b8d6 100%)',
+  overcast: 'linear-gradient(160deg, #64748b 0%, #7c8aa0 50%, #94a3b8 100%)',
+  rain: 'radial-gradient(circle at 15% 0%, rgba(125, 211, 252, 0.18) 0%, rgba(125, 211, 252, 0) 45%), linear-gradient(160deg, #1e3a8a 0%, #1d4f91 50%, #0e7490 100%)',
+  snow: 'radial-gradient(circle at 85% 10%, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 45%), linear-gradient(160deg, #7dd3fc 0%, #bae6fd 55%, #e0f2fe 100%)',
+  thunder: 'radial-gradient(circle at 80% 0%, rgba(167, 139, 250, 0.38) 0%, rgba(167, 139, 250, 0) 45%), linear-gradient(160deg, #312e81 0%, #4c1d95 55%, #6d28d9 100%)',
+  night: 'radial-gradient(circle at 84% 14%, rgba(199, 210, 254, 0.22) 0%, rgba(199, 210, 254, 0) 38%), linear-gradient(160deg, #0f172a 0%, #1e1b4b 55%, #312e81 100%)',
+};
+
+// Temperature → colour for the 7-day range bars (cool blue … warm orange/red).
+const TEMP_STOPS = [
+  [-10, [129, 140, 248]], [0, [56, 189, 248]], [8, [45, 212, 191]], [14, [163, 230, 53]],
+  [19, [250, 204, 21]], [25, [251, 146, 60]], [32, [239, 68, 68]],
+];
+function tempTint(t) {
+  const rgb = (c) => `rgb(${c.join(', ')})`;
+  if (!(t > TEMP_STOPS[0][0])) return rgb(TEMP_STOPS[0][1]);
+  for (let i = 1; i < TEMP_STOPS.length; i++) {
+    const [t1, c1] = TEMP_STOPS[i];
+    if (t <= t1) {
+      const [t0, c0] = TEMP_STOPS[i - 1];
+      const f = (t - t0) / (t1 - t0);
+      return rgb(c0.map((v, k) => Math.round(v + (c1[k] - v) * f)));
+    }
+  }
+  return rgb(TEMP_STOPS[TEMP_STOPS.length - 1][1]);
+}
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+const HOUR_W = 60; // width of one hour column in the 24 h strip
+
+// Smooth temperature curve over the hourly columns (Catmull-Rom → cubic Bézier).
+function HourlyCurve({ temps }) {
+  const n = temps.length;
+  if (!n) return null;
+  const W = n * HOUR_W;
+  const H = 78;
+  const top = 24;
+  const bottom = 64;
+  const vals = temps.map((t) => (Number.isFinite(t) ? t : 0));
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = max - min || 1;
+  const pts = vals.map((t, i) => [i * HOUR_W + HOUR_W / 2, bottom - ((t - min) / span) * (bottom - top)]);
+  const f = (v) => v.toFixed(1);
+  let line = `M${f(pts[0][0])},${f(pts[0][1])}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const p3 = pts[i + 2] || p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    line += ` C${f(c1x)},${f(c1y)} ${f(c2x)},${f(c2y)} ${f(p2[0])},${f(p2[1])}`;
+  }
+  const last = pts[pts.length - 1];
+  const area = `${line} L${f(last[0])},${H} L${f(pts[0][0])},${H} Z`;
+  return (
+    <svg className={styles.hourlySvg} width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
+      <defs>
+        <linearGradient id="hdHourlyFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" style={{ stopColor: 'var(--accent)', stopOpacity: 0.26 }} />
+          <stop offset="100%" style={{ stopColor: 'var(--accent)', stopOpacity: 0 }} />
+        </linearGradient>
+      </defs>
+      <path d={area} fill="url(#hdHourlyFill)" />
+      <path d={line} fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ stroke: 'var(--accent)' }} />
+      {pts.map(([x, y], i) => (
+        <g key={i}>
+          <circle
+            cx={x} cy={y} r={i === 0 ? 4 : 2.75} strokeWidth="2"
+            style={{ fill: i === 0 ? 'var(--accent)' : 'var(--surface-solid)', stroke: 'var(--accent)' }}
+          />
+          <text
+            x={x} y={y - 9} textAnchor="middle"
+            style={{ fill: i === 0 ? 'var(--text)' : 'var(--text-2)', fontSize: 12, fontWeight: i === 0 ? 700 : 600, fontVariantNumeric: 'tabular-nums' }}
+          >
+            {Math.round(temps[i])}°
+          </text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function PopCell({ pop }) {
+  if (pop == null) return <span className={styles.pop} />;
+  if (pop <= 0) return <span className={cx(styles.pop, styles.popZero)}>{pop}%</span>;
+  return (
+    <span className={styles.pop} title={`${pop}% chance of precipitation`}>
+      {pop}%
+      <span className={styles.popBar}><span style={{ width: `${clamp(pop, 0, 100)}%` }} /></span>
+    </span>
+  );
+}
 
 // Heating rooms + schedules now live in lib/heating.js (shared with the Rooms 2.0 tab).
 
@@ -565,7 +838,9 @@ function HeatingInactivity({ motionActive, seedTs, timeoutMin, offset }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [motionActive, seedTs]);
 
-  if (motionActive) return <span style={{ color: '#16a34a' }}>🏃 Active</span>;
+  if (motionActive) {
+    return <span className={styles.schedItem} style={{ color: 'var(--good)' }}><Activity size={13} /> Active</span>;
+  }
 
   const since = sinceRef.current ?? Date.now();
   const secs = Math.max(0, Math.floor((Date.now() - since) / 1000));
@@ -573,35 +848,29 @@ function HeatingInactivity({ motionActive, seedTs, timeoutMin, offset }) {
   const timeoutSecs = (timeoutMin || 30) * 60;
   const reached = secs >= timeoutSecs;
   return (
-    <span style={{ color: '#6b7280' }} title={`No motion since ${new Date(since).toLocaleTimeString()}`}>
-      💤 {label}
+    <span className={styles.schedItem} style={{ color: 'var(--muted)' }} title={`No motion since ${new Date(since).toLocaleTimeString()}`}>
+      <Moon size={13} />
+      <span className="hd-num">{label}</span>
       {offset > 0 && (reached
-        ? <span style={{ color: '#b45309' }}> · −{offset}° applied</span>
-        : <span style={{ color: '#9ca3af' }}> · −{offset}° in {fmtDuration(timeoutSecs - secs)}</span>)}
+        ? <span style={{ color: 'var(--warn)' }}>· −{offset}° applied</span>
+        : <span style={{ color: 'var(--faint)' }}>· −{offset}° in {fmtDuration(timeoutSecs - secs)}</span>)}
     </span>
   );
 }
 
-function stepStyle(disabled) {
-  return {
-    width: 24, height: 24, borderRadius: 6, border: '1px solid #e3e6ea', background: '#fff',
-    fontSize: 14, lineHeight: 1, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.4 : 1,
-  };
-}
-
-function heatBtnStyle(actionKey, disabled) {
-  const c = actionKey === 'boost' ? '#ea580c' : actionKey === 'pause' ? '#6b7280' : '#2563eb';
-  return {
-    padding: '5px 12px', borderRadius: 999, border: `1px solid ${c}`, background: '#fff', color: c,
-    fontSize: 12, whiteSpace: 'nowrap', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
-  };
-}
-
 const HEAT_MODE = {
-  boost: { label: '🔥 Boost', bg: '#fff1e6', color: '#ea580c' },
-  pause: { label: '⏸ Paused', bg: '#f1f2f4', color: '#6b7280' },
-  manual: { label: '✋ Manual', bg: '#fff7ed', color: '#b45309' },
+  boost: { label: 'Boost', cls: 'hd-tag-heat', Icon: Flame },
+  pause: { label: 'Paused', cls: '', Icon: Pause },
+  manual: { label: 'Manual', cls: 'hd-tag-warn', Icon: Hand },
 };
+// Boost / Pause / Reset buttons: icon + tint (labels come from HEATING_ACTIONS, minus their emoji).
+const HEAT_ACTION_UI = {
+  boost: { Icon: Flame, cls: styles.btnHeat },
+  pause: { Icon: Pause, cls: '' },
+  reset: { Icon: RotateCcw, cls: 'hd-btn-soft' },
+};
+const actionLabel = (a) => String(a.label || '').replace(/^[^A-Za-z0-9]+/, '').trim() || a.key;
+
 // Real script mode wins; otherwise show the sticky optimistic "manual" (from a +/-) until it expires.
 function resolveMode(sc, optExpiry) {
   if (sc && sc.mode && sc.mode !== 'auto') return { mode: sc.mode, modeExpires: sc.modeExpires };
@@ -615,6 +884,59 @@ function heatModeRemaining(modeExpires) {
   if (secs <= 0) return null;
   if (secs < 3600) return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
   return `${Math.floor(secs / 3600)}h ${Math.round((secs % 3600) / 60)}m`;
+}
+
+function HeatModeTag({ mode, modeExpires }) {
+  const m = HEAT_MODE[mode];
+  if (!m) return null;
+  const MIcon = m.Icon;
+  const rem = heatModeRemaining(modeExpires);
+  return (
+    <span className={cx('hd-tag', m.cls)}>
+      <MIcon size={12} /> {m.label}{rem ? <span className="hd-num">{` ${rem}`}</span> : ''}
+    </span>
+  );
+}
+
+// Ring gauge: heating power for tado rooms, full/empty for plug radiators; temperature in the centre.
+function HeatRing({ kind, temp, power, plugOn }) {
+  const gid = `hr${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
+  const size = 84;
+  const sw = 8;
+  const r = (size - sw) / 2;
+  const circ = 2 * Math.PI * r;
+  const frac = kind === 'tado' ? clamp(power || 0, 0, 100) / 100 : (plugOn ? 1 : 0);
+  const sub = kind === 'tado'
+    ? (power != null ? `heat ${Math.round(power)}%` : 'heat —')
+    : (plugOn ? 'heating' : 'off');
+  const title = kind === 'tado'
+    ? `Heating power ${power != null ? `${Math.round(power)}%` : '—'}`
+    : `Radiator ${plugOn ? 'on' : 'off'}`;
+  return (
+    <div className={styles.ring} title={title}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+        <defs>
+          <linearGradient id={gid} x1="0" y1="1" x2="1" y2="0">
+            <stop offset="0%" stopColor="#fbbf24" />
+            <stop offset="55%" stopColor="#f97316" />
+            <stop offset="100%" stopColor="#ef4444" />
+          </linearGradient>
+        </defs>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={sw} style={{ stroke: 'var(--surface-3)' }} />
+        {frac > 0 && (
+          <circle
+            className={styles.ringArc} cx={size / 2} cy={size / 2} r={r} fill="none"
+            stroke={`url(#${gid})`} strokeWidth={sw} strokeLinecap="round"
+            strokeDasharray={circ} strokeDashoffset={circ * (1 - frac)}
+          />
+        )}
+      </svg>
+      <div className={styles.ringCenter}>
+        <span className={styles.ringTemp}>{temp != null ? temp.toFixed(1) : '—'}°</span>
+        <span className={styles.ringSub}>{sub}</span>
+      </div>
+    </div>
+  );
 }
 
 function HeatingTab({ devices, zones, flows, onControl, onReload }) {
@@ -764,7 +1086,7 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
     // Hold the new setpoint on screen through Tado's propagation window so a refresh that
     // reads the not-yet-updated value doesn't flicker it back.
     setOptTarget((prev) => ({ ...prev, [room.thermostatId]: { value: next, ts: Date.now() } }));
-    // We just triggered manual override — show the ✋ badge immediately (sticky).
+    // We just triggered manual override — show the Manual badge immediately (sticky).
     setOptManual((prev) => ({ ...prev, [room.zone]: Date.now() + (room.manualDuration || 90) * 60000 }));
     // Reconcile: re-pull device state (Tado catches up) and heating status (script flags manual).
     [5000, 12000, 20000].forEach((ms) => setTimeout(() => onReload && onReload(), ms));
@@ -801,118 +1123,127 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
     }
   }
 
+  const masterOff = heatingEnabled === false;
+
   return (
     <div>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap',
-        background: heatingEnabled === false ? '#f8fafc' : '#fff',
-        border: `1px solid ${heatingEnabled === false ? '#dbe4f0' : '#e3e6ea'}`,
-        borderLeft: `3px solid ${heatingEnabled === false ? '#94a3b8' : '#ea580c'}`,
-        borderRadius: 12, padding: '12px 16px',
-      }}>
-        <span style={{ fontSize: 24, lineHeight: 1 }}>{heatingEnabled === false ? '❄️' : '🔥'}</span>
-        <div>
-          <div style={{ fontSize: 14.5, fontWeight: 600 }}>Heating system</div>
-          <div style={{ fontSize: 12, color: '#6b7280' }}>
+      <div
+        className={cx('hd-card', styles.master)}
+        style={masterOff ? undefined : { background: 'linear-gradient(115deg, var(--heat-soft) 0%, transparent 70%), var(--surface)' }}
+      >
+        <div
+          className={styles.masterTile}
+          style={masterOff ? { background: 'var(--cool-soft)', color: 'var(--cool)' } : { background: 'var(--heat-soft)', color: 'var(--heat)' }}
+        >
+          {masterOff ? <Snowflake size={24} /> : <Flame size={24} />}
+        </div>
+        <div className={styles.masterText}>
+          <div className={styles.masterTitle}>Heating system</div>
+          <div className={styles.masterStatus}>
             {heatingEnabled == null ? 'state unknown'
               : heatingEnabled ? 'On — rooms follow their schedule'
                 : 'Off — all heating disabled'}
           </div>
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-          {masterBusy && <span style={{ fontSize: 11.5, color: '#9ca3af' }}>updating…</span>}
-          <Toggle on={!!heatingEnabled} onChange={(v) => !masterBusy && toggleMaster(v)} />
+        <div className={styles.masterRight}>
+          {masterBusy && <span className="hd-faint" style={{ fontSize: 11.5 }}>updating…</span>}
+          <Toggle size="lg" on={!!heatingEnabled} onChange={(v) => !masterBusy && toggleMaster(v)} />
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
-        <p style={{ color: '#6b7280', fontSize: 12.5, margin: 0 }}>
+      <div className={styles.introRow}>
+        <p className={cx('hd-lede', styles.introText)}>
           Thermostat status per room. <b>Boost</b> (max heat ~1h), <b>Pause</b> (off ~1h) and
           <b> Reset</b> (cancel override) run your <code>room_heating</code> flows.
         </p>
-        <button onClick={() => setShowConfig((s) => !s)} style={{ marginLeft: 'auto', ...LOC_BTN(false) }}>
-          ⚙ Configure flows
+        <button type="button" className="hd-btn hd-btn-ghost" onClick={() => setShowConfig((s) => !s)} aria-expanded={showConfig}>
+          <Settings2 size={15} /> Configure flows
         </button>
       </div>
 
-      {err && (
-        <div style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 14px', fontSize: 12.5, marginBottom: 12 }}>{err}</div>
-      )}
+      {err && <ErrorBox style={{ marginTop: 0 }}>{err}</ErrorBox>}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+      <div className="hd-grid">
         {HEATING_ROOMS.map((room) => {
           const d = roomData(room);
           const systemOff = heatingEnabled === false;
           return (
-            <div key={room.key} style={{
-              background: '#fff', border: '1px solid #e3e6ea', borderRadius: 12, padding: '14px 16px',
-              filter: systemOff ? 'grayscale(1)' : 'none',
-              opacity: systemOff ? 0.55 : 1,
-              transition: 'opacity .2s, filter .2s',
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                <h3 style={{ margin: 0, fontSize: 14.5 }}>{room.label}</h3>
-                <span style={{ display: 'inline-flex', gap: 4 }}>
-                  {d && d.away && <Tag bg="#eff6ff" color="#2563eb">🚪 away</Tag>}
-                  {d && d.mode && HEAT_MODE[d.mode] && (
-                    <Tag bg={HEAT_MODE[d.mode].bg} color={HEAT_MODE[d.mode].color}>
-                      {HEAT_MODE[d.mode].label}{heatModeRemaining(d.modeExpires) ? ` ${heatModeRemaining(d.modeExpires)}` : ''}
-                    </Tag>
-                  )}
-                  {d && d.windowOpen && <Tag bg="#fff7ed" color="#b45309">🪟 window open</Tag>}
+            <div
+              key={room.key}
+              className={cx('hd-card hd-card-pad', styles.heatCard)}
+              style={systemOff ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined}
+            >
+              <div className={styles.heatHead}>
+                <h3 className="hd-title">{room.label}</h3>
+                <span className={styles.heatTags}>
+                  {d && d.away && <span className="hd-tag hd-tag-accent"><DoorOpen size={12} /> away</span>}
+                  {d && d.mode && <HeatModeTag mode={d.mode} modeExpires={d.modeExpires} />}
+                  {d && d.windowOpen && <span className="hd-tag hd-tag-warn"><AppWindow size={12} /> window open</span>}
                 </span>
               </div>
 
               {!d ? (
-                <div style={{ color: '#9ca3af', fontSize: 12.5, marginTop: 8 }}>Thermostat not found.</div>
+                <div className="hd-faint" style={{ fontSize: 12.5, marginTop: 10 }}>Thermostat not found.</div>
               ) : (
                 <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '8px 0 4px', flexWrap: 'wrap' }}>
-                    <div style={{ fontSize: 30, fontWeight: 700, lineHeight: 1 }}>{d.temp != null ? d.temp.toFixed(1) : '—'}°</div>
-                    <div style={{ color: '#6b7280', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <div className={styles.heatMain}>
+                    <HeatRing kind={d.kind} temp={d.temp} power={d.power} plugOn={d.plugOn} />
+                    <div className={styles.heatSide}>
+                      <span className="hd-eyebrow">Target</span>
                       {d.kind === 'tado' && d.setTarget != null ? (
-                        <>
-                          target
-                          <button onClick={() => adjustTarget(room, d, -0.5)} disabled={systemOff || d.setTarget <= 5} style={stepStyle(systemOff || d.setTarget <= 5)} title="−0.5° (manual override)">−</button>
-                          <b style={{ minWidth: 40, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{d.setTarget}°</b>
-                          <button onClick={() => adjustTarget(room, d, 0.5)} disabled={systemOff || d.setTarget >= 25} style={stepStyle(systemOff || d.setTarget >= 25)} title="+0.5° (manual override)">＋</button>
-                        </>
-                      ) : d.setTarget != null ? <>target <b>{d.setTarget}°</b></> : 'schedule-controlled'}
-                      {d.humidity != null && <span style={{ color: '#9ca3af' }}> · 💧 {d.humidity}%</span>}
+                        <div className={styles.stepper}>
+                          <button
+                            type="button" className="hd-step" onClick={() => adjustTarget(room, d, -0.5)}
+                            disabled={systemOff || d.setTarget <= 5} title="−0.5° (manual override)"
+                          >
+                            −
+                          </button>
+                          <span className={cx(styles.targetVal, styles.stepVal)}>{d.setTarget}°</span>
+                          <button
+                            type="button" className="hd-step" onClick={() => adjustTarget(room, d, 0.5)}
+                            disabled={systemOff || d.setTarget >= 25} title="+0.5° (manual override)"
+                          >
+                            +
+                          </button>
+                        </div>
+                      ) : d.setTarget != null ? (
+                        <span className={styles.targetVal}>{d.setTarget}°</span>
+                      ) : (
+                        <span className="hd-muted" style={{ fontSize: 13 }}>schedule-controlled</span>
+                      )}
+                      {(d.kind === 'plug' || d.humidity != null) && (
+                        <div className={styles.heatInfo}>
+                          {d.kind === 'plug' && (
+                            <span className={styles.schedItem} style={d.plugOn ? { color: 'var(--heat)' } : undefined}>
+                              <Flame size={13} /> Radiator {d.plugOn ? 'on' : 'off'}
+                              {d.plugCount ? ` · ${d.plugCount} plug${d.plugCount === 1 ? '' : 's'}` : ''}
+                            </span>
+                          )}
+                          {d.humidity != null && (
+                            <span className={styles.schedItem}><Droplets size={13} /> {d.humidity}%</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                   {d.kind === 'tado' && (
-                    <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 6 }}>
-                      ± adjusts target · manual override holds {room.manualDuration} min
-                    </div>
-                  )}
-
-                  {d.kind === 'tado' ? (
-                    <div style={{ marginBottom: 4 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: '#6b7280', marginBottom: 3 }}>
-                        <span>🔥 Heating</span><span>{d.power != null ? `${Math.round(d.power)}%` : '—'}</span>
-                      </div>
-                      <div style={{ height: 6, borderRadius: 999, background: '#f1f2f4', overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${Math.max(0, Math.min(100, d.power || 0))}%`, background: '#f97316', transition: 'width .3s' }} />
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{ fontSize: 12.5, color: d.plugOn ? '#ea580c' : '#6b7280' }}>
-                      Radiator {d.plugOn ? '🔥 on' : 'off'}{d.plugCount ? ` · ${d.plugCount} plug${d.plugCount === 1 ? '' : 's'}` : ''}
-                    </div>
+                    <div className={styles.hint}>± adjusts target · manual override holds {room.manualDuration} min</div>
                   )}
 
                   {d.scheduled && (
-                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12 }}>
-                      <div style={{ color: '#6b7280' }}>
-                        📅 <b>{d.scheduled.name}</b> · scheduled {d.scheduled.target}°
-                        {d.setTarget != null && d.setTarget < d.scheduled.target - 0.05 && (
-                          <span style={{ color: '#b45309' }}> → set {d.setTarget}°</span>
-                        )}
+                    <div className={cx('hd-inset', styles.schedule)}>
+                      <div className={styles.schedRow}>
+                        <Calendar size={13} />
+                        <span>
+                          <b style={{ color: 'var(--text-2)' }}>{d.scheduled.name}</b> · scheduled {d.scheduled.target}°
+                          {d.setTarget != null && d.setTarget < d.scheduled.target - 0.05 && (
+                            <span style={{ color: 'var(--warn)' }}> → set {d.setTarget}°</span>
+                          )}
+                        </span>
                       </div>
-                      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-                        <span style={{ color: d.windowOpen ? '#b45309' : '#9ca3af' }}>
-                          🪟 {d.windowOpen ? 'Open — heating paused' : 'Closed'}
+                      <div className={styles.schedLine}>
+                        <span className={styles.schedItem} style={{ color: d.windowOpen ? 'var(--warn)' : 'var(--faint)' }}>
+                          <AppWindow size={13} /> {d.windowOpen ? 'Open — heating paused' : 'Closed'}
                         </span>
                         {d.hasMotion && (
                           <HeatingInactivity
@@ -928,19 +1259,22 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
                 </>
               )}
 
-              <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
+              <div className={styles.heatActions}>
                 {HEATING_ACTIONS.map((a) => {
                   const flow = flowFor(room, a);
                   const bk = `${room.key}:${a.key}`;
                   const isBusy = busy.has(bk);
                   const disabled = isBusy || !flow || systemOff;
+                  const ui = HEAT_ACTION_UI[a.key] || { Icon: Activity, cls: '' };
+                  const AIcon = ui.Icon;
                   return (
                     <button
-                      key={a.key} onClick={() => runAction(room, a)} disabled={disabled}
+                      key={a.key} type="button" onClick={() => runAction(room, a)} disabled={disabled}
                       title={systemOff ? 'Heating system is off' : flow ? `Runs flow: ${flow.name}` : 'No flow mapped — use Configure flows'}
-                      style={heatBtnStyle(a.key, disabled)}
+                      className={cx('hd-btn', ui.cls)}
                     >
-                      {isBusy ? '…' : a.label}
+                      {isBusy ? <LoaderCircle size={14} style={SPIN} /> : <AIcon size={14} />}
+                      {actionLabel(a)}
                     </button>
                   );
                 })}
@@ -951,21 +1285,21 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
       </div>
 
       {showConfig && (
-        <div style={{ marginTop: 18, background: '#fff', border: '1px solid #e3e6ea', borderRadius: 12, padding: '12px 14px' }}>
-          <div style={{ fontSize: 12.5, color: '#6b7280', marginBottom: 8 }}>
+        <div className={cx('hd-card hd-card-pad', styles.cfgCard)}>
+          <div className={styles.cfgIntro}>
             Map each room&apos;s Boost / Pause / Reset to the Homey flow that runs it (auto-guessed by name, saved in this browser).
           </div>
           {HEATING_ROOMS.map((room) => (
-            <div key={room.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', flexWrap: 'wrap' }}>
-              <span style={{ width: 120, fontSize: 12.5, fontWeight: 600 }}>{room.label}</span>
+            <div key={room.key} className={styles.cfgRow}>
+              <span className={styles.cfgRoom}>{room.label}</span>
               {HEATING_ACTIONS.map((a) => {
                 const flow = flowFor(room, a);
                 return (
                   <select
-                    key={a.key} value={flow ? flow.id : ''} onChange={(e) => setFlowFor(room.key, a.key, e.target.value)} title={a.label}
-                    style={{ fontSize: 11, padding: '3px 6px', borderRadius: 6, border: '1px solid #e3e6ea', maxWidth: 160 }}
+                    key={a.key} className="hd-select hd-select-sm" value={flow ? flow.id : ''}
+                    onChange={(e) => setFlowFor(room.key, a.key, e.target.value)} title={a.label}
                   >
-                    <option value="">{a.label} —</option>
+                    <option value="">{actionLabel(a)} —</option>
                     {flowOptions.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
                   </select>
                 );
@@ -1045,10 +1379,15 @@ function WeatherTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (err) {
-    return <div style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 14px', fontSize: 12.5 }}>{err}</div>;
+  if (err) return <ErrorBox style={{ marginTop: 0 }}>{err}</ErrorBox>;
+  if (!data) {
+    return (
+      <div>
+        <div className="hd-skeleton" style={{ height: 300, borderRadius: 24 }} />
+        <div className={styles.updated}>Loading weather…</div>
+      </div>
+    );
   }
-  if (!data) return <Empty>Loading weather…</Empty>;
 
   const cur = data.current;
   const [curIcon, curDesc] = wmo(cur.weather_code);
@@ -1058,9 +1397,8 @@ function WeatherTab() {
   if (start < 0) start = 0;
   const hours = [];
   for (let i = start; i < Math.min(start + 24, times.length); i++) {
-    hours.push({ time: times[i], temp: data.hourly.temperature_2m[i], pop: data.hourly.precipitation_probability?.[i], code: data.hourly.weather_code[i] });
+    hours.push({ time: times[i], temp: data.hourly.temperature_2m[i], pop: data.hourly.precipitation_probability?.[i], code: data.hourly.weather_code[i], isDay: data.hourly.is_day?.[i] });
   }
-  const sectionH = { fontSize: 14, margin: '0 0 10px', color: '#374151' };
   const yr = data.yr;
   const omT = cur.temperature_2m;
   const yrT = yr && yr.current ? yr.current.temp : null;
@@ -1068,101 +1406,167 @@ function WeatherTab() {
   const avgT = bothT ? (omT + yrT) / 2 : omT;
   const diffT = bothT ? Math.abs(omT - yrT) : null;
 
+  const heroKind = heroTheme(cur.weather_code, cur.is_day);
+  const heroIcon = wmoGlyph(cur.weather_code, cur.is_day);
+  const todayMax = daily.temperature_2m_max[0];
+  const todayMin = daily.temperature_2m_min[0];
+  const windDeg = cur.wind_direction_10m || 0;
+
+  const stats = [
+    { Icon: Droplets, label: 'Humidity', value: `${cur.relative_humidity_2m}%` },
+    {
+      Icon: Wind, label: 'Wind', title: `Wind from ${windDir(cur.wind_direction_10m)} (${Math.round(windDeg)}°)`,
+      value: (
+        <>
+          <ArrowUp size={15} strokeWidth={2.6} style={{ transform: `rotate(${windDeg + 180}deg)`, flexShrink: 0 }} />
+          {Math.round(cur.wind_speed_10m)}
+          <span className={styles.statUnit}>m/s {windDir(cur.wind_direction_10m)}</span>
+        </>
+      ),
+    },
+    { Icon: Umbrella, label: 'Precipitation', value: <>{cur.precipitation}<span className={styles.statUnit}>mm</span></> },
+    { Icon: Sunrise, label: 'Sunrise', value: timeOnly(daily.sunrise[0]) },
+    { Icon: Sunset, label: 'Sunset', value: timeOnly(daily.sunset[0]) },
+  ];
+
+  const weekMin = Math.min(...daily.temperature_2m_min);
+  const weekMax = Math.max(...daily.temperature_2m_max);
+  const weekSpan = weekMax - weekMin || 1;
+
   return (
     <div>
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 14, color: '#374151' }}>
-            📍 <b>{data.place}</b>
-            {data.lat != null && <span style={{ color: '#9ca3af', fontSize: 11.5 }}> ({data.lat}, {data.lon})</span>}
-          </span>
-          <button onClick={detect} disabled={locating} style={LOC_BTN(locating)}>
-            {locating ? 'Locating…' : '📍 Use my location'}
+      <div className={styles.locBar}>
+        <span className={styles.locPlace}>
+          <MapPin size={15} />
+          <b>{data.place}</b>
+          {data.lat != null && <span className={styles.locCoords}>{data.lat}, {data.lon}</span>}
+        </span>
+        <div className={styles.locActions}>
+          <button type="button" className="hd-btn hd-btn-soft" onClick={detect} disabled={locating}>
+            {locating ? <LoaderCircle size={14} style={SPIN} /> : <LocateFixed size={14} />}
+            {locating ? 'Locating…' : 'Use my location'}
           </button>
-          <form onSubmit={search} style={{ display: 'inline-flex', gap: 6 }}>
-            <input
-              value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search city…"
-              style={{ fontSize: 12.5, padding: '4px 10px', borderRadius: 8, border: '1px solid #e3e6ea', width: 150 }}
-            />
-            <button type="submit" style={LOC_BTN(false)}>Search</button>
-          </form>
-        </div>
-        {results.length > 0 && (
-          <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3, maxWidth: 380 }}>
-            {results.map((r, i) => (
-              <button
-                key={i} onClick={() => pickLoc(r)}
-                style={{ textAlign: 'left', fontSize: 12.5, padding: '6px 10px', borderRadius: 8, border: '1px solid #e3e6ea', background: '#fff', cursor: 'pointer' }}
-              >
-                {r.name}{r.admin1 ? `, ${r.admin1}` : ''}{r.country ? ` · ${r.country}` : ''}
-              </button>
-            ))}
+          <div className={styles.searchBox}>
+            <form onSubmit={search} className={styles.searchForm}>
+              <div className={styles.searchWrap}>
+                <Search size={14} className={styles.searchIcon} />
+                <input
+                  className="hd-input" value={q} onChange={(e) => setQ(e.target.value)}
+                  placeholder="Search city…" aria-label="Search city"
+                />
+              </div>
+              <button type="submit" className="hd-btn">Search</button>
+            </form>
+            {results.length > 0 && (
+              <div className={cx('hd-card', styles.results)} style={{ background: 'var(--surface-solid)' }}>
+                {results.map((r, i) => (
+                  <button key={i} type="button" className={styles.resultBtn} onClick={() => pickLoc(r)}>
+                    <MapPin size={14} />
+                    <span>{r.name}{r.admin1 ? `, ${r.admin1}` : ''}{r.country ? ` · ${r.country}` : ''}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, background: '#fff', border: '1px solid #e3e6ea', borderRadius: 12, padding: '16px 18px', marginBottom: 6, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: 52, lineHeight: 1 }}>{curIcon}</div>
-        <div>
-          <div style={{ fontSize: 34, fontWeight: 700, lineHeight: 1.1 }}>{Math.round(avgT)}°C</div>
-          <div style={{ color: '#6b7280', fontSize: 13 }}>{curDesc} · feels {Math.round(cur.apparent_temperature)}°C</div>
-          {bothT && (
-            <div style={{ marginTop: 5, display: 'flex', alignItems: 'center', gap: 7, fontSize: 11.5, flexWrap: 'wrap' }}>
-              <span style={{
-                padding: '1px 7px', borderRadius: 6, fontWeight: 600,
-                background: diffT <= 1 ? '#ecfdf3' : '#fff7ed', color: diffT <= 1 ? '#16a34a' : '#b45309',
-              }}>
-                {diffT <= 1 ? '✓ Sources agree' : `⚠ Differ ${diffT.toFixed(1)}°`}
-              </span>
-              <span style={{ color: '#9ca3af' }}>
-                Open-Meteo {Math.round(omT)}° {curIcon} · YR {Math.round(yrT)}° {yrIcon(yr.current.symbol)}
-              </span>
+
+      <section className={cx(styles.hero, heroKind === 'snow' && styles.heroSnow)} style={{ background: HERO_BG[heroKind] }}>
+        <div className={styles.heroTop}>
+          <div className={styles.heroMain}>
+            <div className={styles.heroPlace}><MapPin size={14} /> {data.place}</div>
+            <div className={styles.heroCond}>{curDesc}</div>
+            <div className={styles.heroTemp}>{Math.round(avgT)}°</div>
+            <div className={styles.heroMeta}>
+              Feels like {Math.round(cur.apparent_temperature)}° · H: {Math.round(todayMax)}° L: {Math.round(todayMin)}°
             </div>
-          )}
+            {bothT && (
+              <div className={styles.heroSources}>
+                <span className={styles.glassChip}>
+                  {diffT <= 1
+                    ? <><Check size={12} strokeWidth={3} /> Sources agree</>
+                    : <><TriangleAlert size={12} /> Differ {diffT.toFixed(1)}°</>}
+                </span>
+                <span className={styles.heroSourcesText}>
+                  Open-Meteo {Math.round(omT)}° {heroIcon} · YR {Math.round(yrT)}° {yrIcon(yr.current.symbol)}
+                </span>
+              </div>
+            )}
+          </div>
+          <div className={styles.heroEmoji} aria-hidden="true">{heroIcon}</div>
         </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Pill>💧 {cur.relative_humidity_2m}%</Pill>
-          <Pill>🌬️ {Math.round(cur.wind_speed_10m)} m/s {windDir(cur.wind_direction_10m)}</Pill>
-          <Pill>🌧️ {cur.precipitation} mm</Pill>
-          <Pill>🌅 {timeOnly(daily.sunrise[0])}</Pill>
-          <Pill>🌇 {timeOnly(daily.sunset[0])}</Pill>
+        <div className={styles.statGrid}>
+          {stats.map(({ Icon, label, value, title }) => (
+            <div key={label} className={styles.statTile} title={title}>
+              <div className={styles.statLabel}><Icon size={12} strokeWidth={2.2} /> {label}</div>
+              <div className={styles.statValue}>{value}</div>
+            </div>
+          ))}
         </div>
-      </div>
-      <div style={{ color: '#9ca3af', fontSize: 12, marginBottom: 16 }}>
+      </section>
+      <div className={styles.updated}>
         updated {timeOnly(cur.time)} · data by Open-Meteo &amp; MET Norway (YR)
       </div>
 
-      <h3 style={sectionH}>Next 24 hours</h3>
-      <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 8, marginBottom: 18 }}>
-        {hours.map((h, i) => (
-          <div key={i} style={{ flex: '0 0 auto', width: 58, textAlign: 'center', background: '#fff', border: '1px solid #e3e6ea', borderRadius: 10, padding: '8px 4px' }}>
-            <div style={{ fontSize: 11, color: '#6b7280' }}>{hourLabel(h.time)}</div>
-            <div style={{ fontSize: 20 }}>{wmo(h.code)[0]}</div>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>{Math.round(h.temp)}°</div>
-            {h.pop != null && <div style={{ fontSize: 10.5, color: '#2563eb' }}>💧{h.pop}%</div>}
+      <h3 className="hd-section-title"><Clock size={14} /> Next 24 hours</h3>
+      <div className={cx('hd-card', styles.hourlyCard)}>
+        <div className={styles.hourlyScroll}>
+          <div className={styles.hourlyInner} style={{ width: hours.length * HOUR_W }}>
+            <HourlyCurve temps={hours.map((h) => h.temp)} />
+            <div className={styles.hourRow}>
+              {hours.map((h, i) => (
+                <div key={i} className={styles.hourCol}>
+                  <span className={cx(styles.hourLabel, i === 0 && styles.hourNow)} title={`${hourLabel(h.time)}:00`}>
+                    {i === 0 ? 'Now' : hourLabel(h.time)}
+                  </span>
+                  <span className={styles.hourEmoji} title={wmo(h.code)[1]}>{wmoGlyph(h.code, h.isDay)}</span>
+                  <PopCell pop={h.pop} />
+                </div>
+              ))}
+            </div>
           </div>
-        ))}
+        </div>
       </div>
 
-      <h3 style={sectionH}>7-day forecast</h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <h3 className="hd-section-title"><Calendar size={14} /> 7-day forecast</h3>
+      <div className={cx('hd-card', styles.dayList)}>
         {daily.time.map((d, i) => {
           const [icon, desc] = wmo(daily.weather_code[i]);
+          const lo = daily.temperature_2m_min[i];
+          const hi = daily.temperature_2m_max[i];
+          const pop = daily.precipitation_probability_max?.[i];
+          const width = clamp(((hi - lo) / weekSpan) * 100, 4, 100);
+          const left = clamp(((lo - weekMin) / weekSpan) * 100, 0, 100 - width);
+          const nowPos = clamp(((avgT - weekMin) / weekSpan) * 100, 0, 100);
           return (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#fff', border: '1px solid #e3e6ea', borderRadius: 10, padding: '8px 14px', fontSize: 13 }}>
-              <span style={{ width: 44, fontWeight: 600 }}>{i === 0 ? 'Today' : dayLabel(d)}</span>
-              <span style={{ fontSize: 20, width: 28, textAlign: 'center' }} title={desc}>{icon}</span>
-              <span style={{ color: '#6b7280', flex: 1 }}>{desc}</span>
-              {daily.precipitation_probability_max?.[i] != null && (
-                <span style={{ color: '#2563eb', fontSize: 12 }}>💧{daily.precipitation_probability_max[i]}%</span>
-              )}
-              <span style={{ width: 70, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                <b>{Math.round(daily.temperature_2m_max[i])}°</b> <span style={{ color: '#9ca3af' }}>{Math.round(daily.temperature_2m_min[i])}°</span>
+            <div key={i} className={styles.dayRow}>
+              <span className={styles.dayNameWrap}>
+                <span className={cx(styles.dayName, i === 0 && styles.dayToday)}>{i === 0 ? 'Today' : dayLabel(d)}</span>
+                <span className={styles.daySub}>
+                  {desc}{yr && yr.daily && yr.daily[d] ? ` · yr ${Math.round(yr.daily[d].tMax)}°/${Math.round(yr.daily[d].tMin)}°` : ''}
+                </span>
               </span>
-              {yr && yr.daily && yr.daily[d] && (
-                <span title={`YR: ${yrIcon(yr.daily[d].symbol)}`} style={{ width: 68, textAlign: 'right', color: '#9ca3af', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
+              <span className={styles.dayEmoji} title={desc}>{icon}</span>
+              <span className={styles.dayDesc}>{desc}</span>
+              <span className={cx(styles.dayRain, !(pop > 0) && styles.dayRainZero)} title={pop != null ? `${pop}% chance of precipitation` : undefined}>
+                {pop != null && (pop > 0 ? <><Droplets size={12} />{pop}%</> : `${pop}%`)}
+              </span>
+              <span className={styles.dayMin}>{Math.round(lo)}°</span>
+              <div className={styles.rangeWrap}>
+                <div className={styles.rangeTrack}>
+                  <div
+                    className={styles.rangeFill}
+                    style={{ left: `${left}%`, width: `${width}%`, background: `linear-gradient(90deg, ${tempTint(lo)}, ${tempTint(hi)})` }}
+                  />
+                  {i === 0 && <div className={styles.rangeNow} style={{ left: `${nowPos}%` }} title={`Now ${Math.round(avgT)}°`} />}
+                </div>
+              </div>
+              <span className={styles.dayMax}>{Math.round(hi)}°</span>
+              {yr && yr.daily && yr.daily[d] ? (
+                <span className={styles.dayYr} title={`YR: ${yrIcon(yr.daily[d].symbol)}`}>
                   yr {Math.round(yr.daily[d].tMax)}°/{Math.round(yr.daily[d].tMin)}°
                 </span>
-              )}
+              ) : <span className={styles.dayYr} />}
             </div>
           );
         })}
@@ -1172,7 +1576,7 @@ function WeatherTab() {
 }
 
 function Shell({ children }) {
-  return <div style={{ maxWidth: 1200, margin: '0 auto', padding: '20px 24px 60px' }}>{children}</div>;
+  return <div className="hd-shell">{children}</div>;
 }
 
 function RefreshControl({ countdown, refreshing, onRefresh, live }) {
@@ -1182,31 +1586,23 @@ function RefreshControl({ countdown, refreshing, onRefresh, live }) {
   const label = refreshing ? 'Refreshing…' : (live ? 'Refresh now' : `Refresh now · ${countdown}s`);
   return (
     <button
+      type="button"
       onClick={onRefresh}
       disabled={refreshing}
       title={live ? 'Refresh now (updates stream in live)' : 'Refresh now — resets the countdown'}
-      style={{
-        position: 'relative', overflow: 'hidden', marginLeft: 'auto',
-        display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 152,
-        justifyContent: 'center', padding: '6px 16px', borderRadius: 999,
-        border: '1px solid #2563eb', background: '#fff', color: '#2563eb',
-        fontSize: 12.5, cursor: refreshing ? 'default' : 'pointer', whiteSpace: 'nowrap',
-      }}
+      className="hd-btn"
+      style={{ position: 'relative', overflow: 'hidden', marginLeft: 'auto', minWidth: 152 }}
     >
-      <style>{'@keyframes hd-spin { to { transform: rotate(360deg); } }'}</style>
       <span
         aria-hidden="true"
         style={{
           position: 'absolute', left: 0, top: 0, bottom: 0, width: `${frac * 100}%`,
-          background: '#e0ebff', zIndex: 0,
+          background: 'var(--accent-soft)', zIndex: 0,
           transition: refreshing ? 'none' : 'width 0.9s linear',
         }}
       />
       <span style={{ position: 'relative', zIndex: 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        <span style={{
-          display: 'inline-block', fontSize: 14, lineHeight: 1,
-          animation: refreshing ? 'hd-spin 0.8s linear infinite' : 'none',
-        }}>↻</span>
+        <RefreshCw size={14} style={refreshing ? SPIN : undefined} />
         {label}
       </span>
     </button>
@@ -1214,9 +1610,9 @@ function RefreshControl({ countdown, refreshing, onRefresh, live }) {
 }
 
 function batteryColor(pct) {
-  if (pct <= 20) return '#dc2626'; // red
+  if (pct <= 20) return '#ef4444'; // red
   if (pct <= 50) return '#eab308'; // yellow
-  return '#16a34a';                // green
+  return '#22c55e';                // green
 }
 
 function BatteryIndicator({ level }) {
@@ -1230,15 +1626,15 @@ function BatteryIndicator({ level }) {
     <span title={`Battery ${pct}%`} style={{ display: 'inline-flex', alignItems: 'center' }}>
       <svg width={totalW} height={bodyH} viewBox={`0 0 ${totalW} ${bodyH}`} aria-hidden="true">
         <rect
-          x="0.6" y="0.6" width={bodyW - 1.2} height={bodyH - 1.2} rx="3.2" ry="3.2"
-          fill="#fff" stroke="#9ca3af" strokeWidth="1"
+          x="0.6" y="0.6" width={bodyW - 1.2} height={bodyH - 1.2} rx="3.2" ry="3.2" strokeWidth="1"
+          style={{ fill: 'var(--surface-solid)', stroke: 'var(--faint)' }}
         />
-        <rect x={bodyW} y={(bodyH - capH) / 2} width={capW} height={capH} rx="1" fill="#9ca3af" />
+        <rect x={bodyW} y={(bodyH - capH) / 2} width={capW} height={capH} rx="1" style={{ fill: 'var(--faint)' }} />
         <rect x={pad} y={pad} width={fillW} height={bodyH - pad * 2} rx="1.8" fill={color} />
         <text
           x={bodyW / 2} y={bodyH / 2 + 0.5} textAnchor="middle" dominantBaseline="central"
-          fontSize="10.5" fontWeight="700" fill="#111827" stroke="#fff" strokeWidth="2.2"
-          paintOrder="stroke" style={{ fontVariantNumeric: 'tabular-nums' }}
+          fontSize="10.5" fontWeight="700" strokeWidth="2.2" paintOrder="stroke"
+          style={{ fill: 'var(--text)', stroke: 'var(--surface-solid)', fontVariantNumeric: 'tabular-nums' }}
         >
           {pct}
         </text>
@@ -1248,39 +1644,27 @@ function BatteryIndicator({ level }) {
 }
 
 function Pill({ children }) {
+  return <span className="hd-pill">{children}</span>;
+}
+
+// Small status chip. `tone` picks a hd-tag variant (good, warn, bad, heat, accent, cool, violet).
+function Tag({ children, tone, icon: Icon, title }) {
   return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 5, background: '#fff',
-      border: '1px solid #e3e6ea', borderRadius: 999, padding: '5px 12px',
-      fontSize: 12.5, color: '#374151',
-    }}>
+    <span title={title} className={cx('hd-tag', tone && `hd-tag-${tone}`)} style={title ? { cursor: 'help' } : undefined}>
+      {Icon && <Icon size={12} />}
       {children}
     </span>
   );
 }
 
-function Tag({ children, color, bg, title }) {
+function Empty({ children, icon: Icon }) {
   return (
-    <span title={title} style={{
-      fontSize: 11, padding: '2px 7px', borderRadius: 6, background: bg, color,
-      marginRight: 4, display: 'inline-block', cursor: title ? 'help' : 'default',
-    }}>
+    <div className="hd-empty">
+      {Icon && <Icon size={22} className={styles.emptyIcon} />}
       {children}
-    </span>
+    </div>
   );
 }
-
-function Empty({ children }) {
-  return <div style={{ color: '#6b7280', fontSize: 13, padding: '20px 0', textAlign: 'center' }}>{children}</div>;
-}
-
-const inputStyle = {
-  width: '100%', maxWidth: 320, padding: '7px 10px', borderRadius: 8,
-  border: '1px solid #e3e6ea', fontSize: 13, marginBottom: 14, background: '#fff',
-};
-
-const thStyle = { textAlign: 'left', padding: '8px 12px', fontSize: 12.5, color: '#6b7280', fontWeight: 600, borderBottom: '1px solid #e3e6ea' };
-const tdStyle = { textAlign: 'left', padding: '8px 12px', fontSize: 12.5, borderBottom: '1px solid #e3e6ea' };
 
 function warmthLabel(t) {
   if (t >= 0.75) return 'very warm';
@@ -1289,7 +1673,6 @@ function warmthLabel(t) {
   return 'cool';
 }
 
-// Best-guess a light's reset flow by token overlap with the flow name.
 // Best-guess a room's reset flow by token overlap with the flow name.
 // Short tokens (room codes like "E9", "ST") must match as whole words to avoid noise.
 function guessResetFlow(tokens, resetFlows) {
@@ -1466,14 +1849,16 @@ function LightingTab({ devices, flows, alStatus, onReload }) {
     }
   }
 
+  const tonePill = (tone) => ({ background: `var(--${tone}-soft)`, color: `var(--${tone})`, borderColor: 'transparent', fontWeight: 600 });
+
   return (
     <div>
-      <p style={{ color: '#6b7280', fontSize: 13, marginTop: -4 }}>
+      <p className="hd-lede">
         The configured circadian schedule from the Homey <code>adaptivelighting.js</code> script.
         Bar <b>height</b> = brightness, bar <b>color</b> = white balance (cool → warm), resolved for
         today&apos;s sunrise/sunset in København. Each light shows the mode the script reports:{' '}
         <b>Auto</b> (following the schedule, incl. daylight and sun adjustments), <b>Manual</b> (the
-        script saw it adjusted) or <b>📌</b> a forced profile. <b>Manual?</b> means the light has
+        script saw it adjusted) or <b><Pin size={11} style={{ verticalAlign: '-1px' }} /></b> a forced profile. <b>Manual?</b> means the light has
         differed from what the script last set for over 30 s and the script hasn&apos;t noticed yet; a
         leading <b>~</b> means the script hasn&apos;t reported this light, so the mode is guessed from
         the schedule. Hover a badge for what the script applied. <b>Reset room to Auto</b> triggers that
@@ -1481,64 +1866,60 @@ function LightingTab({ devices, flows, alStatus, onReload }) {
         lights to those settings now.
       </p>
 
-      {err && (
-        <div style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 14px', fontSize: 12.5, margin: '10px 0' }}>
-          {err}
-        </div>
-      )}
+      {err && <ErrorBox>{err}</ErrorBox>}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, margin: '8px 0 18px' }}>
-        <Pill>🌅 Sunrise {fmtMinutes(sun.sunriseMinutes)}</Pill>
-        <Pill>🌇 Sunset {fmtMinutes(sun.sunsetMinutes)}</Pill>
-        <Pill>🕐 Now {fmtMinutes(nowMin)}</Pill>
-        <Pill>{manualCount === 0 ? '✅ all Auto' : `✋ ${manualCount} manual`}</Pill>
-        <div style={{ marginLeft: 'auto', display: 'inline-flex', border: '1px solid #e3e6ea', borderRadius: 999, overflow: 'hidden' }}>
+      <div className={styles.alBar}>
+        <Pill><Sunrise size={14} className={styles.amber} /> Sunrise <b className="hd-num">{fmtMinutes(sun.sunriseMinutes)}</b></Pill>
+        <Pill><Sunset size={14} className={styles.amber} /> Sunset <b className="hd-num">{fmtMinutes(sun.sunsetMinutes)}</b></Pill>
+        <Pill><Clock size={14} /> Now <b className="hd-num">{fmtMinutes(nowMin)}</b></Pill>
+        {manualCount === 0 ? (
+          <span className="hd-pill" style={tonePill('good')}><CircleCheck size={14} /> all Auto</span>
+        ) : (
+          <span className="hd-pill" style={tonePill('warn')}><Hand size={14} /> {manualCount} manual</span>
+        )}
+        <div className={cx('hd-seg', styles.segRight)} role="group" aria-label="Schedule shown">
           {[['Weekday', false], ['Weekend', true]].map(([label, val]) => (
-            <button
-              key={label}
-              onClick={() => setWeekend(val)}
-              style={{
-                padding: '5px 14px', fontSize: 12.5, border: 'none', cursor: 'pointer',
-                background: weekend === val ? '#2563eb' : '#fff',
-                color: weekend === val ? '#fff' : '#6b7280',
-              }}
-            >
+            <button key={label} type="button" aria-pressed={weekend === val} onClick={() => setWeekend(val)}>
               {label}
             </button>
           ))}
         </div>
       </div>
 
-      {orderedAreas.map(({ area, members, repWeekday, repWeekend, repName, mixed }) => {
-        const roomFlow = flowForRoom(area, members);
-        const roomBusy = busy.has(area);
-        const memberModes = members.map((m) => modeForMember(m));
-        const roomMode = memberModes.some(isManualish) ? 'manual'
-          : memberModes.some((r) => r.mode === 'forced') ? 'forced' : 'auto';
-        const useWeekend = weekend && repWeekend;
-        const chartProfiles = useWeekend ? repWeekend : repWeekday;
-        return (
-          <div key={area} style={{ marginBottom: 22 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 10px', flexWrap: 'wrap' }}>
-              <h3 style={{ fontSize: 14, margin: 0, color: '#374151' }}>{area}</h3>
-              <ModeBadge mode={roomMode} />
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <select
-                  value={roomFlow ? roomFlow.id : ''}
-                  onChange={(e) => setFlowForRoom(area, e.target.value)}
-                  title="Which flow resets this room"
-                  style={{ fontSize: 11.5, padding: '4px 8px', borderRadius: 6, border: '1px solid #e3e6ea', background: '#fff', maxWidth: 220 }}
-                >
-                  <option value="">— reset flow —</option>
-                  {resetFlows.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
-                </select>
-                <button onClick={() => resetRoom(area, roomFlow)} disabled={roomBusy || !roomFlow} style={resetBtnStyle(roomBusy || !roomFlow)}>
-                  {roomBusy ? 'Running…' : '↺ Reset room to Auto'}
-                </button>
+      <div className={styles.areaList}>
+        {orderedAreas.map(({ area, members, repWeekday, repWeekend, repName, mixed }) => {
+          const roomFlow = flowForRoom(area, members);
+          const roomBusy = busy.has(area);
+          const memberModes = members.map((m) => modeForMember(m));
+          const roomMode = memberModes.some(isManualish) ? 'manual'
+            : memberModes.some((r) => r.mode === 'forced') ? 'forced' : 'auto';
+          const useWeekend = weekend && repWeekend;
+          const chartProfiles = useWeekend ? repWeekend : repWeekday;
+          return (
+            <div key={area} className="hd-card hd-card-pad">
+              <div className={styles.areaHead}>
+                <h3 className="hd-title">{area}</h3>
+                <ModeBadge mode={roomMode} />
+                <div className={styles.areaControls}>
+                  <select
+                    className="hd-select hd-select-sm"
+                    value={roomFlow ? roomFlow.id : ''}
+                    onChange={(e) => setFlowForRoom(area, e.target.value)}
+                    title="Which flow resets this room"
+                  >
+                    <option value="">— reset flow —</option>
+                    {resetFlows.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
+                  </select>
+                  <button
+                    type="button" className={cx('hd-btn hd-btn-soft hd-btn-sm', styles.tapSm)}
+                    onClick={() => resetRoom(area, roomFlow)} disabled={roomBusy || !roomFlow}
+                  >
+                    {roomBusy ? <LoaderCircle size={13} style={SPIN} /> : <RotateCcw size={13} />}
+                    {roomBusy ? 'Running…' : 'Reset room to Auto'}
+                  </button>
+                </div>
               </div>
-            </div>
-            <div style={{ background: '#fff', border: '1px solid #e3e6ea', borderRadius: 12, padding: '12px 14px' }}>
-              <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8 }}>
+              <div className={styles.caption}>
                 {(repWeekend ? (useWeekend ? 'weekend schedule' : 'weekday schedule') : 'same every day')}
                 {mixed && ` · timeline shown for ${repName}; other lights differ slightly`}
               </div>
@@ -1549,33 +1930,60 @@ function LightingTab({ devices, flows, alStatus, onReload }) {
                 onApplyPhase={(phase) => applyPhase(area, members, phase.name)}
                 applying={applying === area}
               />
-              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div className={styles.members}>
                 {members.map((m, i) => (
-                  <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
-                    <span style={{ flex: 1 }}>💡 {m.name}</span>
+                  <div key={m.id} className={styles.memberRow}>
+                    <BulbTile caps={deviceMap.get(m.id)} />
+                    <span className={styles.memberName} title={m.name}>{m.name}</span>
                     <ModeBadge {...memberModes[i]} />
                   </div>
                 ))}
               </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
+  );
+}
+
+// Lightbulb tile tinted with the light's current colour (when on and known).
+function BulbTile({ caps }) {
+  const s = lightSwatch(caps);
+  if (s && s.on) {
+    return (
+      <span
+        className={styles.bulb}
+        title={s.dim != null ? `on · ${Math.round(s.dim * 100)}%` : 'on'}
+        style={{
+          background: s.color, color: '#1f2937',
+          boxShadow: `0 0 14px -3px ${s.color}`,
+          opacity: s.dim != null ? 0.55 + 0.45 * s.dim : 1,
+        }}
+      >
+        <Lightbulb size={14} strokeWidth={2.2} />
+      </span>
+    );
+  }
+  return (
+    <span className={styles.bulb} title={s ? 'off' : undefined} style={s ? { color: 'var(--faint)' } : undefined}>
+      <Lightbulb size={14} />
+    </span>
   );
 }
 
 // mode/guess/st as returned by resolveLightMode (room badges pass just a mode).
 function ModeBadge({ mode, guess = false, st = null }) {
   const map = {
-    auto: { label: 'Auto', bg: '#ecfdf3', color: '#16a34a' },
-    manual: { label: 'Manual', bg: '#fff7ed', color: '#b45309' },
-    drift: { label: 'Manual?', bg: '#fffbeb', color: '#b45309' },
-    forced: { label: `📌 ${st?.profile || 'Forced'}`, bg: '#eff6ff', color: '#2563eb' },
-    off: { label: 'Off', bg: '#f1f2f4', color: '#6b7280' },
-    unknown: { label: '—', bg: '#f1f2f4', color: '#9ca3af' },
+    auto: { label: 'Auto', cls: 'hd-tag-good' },
+    manual: { label: 'Manual', cls: 'hd-tag-warn' },
+    drift: { label: 'Manual?', cls: 'hd-tag-warn', dashed: true },
+    forced: { label: st?.profile || 'Forced', cls: 'hd-tag-accent', Icon: Pin },
+    off: { label: 'Off', cls: '' },
+    unknown: { label: '—', cls: '', faint: true },
   };
   const s = map[mode] || map.unknown;
+  const BadgeIcon = s.Icon;
   // AL dimmed it for an empty room: "Auto · idle" (the mode underneath stays)
   const idle = !guess && mode !== 'off' && isIdle(st);
   const title = guess
@@ -1584,26 +1992,24 @@ function ModeBadge({ mode, guess = false, st = null }) {
       ? `Differs from what the script set (${describeLightStatus(st)}); it will switch to Manual on its next check`
       : describeLightStatus(st) || undefined;
   return (
-    <span title={title} style={{
-      fontSize: 11, padding: '2px 8px', borderRadius: 6, background: s.bg, color: s.color, fontWeight: 600,
-      opacity: guess ? 0.7 : 1,
-    }}>
-      {guess ? '~' : ''}{s.label}{idle ? ' · idle' : ''}
+    <span
+      title={title}
+      className={cx('hd-tag', s.cls, s.dashed && styles.driftDashed)}
+      style={{
+        opacity: guess ? 0.7 : 1, flexShrink: 0,
+        cursor: title ? 'help' : undefined,
+        color: s.faint ? 'var(--faint)' : undefined,
+      }}
+    >
+      {guess ? '~' : ''}
+      {BadgeIcon && <BadgeIcon size={11} />}
+      {s.label}{idle ? ' · idle' : ''}
     </span>
   );
 }
 
-function resetBtnStyle(disabled) {
-  return {
-    padding: '4px 10px', borderRadius: 999, border: '1px solid #2563eb',
-    background: '#fff', color: '#2563eb', fontSize: 11.5, whiteSpace: 'nowrap',
-    cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
-  };
-}
-
 function ScheduleChart({ profiles, sun, nowMin, onApplyPhase, applying }) {
   const phases = phaseList(profiles, sun);
-  const H = 76;
   const pct = (m) => `${(m / 1440) * 100}%`;
 
   // Split any phase that wraps past midnight into two drawable bars.
@@ -1618,59 +2024,60 @@ function ScheduleChart({ profiles, sun, nowMin, onApplyPhase, applying }) {
 
   return (
     <div>
-      <div style={{
-        position: 'relative', height: H, borderRadius: 8, overflow: 'hidden',
-        border: '1px solid #d7dbe0', background: 'linear-gradient(#0b1220, #131c2e)',
-      }}>
-        {[6, 12, 18].map((h) => (
-          <div key={h} style={{ position: 'absolute', left: pct(h * 60), top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.07)' }} />
+      <div className={styles.chart}>
+        {[3, 6, 9, 12, 15, 18, 21].map((h) => (
+          <div key={h} className={cx(styles.grid, h % 6 === 0 && styles.gridMajor)} style={{ left: pct(h * 60) }} />
         ))}
-        {bars.map((b, k) => (
-          <div
-            key={k}
-            title={`${b.name}: ${fmtMinutes(b.start)}–${fmtMinutes(b.end)} · ${Math.round(b.brightness * 100)}% · ${warmthLabel(b.temperature)}`}
-            style={{
-              position: 'absolute', left: pct(b.s), width: pct(b.e - b.s), bottom: 0,
-              height: `${Math.max(3, b.brightness * 100)}%`, background: tempColor(b.temperature),
-              borderRight: '1px solid rgba(0,0,0,0.18)', opacity: 0.95,
-            }}
-          />
-        ))}
-        {[['🌅', sun.sunriseMinutes], ['🌇', sun.sunsetMinutes]].map(([icon, m]) => (
-          <div key={icon} style={{ position: 'absolute', left: pct(m), top: 0, bottom: 0, width: 1, background: 'rgba(255,214,102,0.5)' }}>
-            <span style={{ position: 'absolute', top: -1, left: '50%', transform: 'translateX(-50%)', fontSize: 9 }}>{icon}</span>
+        {bars.map((b, k) => {
+          const c = tempColor(b.temperature);
+          return (
+            <div
+              key={k}
+              className={styles.bar}
+              title={`${b.name}: ${fmtMinutes(b.start)}–${fmtMinutes(b.end)} · ${Math.round(b.brightness * 100)}% · ${warmthLabel(b.temperature)}`}
+              style={{
+                left: `calc(${pct(b.s)} + 1px)`, width: `calc(${pct(b.e - b.s)} - 2px)`,
+                height: `${Math.max(3, b.brightness * 100)}%`,
+                background: `linear-gradient(180deg, rgba(255, 255, 255, 0.4) 0, rgba(255, 255, 255, 0) 5px), ${c}`,
+                boxShadow: `0 0 16px -3px ${c}`,
+              }}
+            />
+          );
+        })}
+        {[[Sunrise, sun.sunriseMinutes, 'Sunrise'], [Sunset, sun.sunsetMinutes, 'Sunset']].map(([SunIcon, m, label]) => (
+          <div key={label} className={styles.sunMark} style={{ left: pct(m) }} title={`${label} ${fmtMinutes(m)}`}>
+            <span className={styles.sunIcon}><SunIcon size={12} strokeWidth={2.2} /></span>
           </div>
         ))}
-        <div style={{ position: 'absolute', left: pct(nowMin), top: 0, bottom: 0, width: 2, background: '#ef4444', boxShadow: '0 0 5px rgba(239,68,68,0.9)' }} />
+        <div className={styles.nowLine} style={{ left: pct(nowMin) }} title={`Now ${fmtMinutes(nowMin)}`}>
+          <span className={styles.nowDot} />
+        </div>
       </div>
 
-      <div style={{ position: 'relative', height: 14, marginTop: 3, fontSize: 10, color: '#9ca3af' }}>
+      <div className={styles.axis}>
         {[0, 6, 12, 18, 24].map((h) => (
-          <span key={h} style={{ position: 'absolute', left: pct(h * 60), transform: h === 0 ? 'none' : h === 24 ? 'translateX(-100%)' : 'translateX(-50%)' }}>
+          <span key={h} style={{ left: pct(h * 60), transform: h === 0 ? 'none' : h === 24 ? 'translateX(-100%)' : 'translateX(-50%)' }}>
             {String(h).padStart(2, '0')}
           </span>
         ))}
       </div>
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+      <div className={styles.phases}>
         {phases.map((p, i) => {
           const active = isActive(p, nowMin);
+          const c = tempColor(p.temperature);
           return (
             <button
               key={i}
+              type="button"
               onClick={() => onApplyPhase && onApplyPhase(p)}
               disabled={applying || !onApplyPhase}
               title={`Set these lights to ${p.name} (${Math.round(p.brightness * 100)}%) now`}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, padding: '3px 8px',
-                borderRadius: 6, border: `1px solid ${active ? '#2563eb' : '#e3e6ea'}`,
-                background: active ? '#eff4ff' : '#fff', color: '#374151',
-                cursor: applying ? 'default' : 'pointer', opacity: applying ? 0.6 : 1,
-              }}
+              className={cx(styles.phaseChip, active && styles.phaseChipActive)}
             >
-              <span style={{ width: 9, height: 9, borderRadius: 2, background: tempColor(p.temperature), border: '1px solid rgba(0,0,0,0.15)' }} />
+              <span className={styles.swatch} style={{ background: c, boxShadow: `0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 8px ${c}` }} />
               <b style={{ fontWeight: active ? 700 : 600 }}>{p.name}</b>
-              <span style={{ color: '#6b7280' }}>{fmtMinutes(p.start)} · {Math.round(p.brightness * 100)}%</span>
+              <span className={styles.phaseMeta}>{fmtMinutes(p.start)} · {Math.round(p.brightness * 100)}%</span>
             </button>
           );
         })}
@@ -1700,7 +2107,7 @@ function lightSwatch(caps) {
 
 function LightStrip({ lights }) {
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 8 }}>
+    <div className={styles.lightStrip}>
       {lights.map((d) => {
         const s = lightSwatch(d.capabilities);
         if (!s) return null;
@@ -1710,12 +2117,11 @@ function LightStrip({ lights }) {
           <span
             key={d.id}
             title={`${d.name}: ${label}`}
-            style={{
-              width: 16, height: 16, borderRadius: 4,
-              background: s.on ? s.color : '#eceef1', opacity,
-              border: s.on ? '1px solid rgba(0,0,0,0.12)' : '1px solid #d1d5db',
-              boxShadow: s.on ? `0 0 5px ${s.color}` : 'none',
-            }}
+            className={cx(styles.lightDot, !s.on && styles.lightDotOff)}
+            style={s.on ? {
+              background: s.color, opacity,
+              boxShadow: `0 0 10px ${s.color}, inset 0 0 0 1px rgba(0, 0, 0, 0.1)`,
+            } : undefined}
           />
         );
       })}
@@ -1727,22 +2133,22 @@ function DeviceControls({ device, onControl }) {
   const c = device.capabilities;
   const set = (values) => onControl(device.id, values);
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 5, paddingLeft: 20 }}>
+    <div className={styles.controls}>
       {'dim' in c && (
         <SliderRow
-          icon="🔆" value={c.dim ?? 0} accent="#f59e0b"
+          icon={SunMedium} value={c.dim ?? 0} accent="#f59e0b"
           onCommit={(v) => set({ dim: v, ...('onoff' in c && v > 0 ? { onoff: true } : {}) })}
         />
       )}
       {'light_temperature' in c && (
         <SliderRow
-          icon="🌡️" value={c.light_temperature ?? 0} accent="#fb923c"
+          icon={Thermometer} value={c.light_temperature ?? 0} accent="#fb923c"
           fmt={(v) => (v >= 0.5 ? 'warm' : 'cool')}
           onCommit={(v) => set({ light_temperature: v, ...('light_mode' in c ? { light_mode: 'temperature' } : {}) })}
         />
       )}
       {'windowcoverings_set' in c && (
-        <SliderRow icon="🪟" value={c.windowcoverings_set ?? 0} accent="#2563eb" onCommit={(v) => set({ windowcoverings_set: v })} />
+        <SliderRow icon={Blinds} value={c.windowcoverings_set ?? 0} accent="var(--accent)" onCommit={(v) => set({ windowcoverings_set: v })} />
       )}
       {'target_temperature' in c && (
         <TempStepper value={c.target_temperature ?? 20} current={c.measure_temperature} onCommit={(v) => set({ target_temperature: v })} />
@@ -1751,20 +2157,14 @@ function DeviceControls({ device, onControl }) {
   );
 }
 
-function Toggle({ on, onChange }) {
+function Toggle({ on, onChange, size }) {
   return (
     <button
       type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)}
       title={on ? 'Turn off' : 'Turn on'}
-      style={{
-        width: 38, height: 22, borderRadius: 999, border: 'none', padding: 0, cursor: 'pointer',
-        background: on ? '#16a34a' : '#cbd5e1', position: 'relative', transition: 'background .15s',
-      }}
+      className={cx(styles.toggle, size === 'lg' && styles.toggleLg, on && styles.toggleOn)}
     >
-      <span style={{
-        position: 'absolute', top: 2, left: on ? 18 : 2, width: 18, height: 18, borderRadius: '50%',
-        background: '#fff', transition: 'left .15s', boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
-      }} />
+      <span className={styles.knob} />
     </button>
   );
 }
@@ -1774,34 +2174,32 @@ function SliderRow({ icon, value, onCommit, accent, fmt }) {
   useEffect(() => { setV(value); }, [value]);
   const pct = Math.round((v ?? 0) * 100);
   const commit = (e) => onCommit(e.target.valueAsNumber / 100);
+  const Icon = typeof icon === 'string' ? null : icon;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ width: 16, textAlign: 'center' }}>{icon}</span>
+    <div className={styles.sliderRow}>
+      <span className={styles.sliderIcon}>{Icon ? <Icon size={15} /> : icon}</span>
       <input
         type="range" min={0} max={100} value={pct}
         onChange={(e) => setV(e.target.valueAsNumber / 100)}
         onPointerUp={commit}
         onKeyUp={commit}
-        style={{ flex: 1, accentColor: accent || '#2563eb', cursor: 'pointer' }}
+        className={styles.slider}
+        style={{ accentColor: accent || 'var(--accent)' }}
       />
-      <span style={{ width: 40, textAlign: 'right', color: '#6b7280', fontSize: 11 }}>{fmt ? fmt(v) : `${pct}%`}</span>
+      <span className={styles.sliderVal}>{fmt ? fmt(v) : `${pct}%`}</span>
     </div>
   );
 }
 
 function TempStepper({ value, current, onCommit }) {
   const round = (x) => Math.round(x * 2) / 2;
-  const btn = {
-    width: 24, height: 24, borderRadius: 6, border: '1px solid #e3e6ea', background: '#fff',
-    cursor: 'pointer', fontSize: 14, lineHeight: 1,
-  };
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ width: 16, textAlign: 'center' }}>🎯</span>
-      <button type="button" style={btn} onClick={() => onCommit(round(value - 0.5))}>−</button>
-      <span style={{ minWidth: 48, textAlign: 'center', fontVariantNumeric: 'tabular-nums' }}>{value}°C</span>
-      <button type="button" style={btn} onClick={() => onCommit(round(value + 0.5))}>＋</button>
-      {current != null && <span style={{ color: '#9ca3af', fontSize: 11 }}>now {current}°C</span>}
+    <div className={styles.sliderRow}>
+      <span className={styles.sliderIcon}><Target size={15} /></span>
+      <button type="button" className="hd-step" onClick={() => onCommit(round(value - 0.5))} aria-label="Lower target">−</button>
+      <span className={styles.stepVal}>{value}°C</span>
+      <button type="button" className="hd-step" onClick={() => onCommit(round(value + 0.5))} aria-label="Raise target">+</button>
+      {current != null && <span className="hd-faint hd-num" style={{ fontSize: 11.5 }}>now {current}°C</span>}
     </div>
   );
 }
@@ -1809,9 +2207,9 @@ function TempStepper({ value, current, onCommit }) {
 // Pulsing "live" indicator shown while a room has active motion.
 function MotionBadge() {
   return (
-    <span title="Motion detected now" style={{ display: 'inline-flex', alignItems: 'center', padding: 3, cursor: 'help' }}>
-      <style>{'@keyframes hd-pulse{0%{box-shadow:0 0 0 0 rgba(22,163,74,.5)}70%{box-shadow:0 0 0 7px rgba(22,163,74,0)}100%{box-shadow:0 0 0 0 rgba(22,163,74,0)}}'}</style>
-      <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#16a34a', animation: 'hd-pulse 1.4s ease-out infinite' }} />
+    <span className="hd-tag hd-tag-good" title="Motion detected now" style={{ cursor: 'help', flexShrink: 0 }}>
+      <span className={cx('hd-live-dot', styles.activeDot)} />
+      Active
     </span>
   );
 }
@@ -1873,7 +2271,7 @@ function RoomCard({ group, zone, openRooms, onControl }) {
       const title = `No motion since ${new Date(since).toLocaleTimeString()}`;
       const secs = Math.max(0, Math.floor((Date.now() - since) / 1000));
       const label = secs < INACTIVE_COUNTER_LIMIT ? fmtDuration(secs) : fmtLongDuration(secs);
-      motionTag = <Tag bg="#f1f2f4" color="#6b7280" title={title}>💤 {label}</Tag>;
+      motionTag = <Tag icon={Moon} title={title}><span className="hd-num">{label}</span></Tag>;
     }
   }
 
@@ -1886,26 +2284,36 @@ function RoomCard({ group, zone, openRooms, onControl }) {
   }
 
   return (
-    <div style={{ position: 'relative', background: '#fff', border: '1px solid #e3e6ea', borderRadius: 12, padding: '14px 16px' }}>
-      {motionTag && <div style={{ position: 'absolute', top: 12, right: 12 }}>{motionTag}</div>}
-      <h3 style={{ margin: '0 0 2px', fontSize: 14.5, paddingRight: 74 }}>{roomName}</h3>
-      <div style={{ color: '#6b7280', fontSize: 11.5, marginBottom: 8 }}>{group.path}</div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 5, marginBottom: 8 }}>
-        {lightsTotal > 0 && <Tag bg={lightsOn ? '#ecfdf3' : '#f1f2f4'} color={lightsOn ? '#16a34a' : '#6b7280'}>💡 {lightsOn}/{lightsTotal}</Tag>}
-        {avgTemp != null && <Tag bg="#f1f2f4" color="#6b7280">🌡️ {avgTemp}°C</Tag>}
-        {openContact && <Tag bg="#fff7ed" color="#b45309">🚪 open</Tag>}
-        {leak && <Tag bg="#fef2f2" color="#dc2626">💧 leak</Tag>}
+    <div className="hd-card hd-card-pad hd-card-hover">
+      <div className={styles.roomHead}>
+        <div style={{ minWidth: 0 }}>
+          <h3 className="hd-title">{roomName}</h3>
+          <div className={styles.roomPath}>{group.path}</div>
+        </div>
+        {motionTag}
+      </div>
+      <div className={styles.chips}>
+        {lightsTotal > 0 && (
+          <Tag tone={lightsOn ? 'good' : null} icon={Lightbulb}>{lightsOn}/{lightsTotal}</Tag>
+        )}
+        {avgTemp != null && <Tag icon={Thermometer}>{avgTemp}°C</Tag>}
+        {openContact && <Tag tone="warn" icon={DoorOpen}>open</Tag>}
+        {leak && <Tag tone="bad" icon={Droplets}>leak</Tag>}
         {minBattery != null && <BatteryIndicator level={minBattery} />}
         {!lightsTotal && avgTemp == null && !hasMotion && !openContact && !leak && minBattery == null && (
-          <Tag bg="#f1f2f4" color="#6b7280">no live signals</Tag>
+          <Tag>no live signals</Tag>
         )}
       </div>
       {lightsTotal > 0 && <LightStrip lights={group.devices.filter((d) => d.class === 'light')} />}
-      <span onClick={toggle} style={{ fontSize: 11.5, color: '#2563eb', cursor: 'pointer' }}>
-        {group.devices.length} device{group.devices.length === 1 ? '' : 's'} {open ? '▸' : '▾'}
-      </span>
+      <button
+        type="button" onClick={toggle} aria-expanded={open}
+        className={cx('hd-btn hd-btn-ghost hd-btn-sm', styles.devToggle)}
+      >
+        {group.devices.length} device{group.devices.length === 1 ? '' : 's'}
+        <ChevronDown size={14} className={cx(styles.chev, open && styles.chevOpen)} />
+      </button>
       {open && (
-        <div style={{ marginTop: 8, borderTop: '1px solid #e3e6ea', paddingTop: 8 }}>
+        <div className={styles.devList}>
           {[...group.devices].sort((a, b) => a.name.localeCompare(b.name)).map((d) => {
             const c = d.capabilities;
             const line = deviceStateLine(c);
@@ -1913,19 +2321,20 @@ function RoomCard({ group, zone, openRooms, onControl }) {
             const canToggle = 'onoff' in c;
             const hasSliders = 'dim' in c || 'light_temperature' in c || 'windowcoverings_set' in c || 'target_temperature' in c;
             const controllable = onControl && (canToggle || hasSliders);
+            const DIcon = TYPE_ICON[d.class] || House;
             return (
-              <div key={d.id} style={{ padding: '5px 0', fontSize: 12, borderTop: '1px dashed #eef0f2' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                  <span>{TYPE_ICON[d.class] || '🏠'} {d.name}</span>
-                  <span style={{
-                    color: '#6b7280', display: 'inline-flex', alignItems: 'center', gap: 8,
-                    justifyContent: 'flex-end', flexWrap: 'wrap',
-                  }}>
-                    {!controllable && line !== '—' && <span>{line}</span>}
+              <div key={d.id} className={styles.devRow}>
+                <div className={styles.devMain}>
+                  <span className={cx(styles.devIcon, canToggle && c.onoff && styles.devIconOn)}><DIcon size={15} /></span>
+                  <div className={styles.devText}>
+                    <div className={styles.devName}>{d.name}</div>
+                    {line !== '—' && <div className={styles.devState}>{line}</div>}
+                  </div>
+                  <div className={styles.devRight}>
                     {battery != null && <BatteryIndicator level={battery} />}
                     {canToggle && onControl && <Toggle on={!!c.onoff} onChange={(v) => onControl(d.id, { onoff: v })} />}
-                    {!controllable && battery == null && line === '—' && <span>—</span>}
-                  </span>
+                    {!controllable && battery == null && line === '—' && <span className="hd-faint">—</span>}
+                  </div>
                 </div>
                 {onControl && hasSliders && <DeviceControls device={d} onControl={onControl} />}
               </div>
