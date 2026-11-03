@@ -30,7 +30,7 @@
  * - One run per room at a time (run lock); requests wait, normal runs skip
  *
  * Author: Henrik Skovgaard
- * Version: 10.25.1
+ * Version: 10.26.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
@@ -283,7 +283,9 @@ const DEFAULT_STATE = {
     modeExpires: null,        // timestamp when mode auto-expires
     modeDetails: {},          // mode-specific: { type, originalValue } for manual
 
-    away: false,              // TADO away mode active
+    away: false,              // away applies to this room (TADO away and the room not in use)
+    tadoAway: false,          // TADO presence on the previous run (a change clears the baseline)
+    awayPaused: false,        // activity paused away during this TADO away period (later changes are routine)
     awaySince: null,          // timestamp when away mode started
 
     // Reference points for TADO manual detection (smart plugs have no detection)
@@ -331,6 +333,7 @@ function getRoomState() {
             return {
                 ...DEFAULT_STATE,
                 ...parsed,
+                tadoAway: parsed.tadoAway ?? !!parsed.away,   // before 10.26 'away' was TADO's presence
                 // Only the current baseline fields are kept (drops fields from older versions)
                 baseline: {
                     commandedTargetTemp: parsed.baseline?.commandedTargetTemp ?? null,
@@ -484,6 +487,39 @@ function effectiveTargetFor(slot, away, inactive) {
     }
     const offset = getEffectiveSetting(slot, 'inactivityOffset', ROOM.settings.inactivityOffset || 0);
     return inactive && offset > 0 ? slot.target - offset : slot.target;
+}
+
+/**
+ * Is the room in use? The zone is active now, or was within the slot's inactivityTimeout
+ * (slot value or room default). Unlike checkInactivity this ignores inactivityOffset, so
+ * it also answers in slots without a setback.
+ */
+async function isRoomInUse(slot) {
+    try {
+        const zone = await getZoneByName(ROOM.zoneName);
+        if (!zone) return false;
+        if (zone.active) return true;
+        const lastActive = new Date(zone.activeLastUpdated).getTime();
+        if (!Number.isFinite(lastActive)) return false;
+        // Once away applies, only activity after it started can pause it: a slot change
+        // that lengthens the timeout must not bring back activity from before away began.
+        if (roomState && roomState.away && roomState.awaySince && lastActive <= roomState.awaySince) return false;
+        const timeout = getEffectiveSetting(slot, 'inactivityTimeout', ROOM.settings.inactivityTimeout);
+        return (Date.now() - lastActive) / 60000 < timeout;
+    } catch (error) {
+        log(`⚠️  Could not check whether the room is in use: ${error.message}`);
+        return false;
+    }
+}
+
+/**
+ * Does away apply to this room? TADO says away AND the room is not in use. Activity in
+ * the room (someone home that TADO does not track) keeps the normal schedule; once the
+ * room has been unused for inactivityTimeout it falls back to the away target.
+ */
+async function isAwayForRoom(slot) {
+    if (!(await isTadoAway())) return false;
+    return !(await isRoomInUse(slot));
 }
 
 function getDanishLocalTime() {
@@ -769,16 +805,16 @@ async function controlOverrideMode(mode, roomTemp) {
 async function resumeNormalHeating(slot, fromExpiry, modeType) {
     log(`\n--- RESUMING NORMAL HEATING (${modeType} ${fromExpiry ? 'expired' : 'cancelled'}) ---`);
 
-    const tadoAway = await isTadoAway();
+    const away = await isAwayForRoom(slot);
     const inactivity = await checkInactivity(slot);
     const inactivityOffset = inactivity.inactivityOffset || 0;
 
     let resumeTarget = slot.target;
 
-    if (tadoAway && ROOM.settings.tadoAwayMinTemp !== null) {
+    if (away && ROOM.settings.tadoAwayMinTemp !== null) {
         resumeTarget = awayTarget(slot.target);
         log(`🏠 Away mode: Using ${resumeTarget}°C`);
-    } else if (!tadoAway && inactivity.inactive && inactivityOffset > 0) {
+    } else if (!away && inactivity.inactive && inactivityOffset > 0) {
         resumeTarget -= inactivityOffset;
         log(`💤 Inactivity mode active - reducing target by ${inactivityOffset}°C`);
         log(`→ Resume target: ${resumeTarget}°C (with inactivity offset)`);
@@ -856,8 +892,8 @@ async function detectManualIntervention() {
         const currentTarget = device.capabilitiesObj.target_temperature.value;
         const smartSchedule = device.capabilitiesObj['onoff.smart_schedule']?.value;
 
-        if (await isTadoAway()) {
-            log(`ℹ️ TADO away - skipping manual detection`);
+        if (await isAwayForRoom(scheduleCtx.currentSlot)) {
+            log(`ℹ️ Away applies to this room - skipping manual detection`);
             return { detected: false };
         }
 
@@ -1642,8 +1678,9 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
     const roomTemp = roomTempObj?.value;
     const heatingOn = await getHeatingStatus();
     const tadoAway = await isTadoAway();
+    const away = await isAwayForRoom(slot);
     const inactivity = await checkInactivity(slot);
-    const wasInTadoAway = roomState.away;
+    const wasAway = roomState.away;
     
     // Get effective settings using unified override pattern
     const inactivityOffset = inactivity.inactivityOffset || 0;
@@ -1657,11 +1694,14 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
     log(`Room: ${roomTemp}°C | Base Target: ${slot.target}°C`);
     log(`Window: ${windowOpen ? 'OPEN' : 'CLOSED'}`);
     log(`TADO Away mode: ${tadoAway ? 'YES (nobody home)' : 'NO (someone home)'}`);
+    if (tadoAway && !away) {
+        log(`Away paused for this room: in use (activity within ${getEffectiveSetting(slot, 'inactivityTimeout', ROOM.settings.inactivityTimeout)} min)`);
+    }
     log(`Inactivity: ${inactivity.inactive ? `YES (${inactivity.minutesSinceMotion} min since activity)` : `NO (${inactivity.minutesSinceMotion} min since activity)`} | Offset: ${inactivityOffset}°C`);
     log(`Heating: ${heatingOn ? 'ON' : 'OFF'}`);
     
-    // TADO Away Mode - note: wasInTadoAway check moved to main execution before manual intervention detection
-    if (tadoAway) {
+    // Away: TADO says away and the room is not in use (activity overrides away)
+    if (away) {
         log(`🏠 TADO is in away mode - nobody home`);
         
         if (ROOM.settings.tadoAwayMinTemp === null) {
@@ -1675,8 +1715,8 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
                     await setHeating(true, effectiveTarget);
                     log(`🔥 TADO set to very low (15°C) - away mode, no min temp`);
                 }
-                addChange("Away");
-                addChange("Heat off");
+                addChange("Away", !!roomState.awayPaused);
+                addChange("Heat off", !!roomState.awayPaused);
                 roomState.away = true; roomState.awaySince = roomState.awaySince || Date.now(); saveRoomState(roomState);
                 return 'tado_away_off';
             } else {
@@ -1688,25 +1728,39 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
             effectiveTarget = awayTarget(slot.target);
             log(`🔥 TADO away mode: Holding ${effectiveTarget}°C (away ${ROOM.settings.tadoAwayMinTemp}°C, schedule ${slot.target}°C)`);
 
-            if (!wasInTadoAway) {
-                addChange("Away");
-                addChange(`Min ${effectiveTarget}°C`);
+            if (!wasAway) {
+                // The first "Away" of a TADO away period is an exception; re-entry after activity is routine
+                addChange("Away", !!roomState.awayPaused);
+                addChange(`Min ${effectiveTarget}°C`, !!roomState.awayPaused);
                 roomState.away = true; roomState.awaySince = roomState.awaySince || Date.now(); saveRoomState(roomState);
             }
 
             log(`→ Effective target: ${effectiveTarget}°C (away)`);
         }
     } else {
-        if (wasInTadoAway) {
-            roomState.away = false; roomState.awaySince = null; saveRoomState(roomState);
-            log(`✅ TADO back to home mode - resuming normal schedule`);
-            addChange("Home");
-            
-            // Explicitly resume heating with temperature verification when returning home
-            await resumeNormalHeating(slot, false, 'away_return');
-            
-            // Return early to allow resume to complete, normal schedule continues on next run
-            return 'tado_home_resume';
+        if (wasAway) {
+            roomState.away = false; roomState.awaySince = null;
+            if (tadoAway) {
+                // Activity while TADO is still away: routine, so a room that keeps going in and
+                // out of use during a long absence does not fill the timeline
+                roomState.awayPaused = true;
+                log(`👣 Activity in the room - away paused, resuming normal schedule`);
+                addChange("Activity", ROUTINE);
+                addChange("Away paused", ROUTINE);
+            } else {
+                roomState.awayPaused = false;
+                log(`✅ TADO back to home mode - resuming normal schedule`);
+                addChange("Home");
+            }
+            saveRoomState(roomState);
+
+            // With a window open or the settle delay running, the window logic below decides
+            // (it keeps the heating off and resumes it when allowed)
+            if (!windowOpen && !roomState.window.openSince && !roomState.window.closedSince) {
+                await resumeNormalHeating(slot, false, 'away_return');
+                return 'tado_home_resume';
+            }
+            log(`Window open or settling - the window logic decides the heating`);
         }
     }
     
@@ -1754,6 +1808,10 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
                     if (ROOM.heating.type === 'tado_valve') {
                         await setHeating(false, effectiveTarget);
                         log(`🔥 TADO ensured OFF (window still open)`);
+                    } else if (heatingOn) {
+                        // A radiator switched on by hand or by a resume must not heat into an open window
+                        await setHeating(false, effectiveTarget);
+                        log(`Radiators switched OFF (window still open)`);
                     }
                 }
 
@@ -1799,7 +1857,7 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
                 return 'window_closed_waiting';
             }
 
-            log(`✓ Air settle delay complete - resuming heating${tadoAway ? ' (away mode)' : ''}`);
+            log(`✓ Air settle delay complete - resuming heating${away ? ' (away mode)' : ''}`);
             const resumed = await resumeNormalHeating(slot, true, 'window_settle');
 
             if (resumed) {
@@ -1807,7 +1865,7 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
                 saveRoomState(roomState);
 
                 // Not worth a notification when nobody is home
-                if (!tadoAway) {
+                if (!away) {
                     addChange("Air settled");
                     addChange("Heat resumed");
                 }
@@ -1821,7 +1879,7 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
     }
 
     // Inactivity Mode (only if not in TADO away mode)
-    if (!tadoAway && inactivity.inactive && inactivityOffset > 0) {
+    if (!away && inactivity.inactive && inactivityOffset > 0) {
         effectiveTarget -= inactivityOffset;
         log(`💤 Inactivity mode active - reducing target by ${inactivityOffset}°C`);
         log(`→ Effective target: ${effectiveTarget}°C (inactivity)`);
@@ -1969,8 +2027,9 @@ async function logDiagnostics(now, roomTemp, slot, action, override = false) {
         const heatingOn = await getHeatingStatus();
         const windowOpen = await isWindowOpen();
         const tadoAway = await isTadoAway();
+        const away = await isAwayForRoom(scheduleCtx ? scheduleCtx.currentSlot : slot);
         const inactive = override ? !!roomState.inactive : (await checkInactivity(slot)).inactive;
-        const effectiveTarget = override ? slot.target : effectiveTargetFor(slot, tadoAway, inactive);
+        const effectiveTarget = override ? slot.target : effectiveTargetFor(slot, away, inactive);
 
         // Live status for the dashboard and the status script - published on every run.
         // scheduledTarget is always the schedule's target; effectiveTarget reflects the
@@ -1999,7 +2058,8 @@ async function logDiagnostics(now, roomTemp, slot, action, override = false) {
             heating: !!heatingOn,
             windowOpen: !!windowOpen,
             inactive: !!inactive,
-            away: !!tadoAway,
+            away: !!away,
+            tadoAway: !!tadoAway,
             lastAction: action,
             updatedAt: Date.now(),
         });
@@ -2135,15 +2195,25 @@ async function main() {
     // forget what we last commanded: there is nothing valid to compare the valve against
     // until the script sets a target again.
     const currentTadoAway = await isTadoAway();
-    const wasInTadoAway = roomState.away;
+    const wasInTadoAway = roomState.tadoAway;
 
     if (wasInTadoAway !== currentTadoAway) {
+        roomState.tadoAway = currentTadoAway;
+        roomState.awayPaused = false;
         roomState.baseline.commandedTargetTemp = null;
         saveRoomState(roomState);
         log(wasInTadoAway && !currentTadoAway
             ? `\n✅ TADO returning from away mode - cleared commanded target`
             : `\n🏠 TADO entering away mode - cleared commanded target`);
     }
+
+    // ============================================================================
+    // Schedule Resolution (once per run)
+    // ============================================================================
+
+    scheduleCtx = await resolveSchedule();
+    scheduleCtx.nextChange = await getNextScheduleChange(scheduleCtx.schedule, scheduleCtx.currentSlot);
+    const currentSlot = scheduleCtx.currentSlot;
 
     // ============================================================================
     // Manual Intervention Detection (Highest Priority)
@@ -2160,14 +2230,6 @@ async function main() {
             });
         }
     }
-
-    // ============================================================================
-    // Schedule Resolution (once per run)
-    // ============================================================================
-
-    scheduleCtx = await resolveSchedule();
-    scheduleCtx.nextChange = await getNextScheduleChange(scheduleCtx.schedule, scheduleCtx.currentSlot);
-    const currentSlot = scheduleCtx.currentSlot;
 
     // ============================================================================
     // Override Mode Requests (cancel / pause / boost)
@@ -2333,7 +2395,7 @@ async function main() {
 
     // Send unified notification
     const heatingOn = await getHeatingStatus();
-    const tadoAway = await isTadoAway();
+    const tadoAway = await isAwayForRoom(currentSlot);   // away as applied to this room
 
     // Use stored inactivity mode (don't check again - zone might have become active!)
     const wasInactivityMode = roomState.inactive || false;

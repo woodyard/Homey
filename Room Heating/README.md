@@ -30,7 +30,8 @@ Each room in `ROOMS` has:
 - `heating.type`: `smart_plug` or `tado_valve`. Smart plugs also take `hysteresis` (default 0.5).
 - `schedules`: `weekday`, `weekend` and `holiday` slot lists, plus `earlyEvening` (school tomorrow) and `lateEvening` (no school tomorrow). Each slot has `start`, `end`, `target` and `name`.
 - `settings`: room defaults for `tadoAwayMinTemp`, `inactivityTimeout` (minutes), `inactivityOffset` (degrees), `windowOpenTimeout` (seconds), `windowClosedDelay` (seconds) and `manualOverrideDuration` (minutes). Optional `sensorStaleMinutes` (default 60): how long the heating may run without a single report from the room temperature sensor before the sensor counts as silent.
-- `tadoAwayMinTemp` is the target while TADO is in away mode, unless the schedule already asks for less: away never raises a target.
+- `tadoAwayMinTemp` is the target while away applies to the room, unless the schedule already asks for less: away never raises a target.
+- Away applies to a room only while TADO says away AND the room is not in use (activity now, or within the slot's `inactivityTimeout`). Activity in the room - someone TADO does not track - keeps the normal schedule; once the room has been unused for the timeout it falls back to the away target. Only activity after away started can pause it again.
 
 ### Slot overrides
 

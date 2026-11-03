@@ -16,6 +16,38 @@ Room Heating was created 2025-12-31 by Henrik Skovgaard, based on Clara Heating 
 
 `room_heating.js`
 
+### 10.26.0 — 2026-11-03 — ✨ Activity in a room overrides TADO away
+
+- Away applies to a room only while TADO presence is away AND the room is not in use:
+  the zone is active, or was within the current slot's inactivityTimeout. Someone TADO
+  does not track (Oliver has no TADO app; on 29-30 Oct his room was held at 17 while he
+  was home) keeps the normal schedule; once the room has been unused for the timeout it
+  falls back to the away target. Once away applies, only activity after it started can
+  pause it (a later slot with a longer timeout does not count as activity).
+- Manual detection is skipped only while away applies to the room, so a knob turned in a
+  room in use during TADO away is respected as a manual override.
+- roomState.away now means "away applies to this room"; roomState.tadoAway holds TADO's
+  presence from the previous run (a change still clears the commanded-target baseline;
+  for state saved by older versions it is taken from 'away'). roomState.awayPaused
+  marks a TADO away period in which activity has paused away.
+- Notifications: the first "Away" of a TADO away period and "Home" stay exceptions;
+  "Activity • Away paused" and going back to away later in the same period are routine,
+  so a room that keeps going in and out of use does not fill the timeline.
+- Returning from away (TADO home or activity) no longer resumes the heating while a
+  window is open or settling; the window logic decides. A smart plug switched on while
+  the window is open past its timeout is switched off again.
+- HeatingStatus: 'away' is away as applied to the room (the dashboard's away tag);
+  new 'tadoAway' carries TADO's presence.
+- The schedule is resolved before manual detection (detection needs the current slot).
+- Reviewed by three independent reviewers with adversarial verification; the four
+  confirmed findings (slot-boundary false activity, notification storm, window
+  interplay, a test that did not test the migration) are fixed above.
+- Verified with test/ (110 scenarios): every scenario from 10.25.1 behaves the same
+  (the old away scenarios now mark the room as unused); 13 new scenarios cover
+  activity overriding away, falling back, slot boundaries, re-entry, windows and
+  state saved by older versions.
+- Files modified: room_heating.js (v10.26.0), README.md, test/harness.mjs, CHANGELOG.md
+
 ### 10.25.1 — 2026-11-03 — 🐛 Silent sensor only while heating
 
 - 10.24.0 called the room sensor silent when its last report was 60 minutes old. A
