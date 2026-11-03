@@ -1,4 +1,4 @@
-// Never leave an occupied room at ~0% (GradualFadeOut 6.16, Room_watchdog 2.15)
+// Never leave an occupied room at ~0% (GradualFadeOut 6.16/6.19, Room_watchdog 2.15/2.18)
 import { createEnv, light, motionSensor, setClock, clock, ID } from '../mock.mjs';
 
 const GFO = 'gradualfadeout.js';
@@ -61,14 +61,24 @@ export const scenarios = {
     t.check(has(env, 'FADE-HOLD | E9 Loft | zone active at fade end — restored by RestoreSavedSettings') && !has(env, 'FADE-SELF-RESTORE'), 'FADE-HOLD, no self-restore');
   },
 
-  async 'GradualFadeOut: switched off by hand during the fade → stays off'(t) {
+  async 'GradualFadeOut 6.19: onoff off from the fade itself (Homey, 3 Nov) → still restored'(t) {
     const env = e9Env();
+    env.dimCardSetsOnoff = true;  // the dim-to-0 card reports the light off at once
+    env.onWait = async (ms) => { if (ms === 20000) env.zoneActive = true; };
+    const r = await env.run(GFO, [E9]);
+    t.check(String(r).includes('restored here'), 'returns "restored here"', String(r));
+    t.equal([env.dev(E9).dim.value, env.dev(E9).onoff.value], [0.8, true], 'back on at the saved 80%');
+    t.check(has(env, 'FADE-SELF-RESTORE | E9 Loft') && !has(env, 'switched off during the fade'), 'FADE-SELF-RESTORE, not taken for an off by hand');
+  },
+
+  async 'GradualFadeOut 6.19: switched off by hand during the fade, zone active → restored (press off again)'(t) {
+    const env = e9Env();
+    env.dimCardSetsOnoff = true;
     env.onWait = async (ms) => {
       if (ms === 20000) { env.zoneActive = true; env.dev(E9).onoff.value = false; }  // Hue switch Off
     };
-    const r = await env.run(GFO, [E9]);
-    t.equal([env.dev(E9).onoff.value, env.store.get(`${E9}_FadeActiveUntil`)], [false, 0], 'light stays off, window closed');
-    t.check(has(env, 'FADE-HOLD | E9 Loft | switched off during the fade') && !has(env, 'FADE-SELF-RESTORE'), 'not restored', String(r));
+    await env.run(GFO, [E9]);
+    t.equal([env.dev(E9).dim.value, env.dev(E9).onoff.value], [0.8, true], 'back on at the saved 80%');
   },
 
   async 'GradualFadeOut: a failed switch-back-on is logged'(t) {
@@ -95,12 +105,14 @@ export const scenarios = {
     t.equal(env.diag().filter((l) => l.includes('WATCHDOG-SELF-RESTORE')).length, 2, 'one WATCHDOG-SELF-RESTORE line per light');
   },
 
-  async 'Room_watchdog: a light switched off by hand during the fade stays off'(t) {
+  async 'Room_watchdog 2.18: onoff off from the fade itself (Homey, 3 Nov) → both E9 lights still restored'(t) {
     const { env, motion } = e9WatchdogEnv();
-    env.onWait = async (ms) => { if (ms === 20000) { motion(true); env.dev(E9).onoff.value = false; } };
+    env.dimCardSetsOnoff = true;  // the dim-to-0 cards report both lights off at once
+    env.onWait = async (ms) => { if (ms === 20000) motion(true); };
     await env.run(WD, ['E9']);
-    t.equal([env.dev(E9).onoff.value, env.dev(GARDEROBE).dim.value], [false, 0.5], 'E9 Loft stays off, E9 Garderobe restored');
-    t.check(has(env, 'E9 Loft: switched off during the fade — not restoring'), 'logged');
+    t.equal([env.dev(E9).dim.value, env.dev(E9).onoff.value, env.dev(GARDEROBE).dim.value, env.dev(GARDEROBE).onoff.value],
+      [0.7, true, 0.5, true], 'both back on at their saved brightness');
+    t.equal(env.diag().filter((l) => l.includes('WATCHDOG-SELF-RESTORE')).length, 2, 'one WATCHDOG-SELF-RESTORE line per light');
   },
 
   async 'Room_watchdog: door already open at fade start → restores without waiting'(t) {

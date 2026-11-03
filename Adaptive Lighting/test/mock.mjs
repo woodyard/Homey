@@ -96,6 +96,7 @@ export function createEnv(devices = []) {
                            // after this many real ms, and getDevice/getDevices return
                            // copies of the devices as they were when asked, as
                            // Homey's API does — two runs for one light then overlap
+    dimCardSetsOnoff: false, // true: a dim card sets onoff (dim > 0), as Homey does at a fade start
     commandDelayMs: 0,     // > 0: a device command lands (value changes) this many
                            // real ms after it is sent, as on a real bulb
     waitAdvancesClock: false, // true: wait(ms) moves the clock forward by ms
@@ -166,8 +167,15 @@ export function createEnv(devices = []) {
         const [, id, card] = m;
         env.cards.push({ id, card, value: card === 'dim' ? a.args.dim : a.args.temperature, duration: a.duration });
         if (env.unreachable.has(id)) throw new Error('unreachable');
-        if (card === 'dim') await setCap(id, 'dim', a.args.dim);
-        else await setCap(id, 'light_temperature', a.args.temperature);
+        if (card === 'dim') {
+          await setCap(id, 'dim', a.args.dim);
+          // With dimCardSetsOnoff, as on Homey: the dim card switches the light
+          // on, and a dim to 0 (a fade) reports it off at once (insights, 3 Nov).
+          // A Hue bulb then often reports itself on again mid-fade — off by
+          // default, which is that later state
+          const onoff = env.devices[id].capabilitiesObj.onoff;
+          if (env.dimCardSetsOnoff && onoff) onoff.value = a.args.dim > 0;
+        } else await setCap(id, 'light_temperature', a.args.temperature);
       },
     },
     zones: { getZone: async ({ id }) => ({ id, active: env.zoneActive }) },

@@ -19,6 +19,13 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 2.18 2026-11-03  Motion at fade end: restore even when onoff reads off (as
+//                  GradualFadeOut 6.19)
+//                  - 2.15 left a light that read off alone, as "switched off by
+//                    hand". But Homey sets onoff false the moment a dim-to-0
+//                    fade starts, so someone who came in could be left at ~0 %
+//                  - An off by hand during the fade with motion in the room
+//                    now comes back on; press off once more
 // 2.17 2026-11-03  A light switched on while nobody is seen gets 15 minutes
 //                  - B9, 3 Nov: the Hue dimmer switch turned B9 Lys on at
 //                    07:23:24; neither motion sensor had changed since
@@ -796,17 +803,8 @@ try {
       return `${PREFIX}: motion during fade, restored`;
     }
     for (const p of pending) {
-      // Switched off by hand during the fade (Hue switch, app): a dim-to-0 fade
-      // leaves onoff true, so off here means a person did it — leave it off
-      let stillOn = true;
-      try {
-        stillOn = (await Homey.devices.getDevice({ id: p.id })).capabilitiesObj?.onoff?.value !== false;
-      } catch (e) { /* can't tell — restore */ }
-      if (!stillOn) {
-        global.set(`${p.id}_FadeActiveUntil`, 0);
-        diagLog(`WATCHDOG-HOLD | ${ROOM.name} | ${p.name}: switched off during the fade — not restoring`);
-        continue;
-      }
+      // Restore even if onoff reads off: Homey sets it off as the dim-to-0
+      // fade starts, so off here doesn't mean a person switched it off (2.18)
       const ok = await selfRestore(p);
       diagLog(`WATCHDOG-SELF-RESTORE | ${ROOM.name} | ${p.name}: motion, no restore${waitSeconds ? ` within ${waitSeconds}s` : ' (zone was already active)'} — restored ${Math.round(p.dim * 100)}% to ${ok}/${p.targets.length} light(s)`);
     }

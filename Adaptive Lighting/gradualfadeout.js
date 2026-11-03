@@ -12,6 +12,14 @@
 //
 // VERSION HISTORY:
 // -------------------------------------------------------------------------
+// 6.19 2026-11-03  Zone active at fade end: restore even when onoff reads off
+//                  - 6.16 left a light that read off alone, as "switched off by
+//                    hand". But Homey sets onoff false the moment a dim-to-0
+//                    fade starts (insights, 3 Nov: B9 07:51, E9 11:31 with
+//                    nobody home), and a Hue bulb reports itself on again only
+//                    sometimes. So someone who came in could be left at ~0 %
+//                  - An off by hand during the fade in an occupied room now
+//                    comes back on; press off once more
 // 6.18 2026-11-03  Stamp ${deviceId}_AutoOffAt at FADE-OFF
 //                  - Room_watchdog 2.17 gives a light switched on while nobody
 //                    is seen 15 minutes. A turn-on within 3 minutes of this off
@@ -534,17 +542,8 @@ async function processDevice(deviceId) {
         diagLog(`FADE-HOLD | ${device.name} | zone active at fade end — restored by RestoreSavedSettings`);
         return `${device.name}: zone active, restored`;
       }
-      // Switched off by hand during the fade or the wait (Hue switch, app): a
-      // dim-to-0 fade leaves onoff true, so off here means a person did it
-      let stillOn = true;
-      try {
-        stillOn = (await Homey.devices.getDevice({ id: deviceId })).capabilitiesObj?.onoff?.value !== false;
-      } catch (e) { /* can't tell — restore */ }
-      if (!stillOn) {
-        global.set(fadeActiveUntilVar, 0);
-        diagLog(`FADE-HOLD | ${device.name} | switched off during the fade — not restoring`);
-        return `${device.name}: switched off by hand, not restored`;
-      }
+      // Restore even if onoff reads off: Homey sets it off as the dim-to-0
+      // fade starts, so off here doesn't mean a person switched it off (6.19)
       const ok = await selfRestore(deviceId, device, turnOffTargets, currentBrightness, currentTemperature, isGroup);
       diagLog(`FADE-SELF-RESTORE | ${device.name} | zone active, no restore within ${HOLD_WAIT_SECONDS}s — restored ${Math.round(currentBrightness * 100)}% to ${ok}/${turnOffTargets.length} light(s)`);
       return `${device.name}: zone active, restored here`;
