@@ -1,0 +1,18 @@
+# NAS deployment: runs the image GitHub Actions publishes on every push to main.
+# Put this file, update.sh and your .env in one folder on the NAS
+# (e.g. /volume1/docker/homey-dashboard). update.sh keeps it current.
+services:
+  homey-dashboard:
+    image: ghcr.io/woodyard/homey-dashboard:latest
+    container_name: homey-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # From your Homey OAuth client (tools.developer.homey.app/api/clients)
+      - ATHOM_CLIENT_ID=${ATHOM_CLIENT_ID}
+      - ATHOM_CLIENT_SECRET=${ATHOM_CLIENT_SECRET}
+      # Any long random string; encrypts the session cookie.
+      - COOKIE_SECRET=${COOKIE_SECRET}
+      # Public https URL the browser reaches this at; must match the registered OAuth redirect URI.
+      - APP_BASE_URL=${APP_BASE_URL}

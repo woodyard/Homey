@@ -59,17 +59,44 @@ the browser over Server-Sent Events (`/api/homey/stream`). This is enabled by th
 `NEXT_PUBLIC_LIVE=1` (set in the Dockerfile), and a 🟢 **Live** pill appears in the header. The 20s
 poll remains as a safety net; on Vercel (flag unset) nothing changes.
 
-### Docker (NAS)
+### Docker (NAS), deployed automatically
 
-```sh
-# 1. Put your secrets in a .env next to docker-compose.yml:
-#    ATHOM_CLIENT_ID=...
-#    ATHOM_CLIENT_SECRET=...
-#    COOKIE_SECRET=...            # openssl rand -hex 32
-#    APP_BASE_URL=https://homey.your-nas.example   # the HTTPS URL you reach it at
-# 2. Build & run:
-docker compose up -d --build
-```
+Every push to `main` that changes `homey-dashboard/` runs the GitHub Actions workflow
+[`homey-dashboard-image.yml`](../.github/workflows/homey-dashboard-image.yml). It builds the
+image and publishes it as `ghcr.io/woodyard/homey-dashboard:latest`. On the NAS, a scheduled
+task runs [`nas/update.sh`](nas/update.sh) every 5 minutes. The script pulls the image and
+recreates the container only when the image changed. So a push is live on the NAS within about
+15 minutes (build time plus up to 5 minutes until the next check). No inbound access to the NAS
+is needed.
+
+One-time setup (Synology DSM):
+
+1. **Make the image public.** After the first workflow run, open
+   <https://github.com/woodyard?tab=packages>, then **homey-dashboard → Package settings →
+   Change visibility → Public**. The source is already public, and the secrets are only passed
+   in at runtime, so the image contains none. (If you keep it private, run
+   `docker login ghcr.io` once as root on the NAS with a personal access token that has the
+   `read:packages` scope.)
+2. **Make a folder** on the NAS, e.g. `/volume1/docker/homey-dashboard`, and copy
+   `nas/docker-compose.yml` and `nas/update.sh` into it. Add a `.env` next to them:
+   ```
+   ATHOM_CLIENT_ID=...
+   ATHOM_CLIENT_SECRET=...
+   COOKIE_SECRET=...            # openssl rand -hex 32
+   APP_BASE_URL=https://homey.your-nas.example   # the HTTPS URL you reach it at
+   ```
+   If an older, hand-built container is running, copy the values from its `.env` (or from
+   Container Manager → container → Settings → Environment). Then **stop and delete that
+   container**: the new one uses the same name and port.
+3. **Task Scheduler** (Control Panel → Task Scheduler → Create → Scheduled Task →
+   User-defined script): user `root`, every day, repeat every 5 minutes, script
+   `sh /volume1/docker/homey-dashboard/update.sh`. Run it once by hand (**Run**). The container
+   should come up on port 3000 and log a line to `update.log`.
+
+The reverse proxy rule that points at port 3000 needs no changes.
+
+To build on the NAS by hand instead, use the `docker-compose.yml` in this folder:
+`docker compose up -d --build`.
 
 **HTTPS is required.** Athom only allows **https** OAuth redirect URIs, and the session cookie is
 `Secure` (won't be stored over plain http). So put the container behind your NAS's reverse proxy
