@@ -30,7 +30,7 @@
  * - One run per room at a time (run lock); requests wait, normal runs skip
  *
  * Author: Henrik Skovgaard
- * Version: 10.27.0
+ * Version: 10.27.1
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
@@ -231,7 +231,7 @@ async function acquireRunLock(waitMs) {
         }
 
         log(`⏳ Another run in progress (${Math.round(ageMs / 1000)}s) - waiting...`);
-        await new Promise(resolve => setTimeout(resolve, RUN_LOCK_POLL_MS));
+        await wait(RUN_LOCK_POLL_MS);   // HomeyScript has no setTimeout
     }
 }
 
@@ -1176,7 +1176,7 @@ async function sendCommand(device, capability, value) {
             log(`⚠️ Error during verification: ${error.message}`);
         }
 
-        await new Promise(resolve => setTimeout(resolve, VERIFY_POLL_MS));
+        await wait(VERIFY_POLL_MS);   // HomeyScript has no setTimeout
     }
 
     log(`⏱️ Not verified within ${timeout / 1000}s: ${capability} = ${value} (device may still apply it)`);
@@ -1979,7 +1979,7 @@ async function acquireStatusLock() {
         if (Date.now() >= deadline) {
             return false;
         }
-        await new Promise(resolve => setTimeout(resolve, STATUS_LOCK_POLL_MS));
+        await wait(STATUS_LOCK_POLL_MS);   // HomeyScript has no setTimeout
     }
 }
 

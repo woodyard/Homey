@@ -16,6 +16,29 @@ Room Heating was created 2025-12-31 by Henrik Skovgaard, based on Clara Heating 
 
 `room_heating.js`
 
+### 10.27.1 — 2026-11-04 — 🐛 Waits used setTimeout, which HomeyScript does not have
+
+- HomeyScript's sandbox offers `wait(ms)` but no `setTimeout`, so every wait in this script
+  threw `setTimeout is not defined` on the box. The three waits now use `wait()`.
+- HeatingStatus lock: a room that found the lock taken published nothing, and its diagnostics
+  log entry and `diag` state were skipped too. All rooms share a 5-minute cron, so this hit most
+  rooms most of the time and left their entries 10-20 minutes old. The only trace was the log
+  line `Warning: Diagnostics error: setTimeout is not defined`; the run itself carried on.
+- Room run lock: a boost, pause or cancel that found the room busy threw and was lost, instead
+  of waiting for its turn.
+- Command verification: a command the device had not confirmed on the first read ended as
+  `Error controlling TADO` (or `... radiator`). TADO: a target that had to follow an on command
+  was then not sent until the next run. Commands are now polled as intended, so a run with a
+  slow device takes longer: up to 10 s per plug and 30 s per TADO command.
+- The offline harness hid all this by passing the script a fake `setTimeout`. It now behaves
+  like the sandbox: `wait` exists and `setTimeout` throws. New scenario `all_rooms_same_cron`
+  runs three rooms at once, and test/check_waits.mjs covers each wait.
+- Verified with test/: on 10.27.0 all 5 checks in check_waits.mjs fail, on 10.27.1 all pass;
+  4 of 113 scenarios differ, all of them wait paths (lock busy, boost waiting, slow TADO, all
+  rooms at once).
+- Files modified: room_heating.js (v10.27.1), test/harness.mjs, test/check_waits.mjs,
+  test/README.md, CHANGELOG.md
+
 ### 10.27.0 — 2026-11-04 — ⏳ Window timestamps in HeatingStatus
 
 - HeatingStatus gets two fields: `windowOpenSince` (epoch ms while the window is open,

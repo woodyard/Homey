@@ -4,6 +4,8 @@ Runs `room_heating.js` under Node with a mocked Homey API (devices, zones, Logic
 notifications), a fixed clock (Wednesday 2026-01-21 10:00 Copenhagen unless a scenario moves it)
 and a fixed set of devices for three rooms: Clara (two smart-plug radiators), Stue and Soveværelse
 (one TADO valve each). Scenarios that move the clock move the sensors' default timestamps with it.
+As in HomeyScript's sandbox, the script gets `wait(ms)` and `setTimeout` throws. A scenario with
+`concurrent` runs several rooms at once.
 
     node harness.mjs ../room_heating.js clara_auto_cold          # one scenario, JSON trace
     node harness.mjs ../room_heating.js clara_auto_cold --logs   # plus the script's log output
@@ -12,6 +14,7 @@ and a fixed set of devices for three rooms: Clara (two smart-plug radiators), St
     node summary.mjs out_new                                     # one line per scenario
     node compare.mjs out_baseline out_new                        # semantic diff per scenario
     node check_status_fields.mjs ../room_heating.js              # window timestamps in HeatingStatus
+    node check_waits.mjs ../room_heating.js                      # every wait works without setTimeout
     node harness.mjs ../room_heating.js stue_boost_active --then-status=../room_heating_status.js
                                                                  # then run the status script on the same mocks
 

@@ -39,7 +39,12 @@ class FakeDate extends RealDate {
   constructor(...a) { if (a.length === 0) super(NOW_MS); else super(...a); }
   static now() { return NOW_MS; }
 }
-const fakeSetTimeout = (fn, ms) => { NOW_MS += ms; queueMicrotask(fn); return 0; };
+// As on the real box: HomeyScript's sandbox offers wait(ms) but has no setTimeout.
+// A scenario with `concurrent` runs several rooms at once: wait() and Logic calls then give way
+// to the other runs, as real I/O does, so the runs overlap on the HeatingStatus lock.
+const yieldToOtherRuns = async () => { if (sc?.concurrent) await new Promise(resolve => setImmediate(resolve)); };
+const fakeWait = async (ms) => { NOW_MS += ms; await yieldToOtherRuns(); };
+const noSetTimeout = () => { throw new ReferenceError('setTimeout is not defined'); };
 
 // ---------------------------------------------------------- fake Homey ---
 const trace = { commands: [], notifications: [], logicWrites: [], errors: [] };
@@ -112,8 +117,8 @@ const Homey = {
   },
   zones: { getZones: async () => { count('getZones'); return zones; } },
   logic: {
-    getVariables: async () => { count('getVariables'); return logicVars; },
-    updateVariable: async ({ id, variable }) => { trace.logicWrites.push({ op: 'update', id, value: variable.value }); logicVars[id].value = variable.value; },
+    getVariables: async () => { count('getVariables'); await yieldToOtherRuns(); return logicVars; },
+    updateVariable: async ({ id, variable }) => { await yieldToOtherRuns(); trace.logicWrites.push({ op: 'update', id, value: variable.value }); logicVars[id].value = variable.value; },
     createVariable: async ({ variable }) => { trace.logicWrites.push({ op: 'create', name: variable.name, value: variable.value }); logicVars[variable.name] = { id: variable.name, ...variable }; },
   },
   flow: {
@@ -144,6 +149,8 @@ const scenarios = {
   // ---- Clara (smart plugs)
   clara_auto_cold: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; } },
   clara_auto_warm: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 23.5; devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; setState(CL, {}); } },
+  // v10.27.1: every room's cron fires at the same moment, so the runs meet at the HeatingStatus lock
+  all_rooms_same_cron: { args: ['Clara'], concurrent: [['Clara'], ['Stue'], ['Soveværelse']], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; setState(CL, {}); setState(ST, { baseline: { commandedTargetTemp: 22, lastSeenTargetTemp: 22 } }); setState(SV, { baseline: { commandedTargetTemp: 20, lastSeenTargetTemp: 20 } }); } },
   clara_auto_ok: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; setState(CL, {}); } },
   clara_boost_request: { args: ['Clara', 'boost'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; } },
   clara_boost_request_flowarg: { args: ['clara, boost'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; } },
@@ -299,11 +306,11 @@ if (NOW_MS !== SETUP_NOW_MS) {
 
 // ------------------------------------------------------------- run script ---
 const src = fs.readFileSync(scriptPath, 'utf8');
-const wrapped = `return (async function(Homey, global, log, args, setTimeout, Date) {\n${src}\n})`;
+const wrapped = `return (async function(Homey, global, log, args, wait, setTimeout, Date) {\n${src}\n})`;
 const factory = new Function(wrapped)();
 let thrown = null;
 try {
-  await factory(Homey, globalApi, log, sc.args, fakeSetTimeout, FakeDate);
+  await Promise.all((sc.concurrent || [sc.args]).map(args => factory(Homey, globalApi, log, args, fakeWait, noSetTimeout, FakeDate)));
 } catch (e) {
   thrown = e.message;
 }
@@ -344,9 +351,9 @@ if (SHOW_LOGS) { console.log('\n----- LOGS -----'); console.log(logs.join('\n'))
 if (STATUS_SCRIPT) {
   const statusLogs = [];
   const statusSrc = fs.readFileSync(STATUS_SCRIPT, 'utf8');
-  const statusFactory = new Function(`return (async function(Homey, global, log, args, setTimeout, Date) {\n${statusSrc}\n})`)();
+  const statusFactory = new Function(`return (async function(Homey, global, log, args, wait, setTimeout, Date) {\n${statusSrc}\n})`)();
   let statusThrown = null;
-  try { await statusFactory(Homey, globalApi, (...a) => statusLogs.push(a.join(' ')), [], fakeSetTimeout, FakeDate); }
+  try { await statusFactory(Homey, globalApi, (...a) => statusLogs.push(a.join(' ')), [], fakeWait, noSetTimeout, FakeDate); }
   catch (e) { statusThrown = e.stack || e.message; }
   console.log('\n----- STATUS SCRIPT -----');
   if (statusThrown) console.log('THROWN: ' + statusThrown);
