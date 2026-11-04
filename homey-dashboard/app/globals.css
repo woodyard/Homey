@@ -48,6 +48,12 @@
   --bad-border: rgba(220, 38, 38, 0.28);
   --heat: #f97316;
   --heat-soft: rgba(249, 115, 22, 0.13);
+  /* tag text at 11px on the soft tones: darker than the tone itself in light, same in dark */
+  --good-ink: #166534;
+  --warn-ink: #92520a;
+  --bad-ink: #b91c1c;
+  --heat-ink: #b34709;
+  --accent-ink: #3448d4;
   --cool: #0ea5e9;
   --cool-soft: rgba(14, 165, 233, 0.12);
   --violet: #9333ea;
@@ -107,6 +113,11 @@
     --bad-soft: rgba(248, 113, 113, 0.14);
     --bad-border: rgba(248, 113, 113, 0.35);
     --heat: #fb923c;
+    --good-ink: var(--good);
+    --warn-ink: var(--warn);
+    --bad-ink: var(--bad);
+    --heat-ink: var(--heat);
+    --accent-ink: var(--accent);
     --heat-soft: rgba(251, 146, 60, 0.16);
     --cool: #38bdf8;
     --cool-soft: rgba(56, 189, 248, 0.15);
@@ -156,6 +167,11 @@
   --bad-soft: rgba(248, 113, 113, 0.14);
   --bad-border: rgba(248, 113, 113, 0.35);
   --heat: #fb923c;
+  --good-ink: var(--good);
+  --warn-ink: var(--warn);
+  --bad-ink: var(--bad);
+  --heat-ink: var(--heat);
+  --accent-ink: var(--accent);
   --heat-soft: rgba(251, 146, 60, 0.16);
   --cool: #38bdf8;
   --cool-soft: rgba(56, 189, 248, 0.15);
@@ -299,11 +315,11 @@ input[type='range'] { accent-color: var(--accent); }
   padding: 2px 8px; border-radius: 999px; white-space: nowrap;
   background: var(--neutral-soft); color: var(--muted);
 }
-.hd-tag-good { background: var(--good-soft); color: var(--good); }
-.hd-tag-warn { background: var(--warn-soft); color: var(--warn); }
-.hd-tag-bad { background: var(--bad-soft); color: var(--bad); }
-.hd-tag-heat { background: var(--heat-soft); color: var(--heat); }
-.hd-tag-accent { background: var(--accent-soft); color: var(--accent); }
+.hd-tag-good { background: var(--good-soft); color: var(--good-ink); }
+.hd-tag-warn { background: var(--warn-soft); color: var(--warn-ink); }
+.hd-tag-bad { background: var(--bad-soft); color: var(--bad-ink); }
+.hd-tag-heat { background: var(--heat-soft); color: var(--heat-ink); }
+.hd-tag-accent { background: var(--accent-soft); color: var(--accent-ink); }
 .hd-tag-cool { background: var(--cool-soft); color: var(--cool); }
 .hd-tag-violet { background: var(--violet-soft); color: var(--violet); }
 

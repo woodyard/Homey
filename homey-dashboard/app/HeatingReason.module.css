@@ -1,0 +1,68 @@
+/* Heating "why" strip. Mobile first: the base rules are for ~360-390px phones. */
+
+.wrap { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+.strip {
+  --tone: var(--muted);
+  --tone-soft: var(--neutral-soft);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--tone-soft);
+  border: 1px solid color-mix(in srgb, var(--tone) 28%, transparent);
+}
+.strip[data-tone='heat'] { --tone: var(--heat); --tone-soft: var(--heat-soft); }
+.strip[data-tone='good'] { --tone: var(--good); --tone-soft: var(--good-soft); }
+.strip[data-tone='warn'] { --tone: var(--warn); --tone-soft: var(--warn-soft); }
+.strip[data-tone='bad'] { --tone: var(--bad); --tone-soft: var(--bad-soft); }
+.strip[data-tone='accent'] { --tone: var(--accent); --tone-soft: var(--accent-soft); }
+
+.icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 10px;
+  color: var(--tone);
+  background: color-mix(in srgb, var(--tone) 16%, var(--surface-solid));
+}
+
+/* min-height: a one-line strip centres its text on the 32px icon. */
+.body { min-width: 0; min-height: 32px; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+
+.headline {
+  font-size: 14px; font-weight: 650; line-height: 1.3; letter-spacing: -0.01em;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.detail {
+  font-size: 12.5px; line-height: 1.4; color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.bar {
+  height: 5px; margin-top: 5px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, var(--tone) 14%, var(--surface-3));
+}
+.bar > span {
+  display: block; height: 100%; border-radius: inherit;
+  background: var(--tone);
+  transition: width 0.6s ease;
+}
+
+.factors { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* Long chips ("No update from the heating script for 27 min") wrap instead of overflowing. */
+.chip { white-space: normal; line-height: 1.35; }
+.chip svg { flex-shrink: 0; }
+
+@media (min-width: 768px) {
+  .strip { padding: 11px 14px; gap: 12px; }
+  .headline { font-size: 14.5px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar > span { transition: none; }
+}

@@ -20,12 +20,14 @@ import {
   HEATING_ROOMS, HEATING_ACTIONS, heatingDaySlots, heatingSlot, guessHeatFlow,
 } from '../lib/heating';
 import { estimateRoomModel, ROOM_MODEL_DEFAULTS, predictRoom } from '../lib/thermal';
+import { explainHeating, heatingRoomSensor, hhmm, liveWindowClosedAt, liveWindowOpen, optimisticMode } from '../lib/heatingState';
 import {
   AppWindow, BatteryFull, BatteryLow, BatteryMedium, Blinds, Bot, Brain, CalendarClock, ChartSpline,
-  ClipboardList, Coffee, DoorClosed, DoorOpen, Fan, Flame, Footprints, Hand, Heater, House, Lightbulb,
+  ClipboardList, Coffee, DoorClosed, DoorOpen, Fan, Flame, Footprints, Heater, House, Lightbulb,
   LoaderCircle, Minus, Moon, Pause, Plug, Plus, Power, Refrigerator, RotateCcw, Snowflake, Sparkles,
   Speaker, Thermometer, TriangleAlert, Tv, WashingMachine,
 } from 'lucide-react';
+import HeatingReason, { HeatingTag, useNow } from './HeatingReason';
 import styles from './RoomsV2Tab.module.css';
 
 const HIST_POLL_MS = 5 * 60 * 1000;   // temperature history refresh
@@ -130,9 +132,10 @@ function Eyebrow({ icon: Icon, children }) {
   );
 }
 
-// Left card: room status — motion inactivity, open windows/doors with duration,
-// batteries, and any devices not covered by the lights/heating sections.
-function StatusPanel({ room, zone, onControl, heatingWindowOpen }) {
+// Left card: room status — why the heating is (not) on, motion inactivity, open
+// windows/doors with duration, batteries, and any devices not covered by the
+// lights/heating sections.
+function StatusPanel({ room, zone, onControl, heatingWhy, now }) {
   const motionDevs = room.devices.filter((d) => 'alarm_motion' in (d.capabilities || {}));
   const motionActive = motionDevs.some((d) => !!d.capabilities.alarm_motion);
   const motionTs = motionDevs
@@ -158,15 +161,16 @@ function StatusPanel({ room, zone, onControl, heatingWindowOpen }) {
     <div className={`hd-inset ${styles.panel}`}>
       <Eyebrow icon={ClipboardList}>Status</Eyebrow>
 
-      {(motionDevs.length > 0 || contacts.length > 0 || heatingWindowOpen) && (
+      {heatingWhy && (
+        <div>
+          <div className={styles.subLabel}>Heating</div>
+          <HeatingReason info={heatingWhy} now={now} />
+        </div>
+      )}
+
+      {(motionDevs.length > 0 || contacts.length > 0) && (
         <div>
           <div className={styles.subLabel}>Activity</div>
-          {heatingWindowOpen && (
-            <div className={styles.row} title="Reported by the heating system — the physical sensor may sit in a sub-zone">
-              <span className={styles.rowIcon} style={{ color: 'var(--warn)' }}><AppWindow size={15} /></span>
-              <span className={styles.rowName} style={{ color: 'var(--warn)', fontWeight: 600 }}>Window open — heating paused</span>
-            </div>
-          )}
           {motionDevs.length > 0 && (
             motionActive
               ? (
@@ -254,7 +258,7 @@ function StatusPanel({ room, zone, onControl, heatingWindowOpen }) {
         </div>
       )}
 
-      {motionDevs.length === 0 && contacts.length === 0 && !heatingWindowOpen
+      {motionDevs.length === 0 && contacts.length === 0 && !heatingWhy
         && others.length === 0 && batteries.length === 0 && (
         <div className={styles.nothing}>Nothing to report.</div>
       )}
@@ -667,13 +671,7 @@ function ClimateChart({ series, slots, prediction, nowMin, lighting, uid }) {
   );
 }
 
-// Header tags for the heating mode, and icons for the inline heating actions.
-const HEAT_MODE = {
-  boost: { label: 'Boost', icon: Flame, tag: 'hd-tag-heat' },
-  pause: { label: 'Paused', icon: Pause, tag: '' },
-  manual: { label: 'Manual', icon: Hand, tag: 'hd-tag-warn' },
-};
-
+// Icons for the inline heating actions (the header state tag comes from HeatingTag).
 const HEAT_ACTION_UI = {
   boost: { icon: Flame, className: styles.boost },
   pause: { icon: Pause, className: '' },
@@ -700,18 +698,28 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
   const [heatSeries, setHeatSeries] = useState([]); // ~7 days: heating output logs (tado power / plug watts)
   const [outForecast, setOutForecast] = useState([]); // today's outdoor °C, [{m, v}]
   const [heatStatus, setHeatStatus] = useState({});
+  const [heatLoaded, setHeatLoaded] = useState(false);
+  const loadHeatRef = useRef(() => {});
   const [heatingEnabled, setHeatingEnabled] = useState(null);
   const [heatMapping, setHeatMapping] = useState({});
   const [busy, setBusy] = useState(() => new Set());
   const [applying, setApplying] = useState(null);
   const [err, setErr] = useState('');
+  const now = useNow(30000); // heating countdowns move between status polls
 
   // Heating status (mode / windowOpen / away / effectiveTarget per zone).
   useEffect(() => {
     let cancelled = false;
     const load = () => fetch('/api/homey/heating').then((r) => r.json())
-      .then((j) => { if (!cancelled) { setHeatingEnabled(j.heatingEnabled); if (j.status) setHeatStatus(j.status); } })
-      .catch(() => {});
+      .then((j) => {
+        if (cancelled) return;
+        setHeatLoaded(true);
+        if (j.error) return; // a failed Homey read answers with an empty status: keep the last one
+        setHeatingEnabled(j.heatingEnabled);
+        if (j.status) setHeatStatus(j.status);
+      })
+      .catch(() => { if (!cancelled) setHeatLoaded(true); });
+    loadHeatRef.current = load;
     load();
     try { setHeatMapping(JSON.parse(localStorage.getItem('heating_flows') || '{}')); } catch { /* ignore */ }
     const iv = setInterval(load, STATUS_POLL_MS);
@@ -986,6 +994,8 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
     const bk = `${hr.key}:${action.key}`;
     setErr('');
     setBusy((prev) => new Set(prev).add(bk));
+    // Show the new mode at once; the re-polls replace it when the script has published.
+    setHeatStatus((prev) => ({ ...prev, [hr.zone]: optimisticMode(prev[hr.zone], action.key, Date.now()) }));
     try {
       const r = await fetch('/api/homey/reset', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -993,9 +1003,11 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || 'flow trigger failed');
+      [1500, 3500, 6000].forEach((ms) => setTimeout(() => loadHeatRef.current(), ms));
       setTimeout(() => onReload && onReload(), 2500);
     } catch (e) {
       setErr(String(e.message || e));
+      loadHeatRef.current(); // revert the optimistic state to reality
     } finally {
       setBusy((prev) => { const n = new Set(prev); n.delete(bk); return n; });
     }
@@ -1059,37 +1071,63 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
           const startTemp = lastPoint ? lastPoint.v
             : thermoCaps.measure_temperature != null ? thermoCaps.measure_temperature : null;
           const model = modelByZone.get(room.path) || ROOM_MODEL_DEFAULTS;
-          const windowOpen = sc ? !!sc.windowOpen : !!thermoCaps.alarm_open_window_detected;
+          // Status lags up to 5 min behind the contact sensors: a closed window is no longer open.
+          const liveWindow = room.heating ? liveWindowOpen(devices, room.heating.zone) : null;
+          const windowOpen = sc ? !!sc.windowOpen && liveWindow !== false : !!thermoCaps.alarm_open_window_detected;
+          const power = thermoCaps.tado_heating_power;
+          const sensorLatest = room.sensors.find((s) => typeof s.latest === 'number');
+          // The sensor the heating acts on, as on the Heating tab; history is for the chart.
+          const roomSensor = room.heating && !room.heating.thermostatId ? heatingRoomSensor(devices, room.heating.zone) : null;
+          const heatTemp = thermoCaps.measure_temperature != null ? thermoCaps.measure_temperature
+            : roomSensor ? roomSensor.capabilities.measure_temperature : null;
+          const curTemp = heatTemp != null ? heatTemp
+            : sc && sc.currentTemp != null ? sc.currentTemp
+              : lastPoint ? lastPoint.v
+                : sensorLatest ? sensorLatest.latest : null;
+          const plugs = room.heating ? (room.heating.plugIds || []).map((id) => deviceById.get(id)).filter(Boolean) : [];
+          // Why the room is (not) heating — status strip + header tag.
+          const why = room.heating ? explainHeating({
+            sc,
+            heatingEnabled,
+            kind: room.heating.thermostatId ? 'tado' : 'plug',
+            power: power != null ? power : null,
+            plugOn: plugs.length ? plugs.some((p) => !!(p.capabilities || {}).onoff) : null,
+            temp: heatTemp,
+            deviceTarget: thermoCaps.target_temperature != null ? thermoCaps.target_temperature : null,
+            liveWindow,
+            liveClosedAt: liveWindowClosedAt(devices, room.heating.zone),
+            manualMinutes: room.heating.manualDuration,
+            loading: !heatLoaded,
+            now,
+          }) : null;
           // An open window pauses the heating, so the room behaves passively — and the
-          // open state is assumed to persist (it may stay open for days).
+          // open state is assumed to persist (it may stay open for days). During a settle
+          // delay that holds the heating off, the room stays passive until the resume time.
           const heatingActive = !!room.heating && heatingEnabled !== false && !windowOpen;
+          const resumeAt = why && why.resumeAt && why.resumeAt > now ? why.resumeAt : null;
           let prediction = [];
           if (startTemp != null && (room.sensors.length || room.heating)) {
             const startMin = lastPoint ? lastPoint.m : nowMin;
+            const scheduleAt = heatingActive ? makeTargetAt({
+              startMin,
+              slots,
+              status: sc,
+              deviceTarget: thermoCaps.target_temperature != null ? thermoCaps.target_temperature : null,
+              weekend,
+              roomKey: room.heating.key,
+            }) : null;
+            const resumeMin = resumeAt ? nowMin + (resumeAt - now) / 60000 : null;
             prediction = predictRoom({
               startMin,
               startTemp,
               params: model,
-              targetAt: heatingActive ? makeTargetAt({
-                startMin,
-                slots,
-                status: sc,
-                deviceTarget: thermoCaps.target_temperature != null ? thermoCaps.target_temperature : null,
-                weekend,
-                roomKey: room.heating.key,
-              }) : null,
+              targetAt: scheduleAt && resumeMin != null ? (m) => (m < resumeMin ? null : scheduleAt(m)) : scheduleAt,
               outdoorAt: makeOutdoorAt(outForecast, outsideLatest),
               stepMin: PRED_STEP_MIN,
             });
           }
 
           const slot = room.heating ? heatingSlot(room.heating.key, weekend, nowMin) : null;
-          const mode = sc && sc.mode && sc.mode !== 'auto' ? sc.mode : null;
-          const power = thermoCaps.tado_heating_power;
-          const sensorLatest = room.sensors.find((s) => typeof s.latest === 'number');
-          const curTemp = thermoCaps.measure_temperature != null ? thermoCaps.measure_temperature
-            : lastPoint ? lastPoint.v
-              : sensorLatest ? sensorLatest.latest : null;
           const target = thermoCaps.target_temperature != null ? thermoCaps.target_temperature
             : sc && sc.effectiveTarget != null ? sc.effectiveTarget
               : slot ? slot.target : null;
@@ -1102,8 +1140,6 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
 
           const lightsOn = room.lights.filter((d) => d.capabilities && d.capabilities.onoff).length;
           const motionNow = room.devices.some((d) => !!(d.capabilities || {}).alarm_motion);
-          const heatMode = mode && HEAT_MODE[mode] ? HEAT_MODE[mode] : null;
-          const HeatModeIcon = heatMode ? heatMode.icon : null;
           const busyAll = applying === room.path;
 
           // explain empty states instead of drawing nothing silently
@@ -1128,16 +1164,7 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
                   {room.path !== room.name && <span className={styles.roomPath}>{room.path}</span>}
                 </div>
                 <div className={styles.headTags}>
-                  {heatMode && (
-                    <span className={`hd-tag ${heatMode.tag}`}>
-                      <HeatModeIcon size={12} strokeWidth={2.2} />{heatMode.label}
-                    </span>
-                  )}
-                  {room.heating && windowOpen && (
-                    <span className="hd-tag hd-tag-warn" title="Window open — heating paused">
-                      <AppWindow size={12} strokeWidth={2.2} />Window open
-                    </span>
-                  )}
+                  <HeatingTag info={why} />
                   {curTemp != null && (
                     <span className="hd-tag hd-num" title="Current temperature">
                       <Thermometer size={12} strokeWidth={2.2} />{curTemp.toFixed(1)}°
@@ -1156,7 +1183,8 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
                   room={room}
                   zone={zones && room.devices[0] ? zones[room.devices[0].zoneId] : null}
                   onControl={onControl}
-                  heatingWindowOpen={!!(room.heating && windowOpen)}
+                  heatingWhy={why}
+                  now={now}
                 />
 
                 {(hasClimate || hasLights) && (
@@ -1201,7 +1229,8 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
                             {room.heating && ` · radiator ≈${(model.g * 60).toFixed(1)} °C/h${model.gLearned ? '' : ' (default)'}`}
                             {' · outdoor: '}
                             {outForecast.length ? 'Open-Meteo forecast (home location)' : outsideLatest != null ? `current reading ${outsideLatest.toFixed(1)}°` : 'unknown'}
-                            {room.heating && !heatingActive && (heatingEnabled === false ? ' · heating off' : ' · window open — heating paused')}
+                            {room.heating && !heatingActive && (heatingEnabled === false ? ' · heating off' : ' · window open — heating off')}
+                            {room.heating && heatingActive && resumeAt && ` · heating off until ≈ ${hhmm(resumeAt)} (settle delay)`}
                           </span>
                         </div>
                       )}

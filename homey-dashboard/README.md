@@ -120,6 +120,31 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.20.0** (2026-11-04) — Heating says why a room is not heating.
+  - **Status strip:** each heating room in Heating and Rooms 2.0 starts with one line that
+    gives the main reason — for example "Off — resumes in 18 min (≈ 14:18)" with a countdown bar
+    while the air settles after a window closed, "Off — window open", "Window open — heating
+    stops ≈ 14:02", "Away — holding 17°", "Paused until 14:40", "Off — temperature sensor
+    silent", "Warm enough — 21.9°" or "Heating to 21°". It says "Off" only when the valve or
+    plugs really are off: the script does not always switch them off for a window, so the strip
+    can also read "Window closed — still heating". It reads the live contact sensors, so a
+    window closed since the last status shows at once. Chips below list the other
+    factors, the most serious first: away paused because the room is in use, no activity (−1°),
+    the next schedule change. If the heating script has not reported for over 30 minutes, the
+    window, settle and override states become "Status unknown — no update for …".
+  - **One explanation:** `lib/heatingState.js` follows the order in which `room_heating.js`
+    decides (master switch, pause/boost/manual, silent sensor, away without a minimum, window
+    open, settle delay, away minimum). It reads the new `windowOpenSince` / `windowClosedSince`
+    fields when the script publishes them and falls back to `lastAction` without a countdown.
+  - **Rooms 2.0:** the header tag shows the state in a few words ("Waiting 18 min", "Window
+    open", "Away 17°", "Paused 40 min"), and the forecast keeps the heating off until the
+    settle delay ends.
+  - **Rooms 2.0 and Heating now agree:** the same room sensor drives the strip on both tabs, and
+    Boost, Pause and Reset update the strip at once on both. A failed status read keeps the last
+    status, and a +/- press no longer hides the real reason when the script is not taking it as
+    a manual override (settle delay, away).
+  - **Tag text:** darker in the light theme for AA contrast at 11px, on all tabs.
+  - Countdowns update every 30 s between status polls. Built for phones first.
 - **1.19.0** (2026-11-03) — A new look; what the dashboard shows and does is unchanged.
   - **Theme:** a design system in `app/globals.css` with colour tokens, a light and a dark
     theme, glass cards and the Inter font. The theme follows the system setting, and the header

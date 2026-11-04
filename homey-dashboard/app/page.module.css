@@ -340,7 +340,7 @@
 
 .heatCard { transition: opacity 0.2s, filter 0.2s, transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
 .heatHead { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.heatTags { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.heatWhy { margin-top: 12px; } /* status strip under the room name (HeatingReason) */
 .heatMain { display: flex; align-items: center; gap: 18px; margin: 16px 0 6px; }
 
 .ring { position: relative; width: 84px; height: 84px; flex-shrink: 0; }

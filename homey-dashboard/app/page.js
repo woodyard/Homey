@@ -14,7 +14,11 @@ import {
 } from '../lib/adaptiveLighting';
 import TemperatureTab from './TemperatureTab';
 import RoomsV2Tab from './RoomsV2Tab';
+import HeatingReason, { useNow } from './HeatingReason';
 import { HEATING_ROOMS, HEATING_ACTIONS, heatingSlot, guessHeatFlow } from '../lib/heating';
+import {
+  explainHeating, heatingRoomSensor, liveWindowClosedAt, liveWindowOpen, optimisticMode, SCRIPT_INTERVAL_MIN, SETTLE_ACTIONS,
+} from '../lib/heatingState';
 import styles from './page.module.css';
 
 // Device class → lucide icon (device rows in the Rooms tab).
@@ -35,7 +39,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '1.19.0';
+const APP_VERSION = '1.20.0';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).
@@ -858,11 +862,6 @@ function HeatingInactivity({ motionActive, seedTs, timeoutMin, offset }) {
   );
 }
 
-const HEAT_MODE = {
-  boost: { label: 'Boost', cls: 'hd-tag-heat', Icon: Flame },
-  pause: { label: 'Paused', cls: '', Icon: Pause },
-  manual: { label: 'Manual', cls: 'hd-tag-warn', Icon: Hand },
-};
 // Boost / Pause / Reset buttons: icon + tint (labels come from HEATING_ACTIONS, minus their emoji).
 const HEAT_ACTION_UI = {
   boost: { Icon: Flame, cls: styles.btnHeat },
@@ -871,32 +870,18 @@ const HEAT_ACTION_UI = {
 };
 const actionLabel = (a) => String(a.label || '').replace(/^[^A-Za-z0-9]+/, '').trim() || a.key;
 
-// Real script mode wins; otherwise show the sticky optimistic "manual" (from a +/-) until it expires.
-function resolveMode(sc, optExpiry) {
+// Real script mode wins; otherwise show the optimistic "manual" (from a +/-) until it expires,
+// unless the script is not taking the press as manual: it skips detection during a settle delay
+// and under away, and a run a full interval after the press (so the valve had time to report)
+// that still says auto settles it. The real reason then stays visible.
+function resolveMode(sc, opt) {
   if (sc && sc.mode && sc.mode !== 'auto') return { mode: sc.mode, modeExpires: sc.modeExpires };
-  if (optExpiry && optExpiry > Date.now()) return { mode: 'manual', modeExpires: optExpiry };
+  const ignored = sc && (sc.windowClosedSince != null || SETTLE_ACTIONS.has(sc.lastAction) || sc.away);
+  const seen = opt && sc && sc.updatedAt - opt.at > SCRIPT_INTERVAL_MIN * 60000;
+  if (opt && opt.expires > Date.now() && !ignored && !seen) return { mode: 'manual', modeExpires: opt.expires };
   return { mode: sc ? sc.mode : null, modeExpires: sc ? sc.modeExpires : null };
 }
 
-function heatModeRemaining(modeExpires) {
-  if (!modeExpires) return null;
-  const secs = Math.round((modeExpires - Date.now()) / 1000);
-  if (secs <= 0) return null;
-  if (secs < 3600) return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
-  return `${Math.floor(secs / 3600)}h ${Math.round((secs % 3600) / 60)}m`;
-}
-
-function HeatModeTag({ mode, modeExpires }) {
-  const m = HEAT_MODE[mode];
-  if (!m) return null;
-  const MIcon = m.Icon;
-  const rem = heatModeRemaining(modeExpires);
-  return (
-    <span className={cx('hd-tag', m.cls)}>
-      <MIcon size={12} /> {m.label}{rem ? <span className="hd-num">{` ${rem}`}</span> : ''}
-    </span>
-  );
-}
 
 // Ring gauge: heating power for tado rooms, full/empty for plug radiators; temperature in the centre.
 function HeatRing({ kind, temp, power, plugOn }) {
@@ -945,14 +930,21 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
   const [err, setErr] = useState('');
   const [heatingEnabled, setHeatingEnabled] = useState(null);
   const [status, setStatus] = useState({});
-  const [optManual, setOptManual] = useState({}); // zone -> expiry ms (optimistic manual after +/-)
+  const [statusLoaded, setStatusLoaded] = useState(false);
+  const [optManual, setOptManual] = useState({}); // zone -> { at, expires } ms (optimistic manual after +/-)
   const [optTarget, setOptTarget] = useState({}); // thermostatId -> { value, ts } (hold new setpoint through Tado propagation)
   const [masterBusy, setMasterBusy] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
+  const now = useNow(30000); // countdowns move between status polls
 
   function loadStatus() {
     return fetch('/api/homey/heating').then((r) => r.json())
-      .then((j) => { setHeatingEnabled(j.heatingEnabled); if (j.status) setStatus(j.status); }).catch(() => {});
+      .then((j) => {
+        setStatusLoaded(true);
+        if (j.error) return; // a failed Homey read answers with an empty status: keep the last one
+        setHeatingEnabled(j.heatingEnabled);
+        if (j.status) setStatus(j.status);
+      }).catch(() => setStatusLoaded(true));
   }
 
   useEffect(() => {
@@ -1007,7 +999,7 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
       };
     } else {
       const plugs = (room.plugIds || []).map((id) => byId.get(id)).filter(Boolean);
-      const sensor = zoneDevs.find((d) => d.capabilities.measure_temperature != null && d.capabilities.target_temperature == null);
+      const sensor = heatingRoomSensor(devices, room.zone);
       const contact = zoneDevs.find((d) => 'alarm_contact' in d.capabilities);
       base = {
         kind: 'plug',
@@ -1023,6 +1015,9 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
 
     return {
       ...base,
+      sc,
+      liveWindow: liveWindowOpen(devices, room.zone),
+      liveClosedAt: liveWindowClosedAt(devices, room.zone),
       scheduled,
       hasMotion,
       motionActive: motionNow,
@@ -1087,7 +1082,7 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
     // reads the not-yet-updated value doesn't flicker it back.
     setOptTarget((prev) => ({ ...prev, [room.thermostatId]: { value: next, ts: Date.now() } }));
     // We just triggered manual override — show the Manual badge immediately (sticky).
-    setOptManual((prev) => ({ ...prev, [room.zone]: Date.now() + (room.manualDuration || 90) * 60000 }));
+    setOptManual((prev) => ({ ...prev, [room.zone]: { at: Date.now(), expires: Date.now() + (room.manualDuration || 90) * 60000 } }));
     // Reconcile: re-pull device state (Tado catches up) and heating status (script flags manual).
     [5000, 12000, 20000].forEach((ms) => setTimeout(() => onReload && onReload(), ms));
     [4000, 8000, 15000].forEach((ms) => setTimeout(loadStatus, ms));
@@ -1100,9 +1095,7 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
     setErr('');
     setBusy((prev) => new Set(prev).add(bk));
     // Optimistically reflect the new mode so the badge appears instantly (boost/pause = 60 min).
-    const optMode = action.key === 'boost' ? 'boost' : action.key === 'pause' ? 'pause' : 'auto';
-    const optExpires = optMode === 'auto' ? null : Date.now() + 60 * 60000;
-    setStatus((prev) => ({ ...prev, [room.zone]: { ...(prev[room.zone] || {}), mode: optMode, modeExpires: optExpires } }));
+    setStatus((prev) => ({ ...prev, [room.zone]: optimisticMode(prev[room.zone], action.key, Date.now()) }));
     setOptManual((prev) => { const n = { ...prev }; delete n[room.zone]; return n; }); // boost/pause/reset override manual
     try {
       const r = await fetch('/api/homey/reset', {
@@ -1167,99 +1160,98 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
         {HEATING_ROOMS.map((room) => {
           const d = roomData(room);
           const systemOff = heatingEnabled === false;
+          // Why the room is (not) heating — the one main reason plus the other factors.
+          const why = d ? explainHeating({
+            sc: d.sc, heatingEnabled, kind: d.kind, power: d.power, plugOn: d.plugOn, temp: d.temp,
+            deviceTarget: d.deviceTarget, liveWindow: d.liveWindow, liveClosedAt: d.liveClosedAt, mode: d.mode, modeExpires: d.modeExpires,
+            manualMinutes: room.manualDuration, loading: !statusLoaded, now,
+          }) : null;
+          // Master off greys out the controls, but the status strip stays readable.
+          const offStyle = systemOff ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined;
           return (
-            <div
-              key={room.key}
-              className={cx('hd-card hd-card-pad', styles.heatCard)}
-              style={systemOff ? { filter: 'grayscale(1)', opacity: 0.55 } : undefined}
-            >
+            <div key={room.key} className={cx('hd-card hd-card-pad', styles.heatCard)}>
               <div className={styles.heatHead}>
                 <h3 className="hd-title">{room.label}</h3>
-                <span className={styles.heatTags}>
-                  {d && d.away && <span className="hd-tag hd-tag-accent"><DoorOpen size={12} /> away</span>}
-                  {d && d.mode && <HeatModeTag mode={d.mode} modeExpires={d.modeExpires} />}
-                  {d && d.windowOpen && <span className="hd-tag hd-tag-warn"><AppWindow size={12} /> window open</span>}
-                </span>
               </div>
 
               {!d ? (
                 <div className="hd-faint" style={{ fontSize: 12.5, marginTop: 10 }}>Thermostat not found.</div>
               ) : (
                 <>
-                  <div className={styles.heatMain}>
-                    <HeatRing kind={d.kind} temp={d.temp} power={d.power} plugOn={d.plugOn} />
-                    <div className={styles.heatSide}>
-                      <span className="hd-eyebrow">Target</span>
-                      {d.kind === 'tado' && d.setTarget != null ? (
-                        <div className={styles.stepper}>
-                          <button
-                            type="button" className="hd-step" onClick={() => adjustTarget(room, d, -0.5)}
-                            disabled={systemOff || d.setTarget <= 5} title="−0.5° (manual override)"
-                          >
-                            −
-                          </button>
-                          <span className={cx(styles.targetVal, styles.stepVal)}>{d.setTarget}°</span>
-                          <button
-                            type="button" className="hd-step" onClick={() => adjustTarget(room, d, 0.5)}
-                            disabled={systemOff || d.setTarget >= 25} title="+0.5° (manual override)"
-                          >
-                            +
-                          </button>
-                        </div>
-                      ) : d.setTarget != null ? (
-                        <span className={styles.targetVal}>{d.setTarget}°</span>
-                      ) : (
-                        <span className="hd-muted" style={{ fontSize: 13 }}>schedule-controlled</span>
-                      )}
-                      {(d.kind === 'plug' || d.humidity != null) && (
-                        <div className={styles.heatInfo}>
-                          {d.kind === 'plug' && (
-                            <span className={styles.schedItem} style={d.plugOn ? { color: 'var(--heat)' } : undefined}>
-                              <Flame size={13} /> Radiator {d.plugOn ? 'on' : 'off'}
-                              {d.plugCount ? ` · ${d.plugCount} plug${d.plugCount === 1 ? '' : 's'}` : ''}
-                            </span>
-                          )}
-                          {d.humidity != null && (
-                            <span className={styles.schedItem}><Droplets size={13} /> {d.humidity}%</span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  {d.kind === 'tado' && (
-                    <div className={styles.hint}>± adjusts target · manual override holds {room.manualDuration} min</div>
-                  )}
-
-                  {d.scheduled && (
-                    <div className={cx('hd-inset', styles.schedule)}>
-                      <div className={styles.schedRow}>
-                        <Calendar size={13} />
-                        <span>
-                          <b style={{ color: 'var(--text-2)' }}>{d.scheduled.name}</b> · scheduled {d.scheduled.target}°
-                          {d.setTarget != null && d.setTarget < d.scheduled.target - 0.05 && (
-                            <span style={{ color: 'var(--warn)' }}> → set {d.setTarget}°</span>
-                          )}
-                        </span>
-                      </div>
-                      <div className={styles.schedLine}>
-                        <span className={styles.schedItem} style={{ color: d.windowOpen ? 'var(--warn)' : 'var(--faint)' }}>
-                          <AppWindow size={13} /> {d.windowOpen ? 'Open — heating paused' : 'Closed'}
-                        </span>
-                        {d.hasMotion && (
-                          <HeatingInactivity
-                            motionActive={d.motionActive}
-                            seedTs={d.seedTs}
-                            timeoutMin={d.scheduled.timeout}
-                            offset={d.scheduled.offset}
-                          />
+                  <HeatingReason info={why} now={now} className={styles.heatWhy} />
+                  <div style={offStyle}>
+                    <div className={styles.heatMain}>
+                      <HeatRing kind={d.kind} temp={d.temp} power={d.power} plugOn={d.plugOn} />
+                      <div className={styles.heatSide}>
+                        <span className="hd-eyebrow">Target</span>
+                        {d.kind === 'tado' && d.setTarget != null ? (
+                          <div className={styles.stepper}>
+                            <button
+                              type="button" className="hd-step" onClick={() => adjustTarget(room, d, -0.5)}
+                              disabled={systemOff || d.setTarget <= 5} title="−0.5° (manual override)"
+                            >
+                              −
+                            </button>
+                            <span className={cx(styles.targetVal, styles.stepVal)}>{d.setTarget}°</span>
+                            <button
+                              type="button" className="hd-step" onClick={() => adjustTarget(room, d, 0.5)}
+                              disabled={systemOff || d.setTarget >= 25} title="+0.5° (manual override)"
+                            >
+                              +
+                            </button>
+                          </div>
+                        ) : d.setTarget != null ? (
+                          <span className={styles.targetVal}>{d.setTarget}°</span>
+                        ) : (
+                          <span className="hd-muted" style={{ fontSize: 13 }}>schedule-controlled</span>
+                        )}
+                        {(d.kind === 'plug' || d.humidity != null) && (
+                          <div className={styles.heatInfo}>
+                            {d.kind === 'plug' && (
+                              <span className={styles.schedItem} style={d.plugOn ? { color: 'var(--heat)' } : undefined}>
+                                <Flame size={13} /> Radiator {d.plugOn ? 'on' : 'off'}
+                                {d.plugCount ? ` · ${d.plugCount} plug${d.plugCount === 1 ? '' : 's'}` : ''}
+                              </span>
+                            )}
+                            {d.humidity != null && (
+                              <span className={styles.schedItem}><Droplets size={13} /> {d.humidity}%</span>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
-                  )}
+                    {d.kind === 'tado' && (
+                      <div className={styles.hint}>± adjusts target · manual override holds {room.manualDuration} min</div>
+                    )}
+
+                    {d.scheduled && (
+                      <div className={cx('hd-inset', styles.schedule)}>
+                        <div className={styles.schedRow}>
+                          <Calendar size={13} />
+                          <span>
+                            <b style={{ color: 'var(--text-2)' }}>{d.scheduled.name}</b> · scheduled {d.scheduled.target}°
+                            {d.setTarget != null && d.setTarget < d.scheduled.target - 0.05 && (
+                              <span style={{ color: 'var(--warn)' }}> → set {d.setTarget}°</span>
+                            )}
+                          </span>
+                        </div>
+                        {d.hasMotion && (
+                          <div className={styles.schedLine}>
+                            <HeatingInactivity
+                              motionActive={d.motionActive}
+                              seedTs={d.seedTs}
+                              timeoutMin={d.scheduled.timeout}
+                              offset={d.scheduled.offset}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
 
-              <div className={styles.heatActions}>
+              <div className={styles.heatActions} style={offStyle}>
                 {HEATING_ACTIONS.map((a) => {
                   const flow = flowFor(room, a);
                   const bk = `${room.key}:${a.key}`;
