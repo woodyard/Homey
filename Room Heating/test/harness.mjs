@@ -114,7 +114,7 @@ const Homey = {
   logic: {
     getVariables: async () => { count('getVariables'); return logicVars; },
     updateVariable: async ({ id, variable }) => { trace.logicWrites.push({ op: 'update', id, value: variable.value }); logicVars[id].value = variable.value; },
-    createVariable: async ({ variable }) => { trace.logicWrites.push({ op: 'create', name: variable.name }); logicVars[variable.name] = { id: variable.name, ...variable }; },
+    createVariable: async ({ variable }) => { trace.logicWrites.push({ op: 'create', name: variable.name, value: variable.value }); logicVars[variable.name] = { id: variable.name, ...variable }; },
   },
   flow: {
     runFlowCardAction: async ({ args }) => { trace.notifications.push(args.text); },
@@ -149,6 +149,8 @@ const scenarios = {
   clara_boost_request_flowarg: { args: ['clara, boost'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; } },
   clara_boost_active: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; setState(CL, { mode: 'boost', modeExpires: NOW_MS + 20 * 60000 }); } },
   // v10.25.0: smart-plug boost stops at 25°C
+  clara_boost_window_opened: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; devices.cwindow.capabilitiesObj.alarm_contact.value = true; setState(CL, { mode: 'boost', modeExpires: NOW_MS + 20 * 60000 }); } },
+  clara_boost_window_closed: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; setState(CL, { mode: 'boost', modeExpires: NOW_MS + 20 * 60000, window: { openSince: NOW_MS - 600000 } }); } },
   clara_boost_active_hot: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 25.5; devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; setState(CL, { mode: 'boost', modeExpires: NOW_MS + 20 * 60000 }); } },
   clara_boost_expired: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; setState(CL, { mode: 'boost', modeExpires: NOW_MS - 1000 }); } },
   clara_pause_request: { args: ['Clara', 'pause'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; } },
@@ -332,7 +334,10 @@ if (state) {
   for (const k of ['openSince', 'closedSince']) if (state.window[k]) state.window[k] = 'T';
   if (state.notification?.lastTime) state.notification.lastTime = 'T';
 }
-for (const w of out.logicWrites) if (w.value) for (const r of Object.values(w.value)) { delete r.updatedAt; if (r.modeExpires) r.modeExpires = 'T'; }
+for (const w of out.logicWrites) if (w.value) for (const r of Object.values(w.value)) {
+  delete r.updatedAt;
+  for (const k of ['modeExpires', 'windowOpenSince', 'windowClosedSince']) if (r[k]) r[k] = 'T';
+}
 console.log(JSON.stringify(out, null, 2));
 if (COUNT_CALLS) console.error(JSON.stringify(calls));
 if (SHOW_LOGS) { console.log('\n----- LOGS -----'); console.log(logs.join('\n')); }

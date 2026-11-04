@@ -11,6 +11,7 @@ and a fixed set of devices for three rooms: Clara (two smart-plug radiators), St
     ./run_all.sh ../room_heating.js out_new                      # every scenario into a directory
     node summary.mjs out_new                                     # one line per scenario
     node compare.mjs out_baseline out_new                        # semantic diff per scenario
+    node check_status_fields.mjs ../room_heating.js              # window timestamps in HeatingStatus
     node harness.mjs ../room_heating.js stue_boost_active --then-status=../room_heating_status.js
                                                                  # then run the status script on the same mocks
 

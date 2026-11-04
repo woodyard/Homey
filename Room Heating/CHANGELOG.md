@@ -16,6 +16,25 @@ Room Heating was created 2025-12-31 by Henrik Skovgaard, based on Clara Heating 
 
 `room_heating.js`
 
+### 10.27.0 — 2026-11-04 — ⏳ Window timestamps in HeatingStatus
+
+- HeatingStatus gets two fields: `windowOpenSince` (epoch ms while the window is open,
+  else null) and `windowClosedSince` (epoch ms only while the settle delay after a long
+  opening runs, else null). Both reflect the state after this run's window logic. Runs that
+  skip the window logic (boost/pause/manual, away without a minimum, silent sensor) publish
+  the stored values, which can disagree with `windowOpen`.
+- Why: the dashboard could not show that the heating is off because it waits for the air
+  to settle after a window was closed, or how long is left. With these and the existing
+  `settings.windowOpenTimeout` / `settings.windowClosedDelay` it can count down to the
+  window timeout and to the resume.
+- Additive: existing fields are unchanged; readers without support ignore the new ones.
+- Verified with test/: all 110 scenarios behave the same as 10.26.0 apart from the two
+  new fields; new test/check_status_fields.mjs checks their values in 12 window scenarios
+  (open, timed out, settle started, settling, settled, brief opening, boost, a window that
+  opens or closes during a boost, normal).
+- Files modified: room_heating.js (v10.27.0), README.md, test/harness.mjs,
+  test/check_status_fields.mjs, test/README.md, CHANGELOG.md
+
 ### 10.26.0 — 2026-11-03 — ✨ Activity in a room overrides TADO away
 
 - Away applies to a room only while TADO presence is away AND the room is not in use:

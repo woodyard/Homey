@@ -30,7 +30,7 @@
  * - One run per room at a time (run lock); requests wait, normal runs skip
  *
  * Author: Henrik Skovgaard
- * Version: 10.26.0
+ * Version: 10.27.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
@@ -2057,6 +2057,12 @@ async function logDiagnostics(now, roomTemp, slot, action, override = false) {
             currentTemp: (typeof roomTemp === 'number') ? roomTemp : null,
             heating: !!heatingOn,
             windowOpen: !!windowOpen,
+            // Window timestamps after this run's window logic (epoch ms): openSince while the window
+            // is open, closedSince only while the settle delay runs - lets the dashboard count down.
+            // Runs that skip the window logic (boost/pause/manual, away without a minimum, silent
+            // sensor) publish the stored values, which can disagree with windowOpen.
+            windowOpenSince: roomState.window.openSince || null,
+            windowClosedSince: roomState.window.closedSince || null,
             inactive: !!inactive,
             away: !!away,
             tadoAway: !!tadoAway,

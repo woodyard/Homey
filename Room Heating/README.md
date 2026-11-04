@@ -67,7 +67,7 @@ A run collects its changes into one timeline notification, and an identical one 
 
 All per-room state lives in one JSON global, `<zoneName>.Heating.State`: mode and expiry, away flag, the last commanded and last seen TADO target, window timestamps, inactivity flag, previous schedule target and slot name, diagnostics throttling, and notification dedup. The run lock lives in `<zoneName>.Heating.RunLock` and is null between runs. `HeatingStatus.Lock` serialises the rooms' writes to the shared `HeatingStatus` variable, and `Heating.HolidayListReminder` records when the holiday list reminder was last sent. A history of significant events is appended to `<zoneName>.Heating.DiagnostikLog`.
 
-On every run the script publishes a per-room status object into the `HeatingStatus` Logic variable (JSON keyed by zone name): mode, schedule type, current period, effective slot settings, next change, scheduled and effective target, current temperature, heating, window, inactivity, away, last action and timestamp. The web dashboard and the status script both read it; nothing else is written for display.
+On every run the script publishes a per-room status object into the `HeatingStatus` Logic variable (JSON keyed by zone name): mode, schedule type, current period, effective slot settings, next change, scheduled and effective target, current temperature, heating, window (with `windowOpenSince` and, while the settle delay runs, `windowClosedSince`), inactivity, away, last action and timestamp. The web dashboard and the status script both read it; nothing else is written for display.
 
 ## Testing offline
 
