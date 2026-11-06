@@ -118,7 +118,7 @@ export function optimisticMode(entry, actionKey, now) {
  * @param {number|null} p.power         tado heating power % (live), null if unknown
  * @param {boolean|null} p.plugOn       any radiator plug on (live), null if unknown
  * @param {number|null} p.temp          room temperature (live), falls back to sc.currentTemp
- * @param {number|null} p.deviceTarget  live tado setpoint (manual mode target)
+ * @param {number|null} p.deviceTarget  manual mode target: live tado setpoint, or a plug room's chosen target
  * @param {string|null} p.mode          override for sc.mode (optimistic UI), optional
  * @param {number|null} p.modeExpires   override for sc.modeExpires, optional
  * @param {boolean|null} p.liveWindow  live contact sensors (liveWindowOpen), null if unknown
@@ -207,7 +207,11 @@ export function explainHeating({
       addFactor({ key: 'eco', tone: 'muted', icon: 'moon', text: `No activity · −${deg(offset)}` });
     }
     if (!skip.window && (inOverride ? (liveWindow ?? sc.windowOpen) : (sc.windowOpen && liveWindow !== false))) {
-      addFactor({ key: 'window', tone: 'warn', icon: 'window', text: inOverride ? `Window open (ignored in ${mode})` : 'Window open' });
+      // A plug room's manual target keeps the radiators off with the window open; the rest ignore it.
+      const windowText = !inOverride ? 'Window open'
+        : kind === 'plug' && mode === 'manual' ? 'Window open · radiators off'
+          : `Window open (ignored in ${mode})`;
+      addFactor({ key: 'window', tone: 'warn', icon: 'window', text: windowText });
     }
     if (!skip.justOpened && !inOverride && !stale && !sc.windowOpen && liveWindow === true) {
       addFactor({ key: 'window_new', tone: 'warn', icon: 'window', text: 'Window just opened · heating reacts shortly' });
@@ -267,7 +271,7 @@ export function explainHeating({
     return out({
       state: 'manual', tone: 'warn', icon: 'hand',
       headline: `Manual ${mt != null ? deg(mt) : ''}${until}`.replace(/\s+/g, ' ').trim(),
-      detail: `Set by hand · ${running ? `${leftTxt}, then the schedule takes over` : 'schedule takes over at the next check'}`,
+      detail: `${kind === 'plug' ? `Radiators ${heatingNow ? 'on' : 'off'}` : 'Set by hand'} · ${running ? `${leftTxt}, then the schedule takes over` : 'schedule takes over at the next check'}`,
       progress,
       tag: { tone: 'warn', icon: 'hand', text: running ? `Manual ${fmtMins(Math.ceil(left))}` : 'Manual' },
     });

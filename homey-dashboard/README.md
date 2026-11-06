@@ -120,6 +120,18 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.21.0** (2026-11-06) — Clara's target can be raised and lowered; schedules up to date.
+  - **+/- on Claras værelse:** the Heating tab now has the same stepper as the valve rooms.
+    A plug room has no device target, so the dashboard writes `{ room, target, at }` to the
+    `HeatingTargetRequest` Logic variable and starts the `C - Heating Target` flow; several
+    presses within 0.8 s become one request. `room_heating.js` (10.29.0 or newer) holds the
+    target for 90 minutes, then the schedule takes over. Reset ends it at once. The radiators
+    stay off with the window open. Rooms 2.0 keeps showing the target without a stepper, and
+    its forecast follows a manual target.
+  - **Schedule copy:** `lib/heating.js` matches `room_heating_config.js` 1.7.0 again. It had fallen
+    behind since October: Clara still showed 20-22° on school days instead of 17°, and Stue,
+    Soveværelse and Oliver had old times, targets or setbacks. Friday and Saturday now get the
+    late evening, and Clara's Friday its own schedule.
 - **1.20.0** (2026-11-04) — Heating says why a room is not heating.
   - **Status strip:** each heating room in Heating and Rooms 2.0 starts with one line that
     gives the main reason — for example "Off — resumes in 18 min (≈ 14:18)" with a countdown bar

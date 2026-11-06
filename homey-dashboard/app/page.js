@@ -15,7 +15,7 @@ import {
 import TemperatureTab from './TemperatureTab';
 import RoomsV2Tab from './RoomsV2Tab';
 import HeatingReason, { useNow } from './HeatingReason';
-import { HEATING_ROOMS, HEATING_ACTIONS, heatingSlot, guessHeatFlow } from '../lib/heating';
+import { HEATING_ROOMS, HEATING_ACTIONS, TARGET_MIN, TARGET_MAX, heatingSlot, guessHeatFlow } from '../lib/heating';
 import {
   explainHeating, heatingRoomSensor, liveWindowClosedAt, liveWindowOpen, optimisticMode, SCRIPT_INTERVAL_MIN, SETTLE_ACTIONS,
 } from '../lib/heatingState';
@@ -39,7 +39,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '1.20.0';
+const APP_VERSION = '1.21.0';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).
@@ -932,7 +932,8 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
   const [status, setStatus] = useState({});
   const [statusLoaded, setStatusLoaded] = useState(false);
   const [optManual, setOptManual] = useState({}); // zone -> { at, expires } ms (optimistic manual after +/-)
-  const [optTarget, setOptTarget] = useState({}); // thermostatId -> { value, ts } (hold new setpoint through Tado propagation)
+  const [optTarget, setOptTarget] = useState({}); // room key -> { value, ts } (hold new setpoint until the device or script shows it)
+  const plugTargetTimers = useRef({}); // room key -> timer of a plug room's target not sent yet
   const [masterBusy, setMasterBusy] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
   const now = useNow(30000); // countdowns move between status polls
@@ -1023,11 +1024,13 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
       motionActive: motionNow,
       seedTs,
       // Target: the live device setpoint is the truth for tado (updates on +/-); fall back to the
-      // script's effectiveTarget for plug rooms. A recent +/- holds its value for 45s (propagation).
+      // script's effectiveTarget for plug rooms (0 during a pause, so the schedule's target then).
+      // A recent +/- holds its value for 45s (propagation).
       setTarget: (() => {
-        const baseTarget = base.deviceTarget != null ? base.deviceTarget : (sc && sc.effectiveTarget != null ? sc.effectiveTarget : null);
-        const ot = optTarget[room.thermostatId];
-        return (ot && ot.value != null && base.deviceTarget !== ot.value && Date.now() - ot.ts < 45000) ? ot.value : baseTarget;
+        const planned = sc ? (sc.mode === 'pause' ? sc.scheduledTarget : sc.effectiveTarget) : null;
+        const baseTarget = base.deviceTarget ?? planned ?? null;
+        const ot = optTarget[room.key];
+        return (ot && ot.value != null && baseTarget !== ot.value && Date.now() - ot.ts < 45000) ? ot.value : baseTarget;
       })(),
       windowOpen: sc && sc.windowOpen != null ? sc.windowOpen : base.deviceWindow,
       away: sc ? !!sc.away : false,
@@ -1068,24 +1071,58 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
     }
   }
 
-  // Manual target change on a tado room. Setting the device target trips the script's
-  // manual-intervention detection → it holds "manual" for manualOverrideDuration minutes.
+  // A plug room has no device target: ask room_heating.js through the API, then start the room's
+  // target flow so the script acts now. Without that flow its next run (≤ 5 min) picks it up.
+  async function sendPlugTarget(room, target) {
+    try {
+      const r = await fetch('/api/homey/heating', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room: room.key, target }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'failed to set target');
+      const flow = (flows || []).find((f) => f.name === room.targetFlow);
+      if (flow) {
+        await fetch('/api/homey/reset', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ flowId: flow.id, advanced: flow.type === 'advanced' }),
+        });
+      }
+      [2000, 5000, 10000, 20000].forEach((ms) => setTimeout(loadStatus, ms));
+      setTimeout(() => onReload && onReload(), 5000);
+    } catch (e) {
+      setErr(String(e.message || e));
+      setOptTarget((prev) => { const n = { ...prev }; delete n[room.key]; return n; });
+      setOptManual((prev) => { const n = { ...prev }; delete n[room.zone]; return n; });
+      loadStatus();
+    }
+  }
+
+  // Manual target change. Tado: setting the device target trips the script's manual-intervention
+  // detection. Plug room: the script is asked directly. Either way it holds "manual" for
+  // manualOverrideDuration minutes.
   function adjustTarget(room, d, delta) {
-    if (d.setTarget == null || !room.thermostatId || !onControl) return;
-    const next = Math.max(5, Math.min(25, Math.round((d.setTarget + delta) * 2) / 2)); // Tado range 5–25°C
+    if (d.setTarget == null || (room.thermostatId && !onControl)) return;
+    const next = Math.max(TARGET_MIN, Math.min(TARGET_MAX, Math.round((d.setTarget + delta) * 2) / 2));
     if (next === d.setTarget) return;
     setErr('');
-    // Set ONLY the setpoint (like changing it in the Tado app) — sending onoff can make Tado
-    // resume its schedule and discard the overlay we're setting in the same request.
-    onControl(room.thermostatId, { target_temperature: next });
-    // Hold the new setpoint on screen through Tado's propagation window so a refresh that
+    if (room.thermostatId) {
+      // Set ONLY the setpoint (like changing it in the Tado app) — sending onoff can make Tado
+      // resume its schedule and discard the overlay we're setting in the same request.
+      onControl(room.thermostatId, { target_temperature: next });
+      // Reconcile: re-pull device state (Tado catches up) and heating status (script flags manual).
+      [5000, 12000, 20000].forEach((ms) => setTimeout(() => onReload && onReload(), ms));
+      [4000, 8000, 15000].forEach((ms) => setTimeout(loadStatus, ms));
+    } else {
+      // Several presses in a row end in one request and one script run.
+      clearTimeout(plugTargetTimers.current[room.key]);
+      plugTargetTimers.current[room.key] = setTimeout(() => sendPlugTarget(room, next), 800);
+    }
+    // Hold the new setpoint on screen until the device or script shows it, so a refresh that
     // reads the not-yet-updated value doesn't flicker it back.
-    setOptTarget((prev) => ({ ...prev, [room.thermostatId]: { value: next, ts: Date.now() } }));
+    setOptTarget((prev) => ({ ...prev, [room.key]: { value: next, ts: Date.now() } }));
     // We just triggered manual override — show the Manual badge immediately (sticky).
     setOptManual((prev) => ({ ...prev, [room.zone]: { at: Date.now(), expires: Date.now() + (room.manualDuration || 90) * 60000 } }));
-    // Reconcile: re-pull device state (Tado catches up) and heating status (script flags manual).
-    [5000, 12000, 20000].forEach((ms) => setTimeout(() => onReload && onReload(), ms));
-    [4000, 8000, 15000].forEach((ms) => setTimeout(loadStatus, ms));
   }
 
   async function runAction(room, action) {
@@ -1097,6 +1134,8 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
     // Optimistically reflect the new mode so the badge appears instantly (boost/pause = 60 min).
     setStatus((prev) => ({ ...prev, [room.zone]: optimisticMode(prev[room.zone], action.key, Date.now()) }));
     setOptManual((prev) => { const n = { ...prev }; delete n[room.zone]; return n; }); // boost/pause/reset override manual
+    clearTimeout(plugTargetTimers.current[room.key]); // a target not sent yet is replaced as well
+    setOptTarget((prev) => { const n = { ...prev }; delete n[room.key]; return n; });
     try {
       const r = await fetch('/api/homey/reset', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1163,7 +1202,7 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
           // Why the room is (not) heating — the one main reason plus the other factors.
           const why = d ? explainHeating({
             sc: d.sc, heatingEnabled, kind: d.kind, power: d.power, plugOn: d.plugOn, temp: d.temp,
-            deviceTarget: d.deviceTarget, liveWindow: d.liveWindow, liveClosedAt: d.liveClosedAt, mode: d.mode, modeExpires: d.modeExpires,
+            deviceTarget: d.kind === 'plug' ? d.setTarget : d.deviceTarget, liveWindow: d.liveWindow, liveClosedAt: d.liveClosedAt, mode: d.mode, modeExpires: d.modeExpires,
             manualMinutes: room.manualDuration, loading: !statusLoaded, now,
           }) : null;
           // Master off greys out the controls, but the status strip stays readable.
@@ -1184,24 +1223,24 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
                       <HeatRing kind={d.kind} temp={d.temp} power={d.power} plugOn={d.plugOn} />
                       <div className={styles.heatSide}>
                         <span className="hd-eyebrow">Target</span>
-                        {d.kind === 'tado' && d.setTarget != null ? (
+                        {d.setTarget != null ? (
                           <div className={styles.stepper}>
                             <button
                               type="button" className="hd-step" onClick={() => adjustTarget(room, d, -0.5)}
-                              disabled={systemOff || d.setTarget <= 5} title="−0.5° (manual override)"
+                              disabled={systemOff || d.setTarget <= TARGET_MIN} title="−0.5° (manual override)"
+                              aria-label={`Lower ${room.label} target`}
                             >
                               −
                             </button>
                             <span className={cx(styles.targetVal, styles.stepVal)}>{d.setTarget}°</span>
                             <button
                               type="button" className="hd-step" onClick={() => adjustTarget(room, d, 0.5)}
-                              disabled={systemOff || d.setTarget >= 25} title="+0.5° (manual override)"
+                              disabled={systemOff || d.setTarget >= TARGET_MAX} title="+0.5° (manual override)"
+                              aria-label={`Raise ${room.label} target`}
                             >
                               +
                             </button>
                           </div>
-                        ) : d.setTarget != null ? (
-                          <span className={styles.targetVal}>{d.setTarget}°</span>
                         ) : (
                           <span className="hd-muted" style={{ fontSize: 13 }}>schedule-controlled</span>
                         )}
@@ -1220,7 +1259,7 @@ function HeatingTab({ devices, zones, flows, onControl, onReload }) {
                         )}
                       </div>
                     </div>
-                    {d.kind === 'tado' && (
+                    {d.setTarget != null && (
                       <div className={styles.hint}>± adjusts target · manual override holds {room.manualDuration} min</div>
                     )}
 

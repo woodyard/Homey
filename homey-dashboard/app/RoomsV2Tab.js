@@ -1112,7 +1112,8 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
               startMin,
               slots,
               status: sc,
-              deviceTarget: thermoCaps.target_temperature != null ? thermoCaps.target_temperature : null,
+              deviceTarget: thermoCaps.target_temperature != null ? thermoCaps.target_temperature
+                : sc && sc.mode === 'manual' ? sc.effectiveTarget : null,
               weekend,
               roomKey: room.heating.key,
             }) : null;
