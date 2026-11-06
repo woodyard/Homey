@@ -261,8 +261,6 @@ input[type='range'] { accent-color: var(--accent); }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  backdrop-filter: blur(18px) saturate(140%);
 }
 
 .hd-card-pad { padding: 18px 20px; }

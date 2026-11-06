@@ -120,6 +120,11 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.21.1** (2026-11-06) — Smoother scrolling. The cards no longer blur what is behind them
+  (`backdrop-filter`, added in 1.19.0). The browser redid that blur for every card on every frame:
+  measured while scrolling, Rooms and Heating went from 12-13 to 32 fps, Rooms 2.0 from 13 to
+  29. The cards are 72-82% opaque over a soft gradient, so the look barely changes. The top bar
+  keeps its blur.
 - **1.21.0** (2026-11-06) — Clara's target can be raised and lowered; schedules up to date.
   - **+/- on Claras værelse:** the Heating tab now has the same stepper as the valve rooms.
     A plug room has no device target, so the dashboard writes `{ room, target, at }` to the
