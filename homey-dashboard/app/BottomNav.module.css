@@ -1,0 +1,64 @@
+/* Phone and small tablet navigation. The header's tab row (page.module.css) needs about 900px to
+   fit without scrolling sideways; below that this bar replaces it. */
+
+.wrap { display: none; }
+
+@media (max-width: 900px) {
+  .wrap { display: block; }
+}
+
+.bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding: 4px 4px calc(4px + env(safe-area-inset-bottom));
+  background: var(--surface-solid);
+  border-top: 1px solid var(--divider);
+}
+
+.barBtn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  min-height: 54px; min-width: 0; padding: 4px 2px; border: none; border-radius: 12px;
+  background: transparent; color: var(--muted); cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.icon {
+  display: grid; place-items: center; width: 44px; height: 26px; border-radius: 999px;
+  transition: background 0.15s;
+}
+
+.label {
+  max-width: 100%; font-size: 11px; font-weight: 550; line-height: 1.2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.barBtnActive { color: var(--accent); }
+.barBtnActive .icon { background: var(--accent-soft); }
+.barBtnActive .label { font-weight: 650; }
+
+.backdrop {
+  position: fixed; inset: 0; z-index: 44; padding: 0; border: none;
+  background: rgba(0, 0, 0, 0.35); cursor: default;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sheet {
+  position: fixed; left: 10px; right: 10px; z-index: 46;
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: 2px; padding: 6px;
+  background: var(--surface-solid);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+.sheetBtn {
+  display: flex; align-items: center; gap: 12px;
+  min-height: 52px; padding: 0 14px; border: none; border-radius: var(--radius-md);
+  background: transparent; color: var(--text);
+  font-size: 15px; font-weight: 550; text-align: left; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sheetBtn svg { color: var(--muted); }
+.sheetBtnActive { background: var(--accent-soft); color: var(--accent); }
+.sheetBtnActive svg { color: var(--accent); }

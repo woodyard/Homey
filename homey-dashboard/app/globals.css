@@ -254,6 +254,11 @@ input[type='range'] { accent-color: var(--accent); }
   .hd-shell { padding: 0 14px 56px; }
 }
 
+/* room for the bottom bar (BottomNav) */
+@media (max-width: 900px) {
+  .hd-shell { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+}
+
 /* ---------- surfaces ---------- */
 
 .hd-card {

@@ -61,6 +61,12 @@
 }
 .navBtnActive svg { color: var(--accent); }
 
+/* Below 900px the tabs do not fit on one line: BottomNav replaces this row */
+@media (max-width: 900px) {
+  .nav { display: none; }
+  .topRow { padding-bottom: 12px; }
+}
+
 /* ---------- generic bits ---------- */
 
 .checking { display: flex; align-items: center; gap: 8px; color: var(--muted); padding: 24px 0; }
@@ -467,8 +473,6 @@
 
 @media (max-width: 640px) {
   .topbar { margin-bottom: 18px; padding-top: 10px; }
-  /* hint that the tab row scrolls sideways */
-  .nav { -webkit-mask-image: linear-gradient(90deg, #000 82%, transparent); mask-image: linear-gradient(90deg, #000 82%, transparent); }
   .hideSm { display: none; }
   .showSm { display: inline; }
   .brandTitle { font-size: 16px; }

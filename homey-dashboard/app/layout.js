@@ -12,6 +12,7 @@ export const metadata = {
 export const viewport = {
   width: 'device-width',
   initialScale: 1,
+  viewportFit: 'cover', // lets the bottom bar reach past the iPhone's home indicator
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#eef2f8' },
     { media: '(prefers-color-scheme: dark)', color: '#070b16' },

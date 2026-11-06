@@ -15,6 +15,7 @@ import {
 import TemperatureTab from './TemperatureTab';
 import RoomsV2Tab from './RoomsV2Tab';
 import HeatingReason, { useNow } from './HeatingReason';
+import BottomNav from './BottomNav';
 import { HEATING_ROOMS, HEATING_ACTIONS, TARGET_MIN, TARGET_MAX, heatingSlot, guessHeatFlow } from '../lib/heating';
 import {
   explainHeating, heatingRoomSensor, liveWindowClosedAt, liveWindowOpen, optimisticMode, SCRIPT_INTERVAL_MIN, SETTLE_ACTIONS,
@@ -39,7 +40,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '1.21.1';
+const APP_VERSION = '1.22.0';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).
@@ -58,8 +59,9 @@ const TABS = [
   ['activity', 'Live activity', Activity],
   ['temperatures', 'Temperatures', Thermometer],
   ['heating', 'Heating', Flame],
-  ['lighting', 'Adaptive lighting', Lightbulb],
+  ['lighting', 'Adaptive lighting', Lightbulb, 'Lighting'],
 ];
+const PHONE_TABS = ['heating', 'rooms2', 'weather', 'activity']; // in the bottom bar (BottomNav); the rest under More
 
 // Header theme toggle: system → light → dark (stored as 'hd-theme', applied as data-theme).
 const THEME_META = {
@@ -511,6 +513,8 @@ export default function Page() {
           ))}
         </nav>
       </header>
+
+      <BottomNav tabs={TABS} primary={PHONE_TABS} tab={tab} onSelect={setTab} />
 
       <main key={tab} className="hd-fade-in">
         {tab === 'weather' && <WeatherTab />}

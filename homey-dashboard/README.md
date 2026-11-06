@@ -120,6 +120,11 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.22.0** (2026-11-06) — Bottom bar on phones and small tablets. Up to 900px wide, where the tabs
+  no longer fit on one line, the sideways-scrolling tab row gives way to a fixed bar with Heating,
+  Rooms 2.0, Weather and Live activity, and a More button for Rooms, Temperatures and Adaptive
+  lighting. A tab under More takes over the button's icon and label while it is open. Choosing a tab
+  starts from the top of the page. Wider screens keep the tab row.
 - **1.21.1** (2026-11-06) — Smoother scrolling. The cards no longer blur what is behind them
   (`backdrop-filter`, added in 1.19.0). The browser redid that blur for every card on every frame:
   measured while scrolling, Rooms and Heating went from 12-13 to 32 fps, Rooms 2.0 from 13 to
