@@ -16,6 +16,7 @@
  *   - "clara, boost"   → Boost mode - heat to 25°C for 1 hour (comma-separated)
  *   - "clara, pause"   → Pause mode - force OFF for 1 hour (comma-separated)
  *   - "Clara, cancel"  → Cancel boost, pause, or manual override
+ *   - "Clara, target"  → Apply a target from the HeatingTargetRequest variable now (smart plug rooms)
  *
  * Features:
  * - Single script for ALL rooms
@@ -30,7 +31,7 @@
  * - One run per room at a time (run lock); requests wait, normal runs skip
  *
  * Author: Henrik Skovgaard
- * Version: 10.27.1
+ * Version: 10.29.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
@@ -163,6 +164,7 @@ ROOM.heating.devices = await discoverHeatingDevices();
 const requestBoost = boostArg === 'boost';
 const requestPause = boostArg === 'pause';
 const requestCancel = boostArg === 'cancel';
+const requestTarget = boostArg === 'target';
 
 if (requestBoost) {
     log(`🚀 Boost heating requested via argument`);
@@ -184,7 +186,7 @@ if (requestCancel) {
 // A second run would read half-applied device state and could flag it as manual
 // intervention. Rule: one run per room at a time. A normal run that finds another
 // in progress simply exits (the next trigger is at most 5 minutes away); a
-// boost/pause/cancel request waits for its turn so it is never lost.
+// boost/pause/cancel/target request waits for its turn so it is never lost.
 
 const SESSION_ID = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 const RUN_LOCK_KEY = `${ROOM.zoneName}.Heating.RunLock`;
@@ -281,9 +283,10 @@ const STATE_KEY = `${ROOM.zoneName}.Heating.State`;
 const DEFAULT_STATE = {
     mode: 'auto',            // 'auto' | 'manual' | 'boost' | 'pause'
     modeExpires: null,        // timestamp when mode auto-expires
-    modeDetails: {},          // mode-specific: { type, originalValue } for manual
+    modeDetails: {},          // mode-specific: { type, originalValue, target? } for manual
+    lastTargetRequestAt: null, // `at` of the last HeatingTargetRequest handled (smart plugs)
 
-    away: false,              // away applies to this room (TADO away and the room not in use)
+    away: false,             // away applies to this room (TADO away and the room not in use)
     tadoAway: false,          // TADO presence on the previous run (a change clears the baseline)
     awayPaused: false,        // activity paused away during this TADO away period (later changes are routine)
     awaySince: null,          // timestamp when away mode started
@@ -371,7 +374,7 @@ function saveRoomState(state) {
  * @param {object} params - Mode-specific params:
  *   boost:  { duration? }
  *   pause:  { duration? }
- *   manual: { duration?, type, originalValue }
+ *   manual: { duration?, type, originalValue, target? } (target: smart plugs hold it)
  * @returns {object} The mutated state
  */
 function transitionMode(state, newMode, params = {}) {
@@ -401,7 +404,8 @@ function transitionMode(state, newMode, params = {}) {
         state.modeExpires = Date.now() + duration * 60000;
         state.modeDetails = {
             type: params.type,
-            originalValue: params.originalValue
+            originalValue: params.originalValue,
+            target: params.target
         };
     }
 
@@ -538,6 +542,11 @@ function isWeekend(date) {
     return day === 0 || day === 6;
 }
 
+/** A school day's base schedule: the room's optional friday schedule on Fridays, else weekday. */
+function schoolDaySchedule(date) {
+    return (date.getDay() === 5 && ROOM.schedules.friday) || ROOM.schedules.weekday;
+}
+
 function getCurrentTimeSlot(schedule, currentTime) {
     const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
     
@@ -615,7 +624,7 @@ async function getNextScheduleChange(schedule, currentSlot) {
     } else {
         // Check if tomorrow is a school day or holiday
         const schoolDayTomorrow = await isSchoolDayTomorrow();
-        tomorrowSchedule = schoolDayTomorrow ? ROOM.schedules.weekday : ROOM.schedules.holiday;
+        tomorrowSchedule = schoolDayTomorrow ? schoolDaySchedule(tomorrow) : ROOM.schedules.holiday;
     }
     
     const firstSlot = tomorrowSchedule[0];
@@ -639,7 +648,8 @@ const MODE_LABELS = {
 /**
  * Activate an override mode.
  * @param {string} mode - 'boost' | 'pause' | 'manual'
- * @param {object} params - manual only: { type, originalValue, currentValue } (TADO target change)
+ * @param {object} params - manual only: { type, originalValue, currentValue, target? }
+ *   (a TADO target change, or a target request for a smart plug room)
  */
 function activateMode(mode, params = {}) {
     transitionMode(roomState, mode, params);
@@ -863,7 +873,7 @@ async function resumeNormalHeating(slot, fromExpiry, modeType) {
  * schedule (smart_schedule = true) is not a person either; the script re-asserts it.
  *
  * Smart plugs have no manual detection: the schedule simply re-asserts them on the
- * next run, and the Boost/Pause flows exist for intentional changes.
+ * next run. Intentional changes come through the Boost/Pause flows and target requests.
  */
 async function detectManualIntervention() {
     if (ROOM.heating.type !== 'tado_valve') {
@@ -937,12 +947,17 @@ async function recordLastSeenTarget() {
     }
 }
 
-async function handleManualOverride() {
+async function handleManualOverride(roomTempObj) {
     log(`\n--- MANUAL OVERRIDE CONTROL ---`);
     log(`Manual override: ACTIVE - respecting user's manual changes`);
+
+    if (ROOM.heating.type === 'smart_plug') {
+        return holdManualTarget(roomTempObj);
+    }
+
     log(`Automation paused - no commands will be sent`);
-    
-    // Manual mode exists for TADO only: read the valve for the log, change nothing
+
+    // TADO regulates itself: read the valve for the log, change nothing
     try {
         const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
         const currentTarget = device.capabilitiesObj.target_temperature.value;
@@ -954,6 +969,77 @@ async function handleManualOverride() {
     }
 
     return 'manual_override_active';
+}
+
+/**
+ * Smart plugs have no thermostat, so the script holds a manual target itself, with the
+ * room's hysteresis. The schedule, inactivity and away do not apply. Radiators stay off
+ * with a silent sensor or an open window: the normal run would not heat then either.
+ * @returns {Promise<string>} Action string for diagnostics
+ */
+async function holdManualTarget(roomTempObj) {
+    const target = roomState.modeDetails.target;
+    const roomTemp = roomTempObj.value;
+
+    if (await checkSensorStale(roomTempObj)) {
+        log(`🛑 Room temperature unknown - radiators kept OFF until the sensor reports again`);
+        await setHeating(false, target);
+        return 'sensor_stale_off';
+    }
+    if (await isWindowOpen()) {
+        log(`🪟 Window open - radiators kept OFF during the manual target`);
+        await setHeating(false, target);
+        return 'manual_window_off';
+    }
+
+    const hysteresis = ROOM.heating.hysteresis || 0.5;
+    const targetLow = target - (hysteresis / 2);
+    const targetHigh = target + (hysteresis / 2);
+    const heatingOn = await getHeatingStatus();
+    const radiatorsOn = roomTemp < targetLow ? true : roomTemp > targetHigh ? false : heatingOn;
+
+    log(`Smart plug mode: Room ${roomTemp}°C, manual range ${targetLow}-${targetHigh}°C → radiators ${radiatorsOn ? 'ON' : 'OFF'}`);
+    await setHeating(radiatorsOn, target);
+    return radiatorsOn ? 'manual_heating' : 'manual_at_target';
+}
+
+const TARGET_REQUEST_VARIABLE = 'HeatingTargetRequest';
+const TARGET_REQUEST_MAX_AGE_MS = 10 * 60000;
+const TARGET_REQUEST_MIN = 5;
+const TARGET_REQUEST_MAX = 25;
+
+/**
+ * A target asked for from the dashboard, which can write Logic variables and start flows
+ * but cannot run this script. The text variable holds { room, target, at } and is never
+ * cleared: a request counts once, by its `at`. The "- Heating Target" flow makes it take
+ * effect at once; without that flow the next normal run picks it up.
+ * @returns {Promise<{ target: number, at: number }|null>} A new request for this room, or null
+ */
+async function readTargetRequest() {
+    if (ROOM.heating.type !== 'smart_plug') return null;
+
+    let request;
+    try {
+        const raw = (await getLogicVariable(TARGET_REQUEST_VARIABLE))?.value;
+        if (!raw) return null;
+        request = JSON.parse(raw);
+    } catch (error) {
+        log(`⚠️  Could not read ${TARGET_REQUEST_VARIABLE}: ${error.message}`);
+        return null;
+    }
+
+    if (!request || request.room !== roomArg || request.at === roomState.lastTargetRequestAt) return null;
+
+    const { target, at } = request;
+    if (typeof target !== 'number' || target < TARGET_REQUEST_MIN || target > TARGET_REQUEST_MAX) {
+        log(`⚠️  Ignoring ${TARGET_REQUEST_VARIABLE}: target ${target} is not ${TARGET_REQUEST_MIN}-${TARGET_REQUEST_MAX}`);
+        return null;
+    }
+    if (typeof at !== 'number' || Date.now() - at > TARGET_REQUEST_MAX_AGE_MS) {
+        log(`ℹ️ Ignoring an old ${TARGET_REQUEST_VARIABLE} (${target}°C)`);
+        return null;
+    }
+    return { target, at };
 }
 
 // ============================================================================
@@ -2141,7 +2227,7 @@ async function resolveSchedule() {
         baseSchedule = ROOM.schedules.weekend;
         dayType = 'Weekend';
     } else if (schoolDay) {
-        baseSchedule = ROOM.schedules.weekday;
+        baseSchedule = schoolDaySchedule(now);
         dayType = 'School Day';
     } else {
         baseSchedule = ROOM.schedules.holiday;
@@ -2249,6 +2335,22 @@ async function main() {
             : `No active overrides - running normal schedule`);
     }
 
+    // Target request (smart plugs). A cancel in the same run uses it up without applying it.
+    const targetRequest = await readTargetRequest();
+    if (targetRequest) {
+        roomState.lastTargetRequestAt = targetRequest.at;
+        saveRoomState(roomState);
+        if (!requestCancel) {
+            log(`\n🎯 Target ${targetRequest.target}°C requested`);
+            activateMode('manual', {
+                type: 'target',
+                originalValue: currentSlot.target,
+                currentValue: targetRequest.target,
+                target: targetRequest.target
+            });
+        }
+    }
+
     // Pause / boost request - latest call wins, cancels any other active mode
     for (const [requested, mode] of [[requestPause, 'pause'], [requestBoost, 'boost']]) {
         if (!requested) continue;
@@ -2281,8 +2383,8 @@ async function main() {
             return;
         }
 
-        // Manual: read-only. Boost/pause: force heating on/off.
-        const action = mode === 'manual' ? await handleManualOverride() : await controlOverrideMode(mode, roomTemp);
+        // Manual: read-only on TADO, holds the target on smart plugs. Boost/pause: force heating on/off.
+        const action = mode === 'manual' ? await handleManualOverride(roomTempObj) : await controlOverrideMode(mode, roomTemp);
 
         // Target for diagnostics/notification depends on the mode
         let diagSlot, notifTarget;
@@ -2293,8 +2395,8 @@ async function main() {
             diagSlot = { target: BOOST_TEMPERATURE };
             notifTarget = `${BOOST_TEMPERATURE}`;
         } else {
-            // Manual: target is whatever the user set (TADO only - smart plugs have no target)
-            let actualTarget = null;
+            // Manual: target is whatever the user set (the valve's, or the requested one on smart plugs)
+            let actualTarget = roomState.modeDetails.target ?? null;
             if (ROOM.heating.type === 'tado_valve') {
                 try {
                     const device = await Homey.devices.getDevice({ id: ROOM.heating.devices[0] });
@@ -2466,7 +2568,7 @@ async function main() {
 // Entry Point
 // ============================================================================
 
-const hasRequest = requestBoost || requestPause || requestCancel;
+const hasRequest = requestBoost || requestPause || requestCancel || requestTarget;
 const lockWaitStart = Date.now();
 const lockAcquired = await acquireRunLock(hasRequest ? RUN_LOCK_WAIT_MS : 0);
 

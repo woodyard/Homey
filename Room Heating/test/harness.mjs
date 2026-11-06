@@ -145,6 +145,8 @@ function setState(zone, patch) {
 const CL = 'Claras værelse', ST = 'Stue / Spisestue', SV = 'Soveværelse';
 // A zone with no activity for the last `minutes` (default 4 h)
 function unused(zoneId, minutes = 240) { zones[zoneId].active = false; zones[zoneId].activeLastUpdated = new RealDate(NOW_MS - minutes * 60000).toISOString(); }
+// The HeatingTargetRequest variable as the dashboard writes it
+function targetRequest(target, at = NOW_MS) { return { id: 'v4', name: 'HeatingTargetRequest', type: 'string', value: JSON.stringify({ room: 'Clara', target, at }) }; }
 const scenarios = {
   // ---- Clara (smart plugs)
   clara_auto_cold: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; } },
@@ -193,6 +195,36 @@ const scenarios = {
   clara_evening: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-21T19:30:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; setState(CL, {}); } },
   clara_evening_weekend_tomorrow: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-23T19:30:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; setState(CL, {}); } },
   clara_weekend: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-24T09:00:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; setState(CL, {}); } },
+  // Optional friday schedule (config 1.7.0; Fri 2026-01-23): before 14:00 as a school day, then 22/20 to 21:00, then lateEvening 20
+  clara_friday_morning: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-23T09:00:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 18.0; setState(CL, {}); } },
+  clara_friday_home: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-23T16:00:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 21.0; setState(CL, {}); } },
+  clara_friday_empty: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-23T15:00:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 19.0; setState(CL, {}); unused(Z.clara); } },
+  clara_friday_late: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-23T20:30:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 21.0; setState(CL, {}); } },
+  // SchoolHoliday override on a Friday: the holiday schedule, not friday
+  clara_friday_holiday: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-23T05:00:00Z').getTime(); logicVars.v3 = { id: 'v3', name: 'SchoolHoliday', type: 'boolean', value: true }; devices.cmotion.capabilitiesObj.measure_temperature.value = 19.0; setState(CL, {}); } },
+  // Thursday keeps the weekday schedule: 21 when home
+  clara_thursday_home: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-22T16:00:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; setState(CL, {}); } },
+  // Target requests from the dashboard (HeatingTargetRequest; smart plugs hold the target for 90 min)
+  clara_target_request: { args: ['Clara', 'target'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; logicVars.v4 = targetRequest(22.5); setState(CL, {}); } },
+  clara_target_by_cron: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; logicVars.v4 = targetRequest(22.5); setState(CL, {}); } },
+  clara_target_lower: { args: ['Clara', 'target'], setup: () => { NOW_MS = new RealDate('2026-01-24T09:00:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 21.0; devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; logicVars.v4 = targetRequest(20); setState(CL, {}); } },
+  clara_target_new_while_manual: { args: ['Clara', 'target'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; logicVars.v4 = targetRequest(21); setState(CL, { mode: 'manual', modeExpires: NOW_MS + 5 * 60000, modeDetails: { type: 'target', originalValue: 17, target: 19 }, lastTargetRequestAt: NOW_MS - 60000 }); } },
+  clara_target_over_boost: { args: ['Clara', 'target'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; logicVars.v4 = targetRequest(21); setState(CL, { mode: 'boost', modeExpires: NOW_MS + 20 * 60000 }); } },
+  clara_target_holding: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; logicVars.v4 = targetRequest(22, NOW_MS - 600000); setState(CL, { mode: 'manual', modeExpires: NOW_MS + 60 * 60000, modeDetails: { type: 'target', originalValue: 17, target: 22 }, lastTargetRequestAt: NOW_MS - 600000 }); } },
+  clara_target_reached: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 22.5; devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; setState(CL, { mode: 'manual', modeExpires: NOW_MS + 60 * 60000, modeDetails: { type: 'target', originalValue: 17, target: 22 } }); } },
+  clara_target_window: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 19.0; devices.cwindow.capabilitiesObj.alarm_contact.value = true; devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; setState(CL, { mode: 'manual', modeExpires: NOW_MS + 60 * 60000, modeDetails: { type: 'target', originalValue: 17, target: 22 } }); } },
+  clara_target_sensor_silent: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 19.0; devices.cmotion.capabilitiesObj.measure_temperature.lastUpdated = new RealDate(NOW_MS - 120 * 60000).toISOString(); devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; setState(CL, { mode: 'manual', modeExpires: NOW_MS + 60 * 60000, modeDetails: { type: 'target', originalValue: 17, target: 22 }, sensorStaleSince: NOW_MS - 60000 }); } },
+  clara_target_expired: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 21.0; devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; setState(CL, { mode: 'manual', modeExpires: NOW_MS - 1000, modeDetails: { type: 'target', originalValue: 17, target: 22 } }); } },
+  clara_target_reset: { args: ['Clara', 'cancel'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 21.0; devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; logicVars.v4 = targetRequest(22, NOW_MS - 60000); setState(CL, { mode: 'manual', modeExpires: NOW_MS + 60 * 60000, modeDetails: { type: 'target', originalValue: 17, target: 22 }, lastTargetRequestAt: NOW_MS - 60000 }); } },
+  clara_target_cancel_same_run: { args: ['Clara', 'cancel'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 18.0; logicVars.v4 = targetRequest(22); setState(CL, {}); } },
+  clara_target_used_up: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 18.0; logicVars.v4 = targetRequest(22, NOW_MS - 60000); setState(CL, { lastTargetRequestAt: NOW_MS - 60000 }); } },
+  clara_target_too_old: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 18.0; logicVars.v4 = targetRequest(22, NOW_MS - 11 * 60000); setState(CL, {}); } },
+  clara_target_out_of_range: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 18.0; logicVars.v4 = targetRequest(40); setState(CL, {}); } },
+  clara_target_bad_json: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 18.0; logicVars.v4 = { id: 'v4', name: 'HeatingTargetRequest', type: 'string', value: '{not json' }; setState(CL, {}); } },
+  clara_target_empty_variable: { args: ['Clara', 'target'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 18.0; logicVars.v4 = { id: 'v4', name: 'HeatingTargetRequest', type: 'string', value: '' }; setState(CL, {}); } },
+  stue_target_not_for_valves: { args: ['Stue'], setup: () => { logicVars.v4 = { id: 'v4', name: 'HeatingTargetRequest', type: 'string', value: JSON.stringify({ room: 'Stue', target: 24, at: NOW_MS }) }; setState(ST, { baseline: { commandedTargetTemp: 22, lastSeenTargetTemp: 22 } }); } },
+  // Soveværelse has no friday schedule: Friday afternoon is its weekday Day
+  sv_friday_no_schedule: { args: ['Soveværelse'], setup: () => { NOW_MS = new RealDate('2026-01-23T16:00:00Z').getTime(); setState(SV, { baseline: { commandedTargetTemp: 20, lastSeenTargetTemp: 20 } }); } },
   unknown_room: { args: ['Kitchen'], setup: () => {} },
   // Run lock (v10.19.0+): another session holds the lock
   clara_run_lock_busy: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; globalApi.set(`${CL}.Heating.RunLock`, JSON.stringify({ sessionId: 'session_other', startedAt: NOW_MS - 10000 })); setState(CL, {}); } },

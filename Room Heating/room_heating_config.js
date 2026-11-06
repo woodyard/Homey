@@ -11,7 +11,7 @@
  *   3. Heating and status scripts automatically use the saved config
  *
  * Author: Henrik Skovgaard
- * Version: 1.6.2
+ * Version: 1.7.0
  * Created: 2025-12-31
  *
  * Version history: CHANGELOG.md
@@ -34,6 +34,11 @@ const ROOMS = {
             weekday: [
                 { start: '00:00', end: '14:00', target: 17, inactivityOffset: 0, name: 'Efterskole' },
                 { start: '14:00', end: '20:00', target: 21, inactivityOffset: 4, name: 'Day' }
+            ],
+            // Optional: replaces weekday on a Friday school day. Friday from 14:00 is weekend.
+            friday: [
+                { start: '00:00', end: '14:00', target: 17, inactivityOffset: 0, name: 'Efterskole' },
+                { start: '14:00', end: '21:00', target: 22.0, inactivityOffset: 2.0, name: 'Day' }
             ],
             weekend: [
                 { start: '00:00', end: '08:00', target: 20, inactivityOffset: 0, name: 'Night' },
@@ -212,7 +217,8 @@ const EVENING_CASES = {
     'weekend+earlyEvening': 'a Sunday before a school day',
     'weekend+lateEvening': 'a Saturday, or a Sunday before a holiday',
     'holiday+earlyEvening': 'the last day of a holiday',
-    'holiday+lateEvening': 'a holiday before another day off'
+    'holiday+lateEvening': 'a holiday before another day off',
+    'friday+lateEvening': 'a Friday school day'
 };
 
 function checkSlot(where, slot) {
@@ -260,7 +266,9 @@ for (const [roomName, room] of Object.entries(ROOMS)) {
 
     const schedules = room.schedules || {};
     const dayOk = {};
-    for (const day of DAY_SCHEDULES) {
+    // friday is optional; when present it is checked like the others
+    const days = schedules.friday ? [...DAY_SCHEDULES, 'friday'] : DAY_SCHEDULES;
+    for (const day of days) {
         const slots = schedules[day];
         if (!Array.isArray(slots) || slots.length === 0) {
             errors.push(`${roomName}: schedules.${day} must be a non-empty list`);
@@ -285,8 +293,9 @@ for (const [roomName, room] of Object.entries(ROOMS)) {
         if (slot.end !== '23:59') {
             warnings.push(`${roomName} ${evening}: ends ${slot.end}; the evening slot is the last of the day, so it should end 23:59`);
         }
-        for (const day of DAY_SCHEDULES) {
+        for (const day of days) {
             if (!dayOk[day]) continue;
+            if (day === 'friday' && evening === 'earlyEvening') continue;  // Saturday is never a school day
             const lastSlot = schedules[day][schedules[day].length - 1];
             const when = EVENING_CASES[`${day}+${evening}`];
             if (toMinutes(slot.start) < toMinutes(lastSlot.end)) {
@@ -343,7 +352,7 @@ log(`✅ Saved GLOBAL configuration`);
 
 // Save metadata
 global.set('Config.LastUpdate', new Date().toISOString());
-global.set('Config.Version', '1.6.2');
+global.set('Config.Version', '1.7.0');
 
 log('\n══ CONFIGURED ROOMS ══');
 for (const [roomName, roomConfig] of Object.entries(ROOMS)) {

@@ -187,6 +187,7 @@ Zone-triggere i flows afhænger af disse indstillinger. Sæt dem ens, hvis en se
 ## Ændret efter snapshot
 
 - 2026-10-10: **O - Light reset**: argumentet til AdaptiveLighting er rettet fra det ikke-eksisterende id `7768c895-c037-4b83-84d4-9ef82404fe12` til O Loft `1e87af68-506e-4c86-8bc9-ffc6a05f3ef0` (`… clear`). Godkendt af HS.
+- 2026-11-06: Nyt standard flow **C - Heating Target** (programmatic trigger → `Room Heating("Clara,target")`) og ny tekstvariabel **HeatingTargetRequest**, som dashboardets +/- på Claras værelse bruger. Flowet ligger uden for mappen med de øvrige C-flows.
 - 2026-11-04: Nye advanced flows, så alle rum med lys i `ROOM_CONFIG` har et reset-flow: **C - Light reset** (C Loft, C LightStrip, C Light Svampelampe), **B7 - Light reset** (B7 Lys), **B9 - Light reset** (B9 Lys), **E9 - Light reset** (E9 Loft, E9 Garderobe), **E7 - Light reset** (E7 Lys), **A - Light reset** (A Light Lyskæde). Samme opbygning som de eksisterende: startkort → `AdaptiveLighting(«enhed» clear)`.
 - 2026-10-10: **E7 - Inactive 1**: trigger flyttet fra zonen Entre 9 til **Entre 7** (inaktiv 1 min, 20:00–06:00, B7 ikke aktiv → sluk lys i Entre 7). Godkendt af HS.
 - 2026-10-10: **O - Light flow**: de 6 BILRESA-knap-triggere er fjernet (knap 1/2: tryk, langt tryk og dobbelttryk). De 6 AdaptiveLighting-handlinger, de var forbundet til (brighten, max, cycle-profile, dim-down, toggle, clear), er bevaret uden forbindelse, så de kan kobles til en ny knap. Godkendt af HS.

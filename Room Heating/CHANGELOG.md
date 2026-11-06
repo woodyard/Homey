@@ -16,6 +16,39 @@ Room Heating was created 2025-12-31 by Henrik Skovgaard, based on Clara Heating 
 
 `room_heating.js`
 
+### 10.29.0 — 2026-11-06 — ✨ Smart plug rooms can hold a manual target
+
+- A smart plug room had no way to take a target from outside: the dashboard's +/- worked on
+  valves only, and manual mode meant "send no commands". Now a target request puts the room in
+  manual mode for manualOverrideDuration (90 min), and the script keeps the radiators on or off
+  around that target with the room's hysteresis. Inactivity, the schedule and away do not apply.
+  Reset (cancel) ends it; a boost or pause replaces it.
+- The radiators stay off in this mode with an open window or a silent sensor, as in a normal
+  run. Boost is unchanged and still ignores the window.
+- The channel: the dashboard can write Logic variables and start flows, but cannot run
+  HomeyScript. It writes { room, target, at } to the new text variable HeatingTargetRequest and
+  starts the new flow "C - Heating Target" (argument "Clara,target"), so a run acts at once and
+  waits for the run lock like boost and pause. Any normal run also picks the request up.
+- The variable is never cleared, so a run cannot overwrite a newer press. A request counts once,
+  by its `at` (state: lastTargetRequestAt). It is ignored when older than 10 minutes or outside
+  5-25°C. A cancel in the same run uses it up without applying it.
+- Valve rooms are unchanged: they ignore the variable.
+- Verified with test/: 18 new scenarios (clara_target_*, stue_target_not_for_valves); the other
+  120 are unchanged apart from the new state field; check_status_fields and check_waits pass.
+- Files modified: room_heating.js (v10.29.0), test/harness.mjs, CHANGELOG.md
+
+### 10.28.0 — 2026-11-06 — 📚 Optional friday schedule
+
+- A room may have `schedules.friday`. On a Friday school day it replaces `weekday`; rooms
+  without one behave as before. A Friday that is a holiday still uses `holiday`.
+- getNextScheduleChange() also uses it when tomorrow is a Friday school day.
+- Why: Friday evening had no way to differ from Monday-Thursday. `lateEvening` also runs on
+  Saturdays, and `weekday` applies to all five days. Clara uses it (config 1.7.0).
+- Verified with test/: of the 113 existing scenarios only clara_evening_weekend_tomorrow
+  differs (a Friday 20:30: target 21 -> 22); 7 new scenarios pass, as do check_status_fields
+  and check_waits.
+- Files modified: room_heating.js (v10.28.0), test/harness.mjs, CHANGELOG.md
+
 ### 10.27.1 — 2026-11-04 — 🐛 Waits used setTimeout, which HomeyScript does not have
 
 - HomeyScript's sandbox offers `wait(ms)` but no `setTimeout`, so every wait in this script
@@ -1122,6 +1155,12 @@ All five fixes ensure smart plugs have fresh baseline after any mode transition
 
 `room_heating_status.js`
 
+### 5.0.2 — 2026-11-06 — 🐛 Show a target set from the dashboard
+
+- A manual mode of type 'target' (room_heating.js 10.29.0) printed its original value as
+  ON or OFF. It now prints the target and the original value in °C.
+- Files modified: room_heating_status.js (v5.0.2), CHANGELOG.md
+
 ### 5.0.1 — 2026-11-03 — 🔧 TADO home id from the config only
 
 - The hard-coded fallback id is gone; TADO_HOME_ID comes from Config.Global.
@@ -1322,6 +1361,17 @@ All five fixes ensure smart plugs have fresh baseline after any mode transition
 ## Room Heating Config
 
 `room_heating_config.js`
+
+### 1.7.0 — 2026-11-06 — 🌡️ Clara: Friday from 14:00 counts as weekend
+
+- New Clara schedule `friday`: Efterskole 17 until 14:00, then Day 14:00-21:00 at 22 (20 when
+  empty), as on a weekend. From 21:00 lateEvening 20, unchanged. Was 21 (17 when empty).
+- Why: the family wants 22 on Friday evening, and the room should not sit at 17 until she is
+  seen. The evening following the next day matches Adaptive Lighting (2.27.3), which switches
+  at 12:00; here it starts with the 14:00 slot, as the room is empty before then.
+- Validation checks `friday` like the other day schedules when a room has one.
+- Needs room_heating.js 10.28.0. An older heating script ignores `friday`.
+- Files modified: room_heating_config.js (v1.7.0), CHANGELOG.md
 
 ### 1.6.2 — 2026-11-03 — ⏳ Oliver: 60 minutes before the room counts as empty
 

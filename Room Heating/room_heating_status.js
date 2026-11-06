@@ -5,7 +5,7 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 5.0.1
+ * Version: 5.0.2
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
@@ -258,8 +258,13 @@ async function showRoomStatus(roomName, roomConfig) {
 
             log(`\n🤚 MANUAL OVERRIDE MODE ACTIVE 🤚`);
             log(`Remaining:      ${remainingMinutes} minutes`);
-            log(`Type:           Manual ${overrideType} change detected`);
-            if (overrideType === 'temperature') {
+            if (overrideType === 'target') {
+                log(`Type:           Target set from the dashboard`);
+                log(`Target:         ${roomState.modeDetails.target}°C`);
+            } else {
+                log(`Type:           Manual ${overrideType} change detected`);
+            }
+            if (overrideType === 'temperature' || overrideType === 'target') {
                 log(`Original:       ${originalValue}°C (before manual change)`);
             } else {
                 log(`Original:       ${originalValue ? 'ON' : 'OFF'} (before manual change)`);
