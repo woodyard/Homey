@@ -1362,6 +1362,17 @@ All five fixes ensure smart plugs have fresh baseline after any mode transition
 
 `room_heating_config.js`
 
+### 1.8.0 — 2026-11-07 — 🌡️ Oliver: same temperatures as Clara at home, every day
+
+- Oliver's plan is now the same every day: Night 20 until 08:00, Day 22 08:00-21:00, Evening
+  20 from 21:00. Was weekday Night 18 / Day 22 08-20 / Evening 19 from 20:00, and weekend
+  Night 18 until 09:00 / Day 20.5 09-21 / Evening 19.
+- Why: the family wants Oliver's room to follow Clara's plan for days she is at home. He lives
+  at home on school days, so the weekday plan takes the weekend temperatures, not her 17.
+- Both evening slots start 21:00, so every day meets its evening without a gap or overlap.
+- Unchanged: the drop when the room is empty stays 1° after 60 min by day, 1° in the evening.
+- Files modified: room_heating_config.js (v1.8.0)
+
 ### 1.7.0 — 2026-11-06 — 🌡️ Clara: Friday from 14:00 counts as weekend
 
 - New Clara schedule `friday`: Efterskole 17 until 14:00, then Day 14:00-21:00 at 22 (20 when

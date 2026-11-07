@@ -120,6 +120,8 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **1.22.1** (2026-11-07) — Oliver's schedule follows room_heating_config 1.8.0: the same every
+  day, Night 20 until 08:00, Day 22 08:00-21:00, Evening 20 from 21:00.
 - **1.22.0** (2026-11-06) — Bottom bar on phones and small tablets. Up to 900px wide, where the tabs
   no longer fit on one line, the sideways-scrolling tab row gives way to a fixed bar with Heating,
   Rooms 2.0, Weather and Live activity, and a More button for Rooms, Temperatures and Adaptive

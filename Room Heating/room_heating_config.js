@@ -11,7 +11,7 @@
  *   3. Heating and status scripts automatically use the saved config
  *
  * Author: Henrik Skovgaard
- * Version: 1.7.0
+ * Version: 1.8.0
  * Created: 2025-12-31
  *
  * Version history: CHANGELOG.md
@@ -67,20 +67,22 @@ const ROOMS = {
             type: 'tado_valve'
         },
         schedules: {
+            // Same temperatures as Clara's days at home (20 night, 22 day, 20 evening), every day.
+            // Oliver keeps his own gentler drop when the room is empty: 1° after 60 min.
             weekday: [
-                { start: '00:00', end: '08:00', target: 18, inactivityOffset: 0, name: 'Night' },
-                { start: '08:00', end: '20:00', target: 22, inactivityTimeout: 60, inactivityOffset: 1, name: 'Day' }
+                { start: '00:00', end: '08:00', target: 20, inactivityOffset: 0, name: 'Night' },
+                { start: '08:00', end: '21:00', target: 22, inactivityTimeout: 60, inactivityOffset: 1, name: 'Day' }
             ],
             weekend: [
-                { start: '00:00', end: '09:00', target: 18, inactivityOffset: 0, name: 'Night' },
-                { start: '09:00', end: '21:00', target: 20.5, inactivityTimeout: 60, inactivityOffset: 1, name: 'Day' }
+                { start: '00:00', end: '08:00', target: 20, inactivityOffset: 0, name: 'Night' },
+                { start: '08:00', end: '21:00', target: 22, inactivityTimeout: 60, inactivityOffset: 1, name: 'Day' }
             ],
             holiday: [
-                { start: '00:00', end: '09:00', target: 18, inactivityOffset: 0, name: 'Night' },
-                { start: '09:00', end: '21:00', target: 20.5, inactivityTimeout: 60, inactivityOffset: 1, name: 'Day' }
+                { start: '00:00', end: '08:00', target: 20, inactivityOffset: 0, name: 'Night' },
+                { start: '08:00', end: '21:00', target: 22, inactivityTimeout: 60, inactivityOffset: 1, name: 'Day' }
             ],
-            earlyEvening: { start: '20:00', end: '23:59', target: 19, inactivityOffset: 1, name: 'Evening' },
-            lateEvening: { start: '21:00', end: '23:59', target: 19, inactivityOffset: 1, name: 'Evening' }
+            earlyEvening: { start: '21:00', end: '23:59', target: 20, inactivityOffset: 1, name: 'Evening' },
+            lateEvening: { start: '21:00', end: '23:59', target: 20, inactivityOffset: 1, name: 'Evening' }
         },
         settings: {
             tadoAwayMinTemp: 17.0,
