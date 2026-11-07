@@ -31,7 +31,7 @@
  * - One run per room at a time (run lock); requests wait, normal runs skip
  *
  * Author: Henrik Skovgaard
- * Version: 10.29.0
+ * Version: 10.30.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
@@ -290,6 +290,8 @@ const DEFAULT_STATE = {
     tadoAway: false,          // TADO presence on the previous run (a change clears the baseline)
     awayPaused: false,        // activity paused away during this TADO away period (later changes are routine)
     awaySince: null,          // timestamp when away mode started
+    awayActivityFrom: null,   // TADO away: only activity that starts after this counts (null = home)
+    awayActivityTail: false,  // TADO away: the zone is still active from before awayActivityFrom
 
     // Reference points for TADO manual detection (smart plugs have no detection)
     baseline: {
@@ -494,20 +496,22 @@ function effectiveTargetFor(slot, away, inactive) {
 }
 
 /**
- * Is the room in use? The zone is active now, or was within the slot's inactivityTimeout
- * (slot value or room default). Unlike checkInactivity this ignores inactivityOffset, so
- * it also answers in slots without a setback.
+ * Is the room in use during TADO away? The zone is active now, or was within the slot's
+ * inactivityTimeout (slot value or room default), and that activity started after TADO went
+ * away: when everyone leaves, the rooms go to away even if someone was just in them. Once
+ * away applies to the room, only activity after that counts, so a slot change that lengthens
+ * the timeout cannot bring back older activity. Unlike checkInactivity this ignores
+ * inactivityOffset, so it also answers in slots without a setback.
  */
 async function isRoomInUse(slot) {
     try {
         const zone = await getZoneByName(ROOM.zoneName);
         if (!zone) return false;
-        if (zone.active) return true;
         const lastActive = new Date(zone.activeLastUpdated).getTime();
+        const cutoff = Math.max(roomState?.awayActivityFrom || 0, (roomState?.away && roomState.awaySince) || 0);
+        if (cutoff && (!Number.isFinite(lastActive) || lastActive <= cutoff)) return false;
+        if (zone.active) return true;
         if (!Number.isFinite(lastActive)) return false;
-        // Once away applies, only activity after it started can pause it: a slot change
-        // that lengthens the timeout must not bring back activity from before away began.
-        if (roomState && roomState.away && roomState.awaySince && lastActive <= roomState.awaySince) return false;
         const timeout = getEffectiveSetting(slot, 'inactivityTimeout', ROOM.settings.inactivityTimeout);
         return (Date.now() - lastActive) / 60000 < timeout;
     } catch (error) {
@@ -517,9 +521,44 @@ async function isRoomInUse(slot) {
 }
 
 /**
- * Does away apply to this room? TADO says away AND the room is not in use. Activity in
- * the room (someone home that TADO does not track) keeps the normal schedule; once the
- * room has been unused for inactivityTimeout it falls back to the away target.
+ * TADO away: move awayActivityFrom past activity that began before TADO went away. A zone
+ * still active at that moment (the people leaving) is not new activity, and its switch to
+ * inactive only ends that activity, so the cutoff moves to it. A zone that turns active
+ * after the cutoff is new activity. Runs once per run, before anything asks isRoomInUse.
+ */
+async function trackAwayActivityStart() {
+    if (!roomState.awayActivityFrom) return;
+    try {
+        const zone = await getZoneByName(ROOM.zoneName);
+        if (!zone) return;
+        const changed = new Date(zone.activeLastUpdated).getTime();
+        if (!Number.isFinite(changed)) return;
+        const from = roomState.awayActivityFrom;
+        if (zone.active && changed <= from) {
+            if (!roomState.awayActivityTail) {
+                roomState.awayActivityTail = true;
+                saveRoomState(roomState);
+                log(`ℹ️ Zone still active from before TADO away - not counted as activity`);
+            }
+        } else if (roomState.awayActivityTail && changed > from) {
+            roomState.awayActivityTail = false;
+            if (!zone.active) {
+                // The activity from before away just ended: it does not count either
+                roomState.awayActivityFrom = changed;
+                log(`ℹ️ Activity from before TADO away ended - not counted`);
+            }
+            saveRoomState(roomState);
+        }
+    } catch (error) {
+        log(`⚠️  Could not check the zone's activity during away: ${error.message}`);
+    }
+}
+
+/**
+ * Does away apply to this room? TADO says away AND the room is not in use. When TADO goes
+ * away every room goes to away, even one with recent activity. Activity after that (someone
+ * home that TADO does not track) brings back the normal schedule; once the room has been
+ * unused for inactivityTimeout it falls back to the away target.
  */
 async function isAwayForRoom(slot) {
     if (!(await isTadoAway())) return false;
@@ -1786,7 +1825,7 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
     log(`Inactivity: ${inactivity.inactive ? `YES (${inactivity.minutesSinceMotion} min since activity)` : `NO (${inactivity.minutesSinceMotion} min since activity)`} | Offset: ${inactivityOffset}°C`);
     log(`Heating: ${heatingOn ? 'ON' : 'OFF'}`);
     
-    // Away: TADO says away and the room is not in use (activity overrides away)
+    // Away: TADO says away and the room is not in use (activity after away began overrides it)
     if (away) {
         log(`🏠 TADO is in away mode - nobody home`);
         
@@ -2292,12 +2331,15 @@ async function main() {
     if (wasInTadoAway !== currentTadoAway) {
         roomState.tadoAway = currentTadoAway;
         roomState.awayPaused = false;
+        roomState.awayActivityFrom = currentTadoAway ? Date.now() : null;
+        roomState.awayActivityTail = false;
         roomState.baseline.commandedTargetTemp = null;
         saveRoomState(roomState);
         log(wasInTadoAway && !currentTadoAway
             ? `\n✅ TADO returning from away mode - cleared commanded target`
-            : `\n🏠 TADO entering away mode - cleared commanded target`);
+            : `\n🏠 TADO entering away mode - cleared commanded target, earlier activity no longer counts`);
     }
+    if (currentTadoAway) await trackAwayActivityStart();
 
     // ============================================================================
     // Schedule Resolution (once per run)

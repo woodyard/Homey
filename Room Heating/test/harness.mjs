@@ -310,6 +310,17 @@ const scenarios = {
   stue_away_activity_window_open: { args: ['Stue'], setup: () => { devices[TADO_HOME].capabilitiesObj.tado_presence_mode.value = 'away'; devices.stwindow.capabilitiesObj.alarm_contact.value = true; devices[TADO_STUE].capabilitiesObj.onoff.value = false; devices[TADO_STUE].capabilitiesObj.target_temperature.value = 17; setState(ST, { away: true, tadoAway: true, awaySince: NOW_MS - 3600000, window: { openSince: NOW_MS - 1200000, timeoutHandled: true }, baseline: { commandedTargetTemp: 17, lastSeenTargetTemp: 17 } }); } },
   // a radiator switched on by hand while the window is open past its timeout is switched off
   clara_window_open_plug_on: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 15.0; devices.cwindow.capabilitiesObj.alarm_contact.value = true; devices.rad1.capabilitiesObj.onoff.value = true; setState(CL, { window: { openSince: NOW_MS - 1200000, timeoutHandled: true } }); } },
+  // v10.30.0: when TADO goes away the room goes to away even with recent activity; only activity after that counts
+  stue_tado_away_recent_activity: { args: ['Stue'], setup: () => { devices[TADO_HOME].capabilitiesObj.tado_presence_mode.value = 'away'; unused(Z.stueParent, 10); setState(ST, { baseline: { commandedTargetTemp: 22, lastSeenTargetTemp: 22 } }); } },
+  clara_tado_away_zone_active: { args: ['Clara'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 20.0; devices[TADO_HOME].capabilitiesObj.tado_presence_mode.value = 'away'; devices.rad1.capabilitiesObj.onoff.value = true; devices.rad2.capabilitiesObj.onoff.value = true; setState(CL, {}); } },
+  // the zone was still active when TADO went away; it turning inactive later is not new activity
+  stue_away_tail_ends: { args: ['Stue'], setup: () => { devices[TADO_HOME].capabilitiesObj.tado_presence_mode.value = 'away'; devices[TADO_STUE].capabilitiesObj.target_temperature.value = 17; unused(Z.stueParent, 5); setState(ST, { away: true, tadoAway: true, awaySince: NOW_MS - 10 * 60000, awayActivityFrom: NOW_MS - 10 * 60000, awayActivityTail: true, baseline: { commandedTargetTemp: 17, lastSeenTargetTemp: 17 } }); } },
+  // still active from before away (someone sitting still): stays away
+  stue_away_tail_still_active: { args: ['Stue'], setup: () => { devices[TADO_HOME].capabilitiesObj.tado_presence_mode.value = 'away'; devices[TADO_STUE].capabilitiesObj.target_temperature.value = 17; zones[Z.stueParent].activeLastUpdated = new RealDate(NOW_MS - 30 * 60000).toISOString(); setState(ST, { away: true, tadoAway: true, awaySince: NOW_MS - 10 * 60000, awayActivityFrom: NOW_MS - 10 * 60000, awayActivityTail: true, baseline: { commandedTargetTemp: 17, lastSeenTargetTemp: 17 } }); } },
+  // new activity after TADO went away: the room heats again
+  stue_away_new_activity: { args: ['Stue'], setup: () => { devices[TADO_HOME].capabilitiesObj.tado_presence_mode.value = 'away'; devices[TADO_STUE].capabilitiesObj.target_temperature.value = 17; setState(ST, { away: true, tadoAway: true, awaySince: NOW_MS - 30 * 60000, awayActivityFrom: NOW_MS - 30 * 60000, awayActivityTail: true, baseline: { commandedTargetTemp: 17, lastSeenTargetTemp: 17 } }); } },
+  // activity after away began, now ended but within the timeout: away stays paused
+  stue_away_paused_recent: { args: ['Stue'], setup: () => { devices[TADO_HOME].capabilitiesObj.tado_presence_mode.value = 'away'; unused(Z.stueParent, 20); setState(ST, { tadoAway: true, awayPaused: true, awayActivityFrom: NOW_MS - 60 * 60000, baseline: { commandedTargetTemp: 22, lastSeenTargetTemp: 22 } }); } },
   // v10.24.0: away never raises a target (Soveværelse Night is 15, away temperature 17)
   sv_away_night: { args: ['Soveværelse'], setup: () => { NOW_MS = new RealDate('2026-01-21T02:00:00Z').getTime(); devices[TADO_HOME].capabilitiesObj.tado_presence_mode.value = 'away'; devices[TADO_SV].capabilitiesObj.target_temperature.value = 17; setState(SV, { away: true, awaySince: NOW_MS - 3600000, baseline: { commandedTargetTemp: 17, lastSeenTargetTemp: 17 } }); unused(Z.sv); } },
   sv_away_day: { args: ['Soveværelse'], setup: () => { devices[TADO_HOME].capabilitiesObj.tado_presence_mode.value = 'away'; setState(SV, { away: true, awaySince: NOW_MS - 3600000, baseline: { commandedTargetTemp: 20, lastSeenTargetTemp: 20 } }); unused(Z.sv); } },
@@ -368,7 +379,7 @@ const out = { scenario: scenarioName, thrown, commands: trace.commands, notifica
 // Strip volatile timestamps from state for diffing (keep presence, not value)
 const state = out.globals[`${zoneName}.Heating.State`];
 if (state) {
-  for (const k of ['awaySince']) if (state[k]) state[k] = 'T';
+  for (const k of ['awaySince', 'awayActivityFrom']) if (state[k]) state[k] = 'T';
   if (state.modeExpires) state.modeExpires = Math.round((state.modeExpires - NOW_MS) / 60000) + 'min';
   for (const k of ['openSince', 'closedSince']) if (state.window[k]) state.window[k] = 'T';
   if (state.notification?.lastTime) state.notification.lastTime = 'T';

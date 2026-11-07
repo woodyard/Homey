@@ -16,6 +16,29 @@ Room Heating was created 2025-12-31 by Henrik Skovgaard, based on Clara Heating 
 
 `room_heating.js`
 
+### 10.30.0 — 2026-11-07 — ✨ TADO away sets every room to away, even after recent activity
+
+- Before: when TADO went away, a room with activity within its inactivityTimeout (30-90 min)
+  kept its normal schedule, so the radiators stayed up long after everyone had left.
+- Now only activity that starts after TADO went away counts. The first run that sees TADO away
+  (the heating flows run on the presence change) records the time in the new state field
+  `awayActivityFrom`; every room goes to its away target at once.
+- A zone that is still active at that moment (the motion of people leaving) is not new activity,
+  and its later switch to inactive only ends that activity, so the cutoff moves to it
+  (`awayActivityTail`). A zone that turns active after the cutoff brings back the normal schedule
+  in that room, as before ("Away paused"), and the room falls back to away once it has been
+  unused for inactivityTimeout.
+- Someone who stays in a room without moving goes to away too, and the room heats again at the
+  next motion.
+- State saved before 10.30 during an away period has no `awayActivityFrom` and keeps the old
+  rule until TADO comes home.
+- Verified with test/: stue_away_starts_in_use now goes to away (17°C) instead of staying at 22;
+  the other 137 scenarios are unchanged apart from the new state fields; 6 new scenarios
+  (stue_tado_away_recent_activity, clara_tado_away_zone_active, stue_away_tail_ends,
+  stue_away_tail_still_active, stue_away_new_activity, stue_away_paused_recent);
+  check_status_fields and check_waits pass.
+- Files modified: room_heating.js (v10.30.0), README.md, test/harness.mjs, CHANGELOG.md
+
 ### 10.29.0 — 2026-11-06 — ✨ Smart plug rooms can hold a manual target
 
 - A smart plug room had no way to take a target from outside: the dashboard's +/- worked on

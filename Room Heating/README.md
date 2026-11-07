@@ -31,7 +31,7 @@ Each room in `ROOMS` has:
 - `schedules`: `weekday`, `weekend` and `holiday` slot lists, plus `earlyEvening` (school tomorrow) and `lateEvening` (no school tomorrow). Each slot has `start`, `end`, `target` and `name`.
 - `settings`: room defaults for `tadoAwayMinTemp`, `inactivityTimeout` (minutes), `inactivityOffset` (degrees), `windowOpenTimeout` (seconds), `windowClosedDelay` (seconds) and `manualOverrideDuration` (minutes). Optional `sensorStaleMinutes` (default 60): how long the heating may run without a single report from the room temperature sensor before the sensor counts as silent.
 - `tadoAwayMinTemp` is the target while away applies to the room, unless the schedule already asks for less: away never raises a target.
-- Away applies to a room only while TADO says away AND the room is not in use (activity now, or within the slot's `inactivityTimeout`). Activity in the room - someone TADO does not track - keeps the normal schedule; once the room has been unused for the timeout it falls back to the away target. Only activity after away started can pause it again.
+- Away applies to a room only while TADO says away AND the room is not in use. When TADO goes away, every room goes to the away target, even one with recent activity: activity from before that (the people leaving, a zone still active) does not count. Activity that starts after TADO went away - someone TADO does not track - brings back the normal schedule in that room; once it has been unused for the slot's `inactivityTimeout` it falls back to the away target, and again only newer activity can pause it.
 
 ### Slot overrides
 
