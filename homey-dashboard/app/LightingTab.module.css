@@ -1,0 +1,77 @@
+/* Adaptive lighting tab. Colours come from the global tokens; only data colours are literal. */
+
+.alBar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; }
+.alBar .segRight { margin-left: auto; }
+.amber { color: var(--warn); }
+
+.areaList { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .areaList { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; } }
+.areaHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 14px; }
+.areaControls { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.cfgBtn { width: 34px; height: 34px; border-radius: 11px; border-color: transparent; background: transparent; color: var(--muted); }
+.flowPick { display: flex; align-items: center; gap: 10px; margin: -4px 0 14px; font-size: 13px; color: var(--muted); }
+.flowPick select { flex: 1; min-width: 0; }
+
+.chart {
+  position: relative; height: 96px; border-radius: 14px; overflow: hidden;
+  background: var(--chart-night); border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.grid { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 255, 255, 0.045); }
+.gridMajor { background: rgba(255, 255, 255, 0.1); }
+.bar {
+  position: absolute; bottom: 0; border-radius: 6px 6px 0 0; opacity: 0.94;
+  transition: opacity 0.15s;
+}
+.bar:hover { opacity: 1; }
+.sunMark {
+  position: absolute; top: 0; bottom: 0; width: 0; z-index: 2;
+  border-left: 1px dashed rgba(251, 191, 36, 0.55);
+}
+.sunIcon {
+  position: absolute; top: 4px; left: 0; transform: translateX(-50%);
+  color: #fbbf24; filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.6));
+  background: rgba(11, 18, 32, 0.65); border-radius: 6px; padding: 2px; display: flex;
+}
+.nowLine {
+  position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; z-index: 3;
+  background: #fb7185; box-shadow: 0 0 8px rgba(251, 113, 133, 0.9);
+}
+.nowDot {
+  position: absolute; top: 3px; left: 50%; width: 8px; height: 8px; border-radius: 50%;
+  transform: translateX(-50%); background: #fff; box-shadow: 0 0 0 2px #fb7185, 0 0 10px rgba(251, 113, 133, 0.9);
+}
+.axis { position: relative; height: 16px; margin-top: 5px; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.axis span { position: absolute; }
+
+.phases { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.phaseChip {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 36px;
+  padding: 5px 13px 5px 10px; border-radius: 999px; font-size: 13px;
+  border: 1px solid var(--border); background: var(--surface-solid); color: var(--text-2);
+  cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.phaseChip:hover:not(:disabled) { border-color: var(--accent-border); color: var(--text); }
+.phaseChip:disabled { opacity: 0.6; cursor: default; }
+.phaseChipActive, .phaseChipActive:hover:not(:disabled) { background: var(--ink); border-color: transparent; color: var(--ink-contrast); }
+.phaseChipActive .phaseMeta { color: var(--ink-contrast); opacity: 0.7; }
+.phaseChip b { font-weight: 650; }
+.phaseMeta { color: var(--muted); font-variant-numeric: tabular-nums; }
+.swatch { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12); }
+
+.members {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px;
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--divider);
+}
+@media (max-width: 640px) { .members { grid-template-columns: minmax(0, 1fr); } }
+.memberRow {
+  display: flex; align-items: center; gap: 10px; min-width: 0;
+  min-height: 44px; padding: 6px 10px 6px 7px; border-radius: 13px; background: var(--surface-2);
+}
+.bulb {
+  width: 30px; height: 30px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center;
+  background: var(--surface-3); color: var(--muted); transition: background 0.3s, box-shadow 0.3s;
+}
+.memberName { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.driftDashed { outline: 1px dashed var(--warn); outline-offset: -1px; }

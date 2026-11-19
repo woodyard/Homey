@@ -14,12 +14,12 @@ export const viewport = {
   initialScale: 1,
   viewportFit: 'cover', // lets the bottom bar reach past the iPhone's home indicator
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#eef2f8' },
-    { media: '(prefers-color-scheme: dark)', color: '#070b16' },
+    { media: '(prefers-color-scheme: light)', color: '#f4f1ec' },
+    { media: '(prefers-color-scheme: dark)', color: '#110f0d' },
   ],
 };
 
-// Apply a theme picked with the header toggle before first paint (no light flash in
+// Apply a theme picked in the menu before first paint (no light flash in
 // dark mode). Without a pick, the CSS follows the system setting.
 const THEME_INIT = `try{var t=localStorage.getItem('hd-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t)}catch(e){}`;
 

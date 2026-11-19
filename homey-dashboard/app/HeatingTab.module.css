@@ -1,0 +1,213 @@
+/* Heating tab. Mobile first: the base rules are a ~375px phone, where four closed room cards
+   fit on one screen. From 900px the cards are always open. */
+
+.wrap { display: flex; flex-direction: column; gap: 12px; }
+
+.dimmed { filter: grayscale(1); opacity: 0.5; }
+
+/* ---------- summary + master switch ---------- */
+
+.summary {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 12px 14px 16px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.summary[data-heating] {
+  background-image: linear-gradient(115deg, color-mix(in srgb, var(--heat) 15%, transparent) 0%, transparent 72%);
+  border-color: color-mix(in srgb, var(--heat) 24%, var(--border));
+}
+.summaryIcon {
+  width: 46px; height: 46px; border-radius: 15px; flex-shrink: 0;
+  display: grid; place-items: center;
+  background: var(--neutral-soft); color: var(--muted);
+}
+.summary[data-heating] .summaryIcon { background: var(--heat-gradient); color: #fff; }
+.summary[data-off] .summaryIcon { background: var(--cool-soft); color: var(--cool); }
+.summaryText { flex: 1; min-width: 0; }
+.summaryTitle { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; }
+.summarySub { font-size: 13.5px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+/* ---------- room cards ---------- */
+
+.rooms { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
+
+.card {
+  --tone: var(--muted); --tone-soft: var(--neutral-soft);
+  position: relative; min-width: 0; overflow: hidden;
+  background-color: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  transition: border-color 0.3s ease;
+}
+.card[data-tone='heat'] { --tone: var(--heat); --tone-soft: var(--heat-soft); }
+.card[data-tone='good'] { --tone: var(--good); --tone-soft: var(--good-soft); }
+.card[data-tone='warn'] { --tone: var(--warn); --tone-soft: var(--warn-soft); }
+.card[data-tone='bad'] { --tone: var(--bad); --tone-soft: var(--bad-soft); }
+.card[data-tone='accent'] { --tone: var(--accent); --tone-soft: var(--accent-soft); }
+
+/* A heating room glows from its corner; --wash grows with the valve's heating power. */
+.card[data-heating] {
+  background-image: radial-gradient(130% 110% at 0% 0%, color-mix(in srgb, var(--heat) var(--wash, 12%), transparent) 0%, transparent 64%);
+  border-color: color-mix(in srgb, var(--heat) 26%, var(--border));
+}
+
+.head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  min-height: 44px; padding: 12px 14px 0 16px; border: none; background: transparent;
+  color: inherit; text-align: left; cursor: pointer;
+}
+.name { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.25; min-width: 0; overflow-wrap: anywhere; }
+.heatChip {
+  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  padding: 3px 9px 3px 7px; border-radius: 999px;
+  background: var(--heat-soft); color: var(--heat-ink);
+  font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.chev {
+  margin-left: auto; flex-shrink: 0; color: var(--faint);
+  transition: transform 0.25s ease;
+}
+.card[data-open] .chev { transform: rotate(180deg); }
+
+.missing { padding: 6px 16px 16px; font-size: 13.5px; color: var(--muted); }
+
+.main {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 2px 14px 0 16px;
+}
+.now { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.temp { font-size: 46px; transition: color 0.3s ease; }
+.card[data-heating] .temp { color: var(--heat); }
+.humidity { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.humidity svg { align-self: center; }
+
+.stepper { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.target { display: flex; flex-direction: column; align-items: center; min-width: 62px; }
+.targetLabel { font-size: 11.5px; font-weight: 600; color: var(--muted); line-height: 1.2; }
+.targetVal { font-size: 23px; font-weight: 650; letter-spacing: -0.03em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.noTarget { font-size: 13.5px; color: var(--muted); }
+
+/* ---------- the reason ---------- */
+
+.reason { display: flex; align-items: flex-start; gap: 9px; padding: 10px 14px 14px 16px; }
+.reasonIcon {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  display: grid; place-items: center;
+  background: var(--tone-soft); color: var(--tone);
+}
+.reasonBody { flex: 1; min-width: 0; padding-top: 3px; }
+.reasonHead { font-size: 14px; font-weight: 600; line-height: 1.4; color: var(--text); overflow-wrap: anywhere; }
+.reasonDetail {
+  display: none; margin-top: 2px;
+  font-size: 13px; line-height: 1.45; color: var(--muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+}
+.card[data-open] .reasonDetail { display: block; }
+.progress {
+  height: 4px; margin-top: 8px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, var(--tone) 16%, var(--surface-3));
+}
+.progress > span { display: block; height: 100%; border-radius: inherit; background: var(--tone); transition: width 0.6s ease; }
+.quickReset { flex-shrink: 0; margin: -4px 0; }
+/* An open card has Reset among its buttons. */
+.card[data-open] .quickReset { display: none; }
+
+/* ---------- opened: schedule, details, actions ---------- */
+
+.more {
+  display: grid; grid-template-rows: 0fr; visibility: hidden;
+  transition: grid-template-rows 0.28s ease, visibility 0s linear 0.28s;
+}
+.card[data-open] .more { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 0.28s ease, visibility 0s; }
+.moreInner { min-height: 0; overflow: hidden; }
+.moreInner > * { margin: 0 14px 12px 16px; }
+.moreInner > :last-child { margin-bottom: 16px; }
+
+.factors { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Long chips ("No update from the heating script for 27 min") wrap instead of overflowing. */
+.factor { white-space: normal; line-height: 1.35; }
+.factor svg { flex-shrink: 0; }
+
+.schedule { padding: 12px; border-radius: var(--radius-md); background: var(--surface-2); transition: filter 0.2s, opacity 0.2s; }
+.schedHead { display: flex; align-items: flex-start; gap: 7px; font-size: 13.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.schedHead svg { flex-shrink: 0; margin-top: 2px; color: var(--muted); }
+
+.timeline { margin-top: 10px; }
+.tlTemps, .tlBar { display: flex; gap: 2px; }
+.tlTemps > span {
+  flex-basis: 0; min-width: 0; text-align: center; white-space: nowrap;
+  font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.tlTemps > .tlTempNow { color: var(--text); font-weight: 700; }
+.tlBar { position: relative; height: 12px; margin-top: 5px; }
+.tlSeg {
+  flex-basis: 0; min-width: 0; border-radius: 4px;
+  background: color-mix(in srgb, var(--heat) var(--warmth, 30%), var(--surface-3));
+}
+.tlSeg:first-child { border-radius: 6px 4px 4px 6px; }
+.tlSeg:nth-last-child(2) { border-radius: 4px 6px 6px 4px; }
+.tlNow {
+  position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px; border-radius: 2px;
+  background: var(--text); box-shadow: 0 0 0 2px var(--surface-2);
+}
+.tlAxis {
+  display: flex; justify-content: space-between; margin-top: 6px;
+  font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums;
+}
+
+.info { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13.5px; color: var(--muted); transition: filter 0.2s, opacity 0.2s; }
+.infoItem { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }
+.infoItem svg { flex-shrink: 0; }
+
+.actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; transition: filter 0.2s, opacity 0.2s; }
+.actions > button { min-height: 46px; padding-left: 8px; padding-right: 8px; border-radius: 14px; }
+.btnBoost, .btnBoost:hover:not(:disabled) { background: var(--heat-soft); color: var(--heat-ink); border-color: transparent; }
+.btnBoost:hover:not(:disabled) { background: color-mix(in srgb, var(--heat) 20%, transparent); }
+
+.actions > button[aria-pressed='true'], .actions > button[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--ink); color: var(--ink-contrast); border-color: transparent;
+}
+.actions > .btnBoost[aria-pressed='true'], .actions > .btnBoost[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--heat-gradient); color: #fff;
+}
+
+/* ---------- flow mapping ---------- */
+
+.setup { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 4px; }
+.setupChev { transition: transform 0.2s ease; }
+.setupChevOpen { transform: rotate(180deg); }
+.cfgCard { width: 100%; }
+.cfgRow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px 0; }
+.cfgRow + .cfgRow { border-top: 1px solid var(--divider); }
+.cfgRow:first-child { padding-top: 0; }
+.cfgRow:last-child { padding-bottom: 0; }
+.cfgRoom { font-size: 14px; font-weight: 650; }
+.cfgField { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 12.5px; color: var(--muted); }
+.cfgField select { width: 100%; min-width: 0; }
+
+@media (min-width: 640px) {
+  .cfgRow { grid-template-columns: 150px repeat(3, minmax(0, 1fr)); align-items: end; }
+  .cfgRoom { padding-bottom: 8px; }
+}
+
+@media (min-width: 720px) {
+  .rooms { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .wrap { gap: 16px; }
+}
+
+/* Wide screens: no need to fold anything away. */
+@media (min-width: 900px) {
+  .summary { padding: 18px 16px 18px 20px; }
+  .head { cursor: default; padding-top: 16px; padding-left: 20px; }
+  .chev { display: none; }
+  .main, .reason { padding-left: 20px; padding-right: 18px; }
+  .temp { font-size: 54px; }
+  .more, .card[data-open] .more { grid-template-rows: 1fr; visibility: visible; transition: none; }
+  .moreInner > * { margin-left: 20px; margin-right: 18px; }
+  .moreInner > :last-child { margin-bottom: 20px; }
+  .reasonDetail { display: block; }
+  .quickReset { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress > span { transition: none; }
+}

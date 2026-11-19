@@ -1,5 +1,5 @@
 // Room-heating config, mirrored from the Homey script "room_heating_config.js".
-// Shared by the Heating tab and the Rooms 2.0 tab. Keep in sync when the script's
+// Shared by the Heating tab and the Rooms tab. Keep in sync when the script's
 // config changes.
 
 // Heating rooms. tado valves expose full thermostat data; Clara is a smart-plug

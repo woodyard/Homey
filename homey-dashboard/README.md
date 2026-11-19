@@ -1,9 +1,10 @@
 # Homey Dashboard
 
-A small Next.js app, hosted on Vercel, that shows a live view of your Homey: room-by-room
-device status, a searchable list of all flows (enabled/disabled/broken), and an activity feed
-built by watching device state changes (the closest available proxy for "a flow or script just
-ran" — Homey's API does not expose a true "currently running" signal for flows).
+A small Next.js app, hosted on Vercel and on a NAS, that shows and controls your Homey: heating
+per room, rooms with their lights and climate, the adaptive-lighting schedules, weather,
+temperature history, and an activity feed built from Homey's notifications and from watching
+device state changes (the closest available proxy for "a flow or script just ran" — Homey's API
+does not expose a true "currently running" signal for flows).
 
 ## How it authenticates
 
@@ -111,7 +112,11 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Project structure
 
-- `app/page.js` — the dashboard UI (client-side, polls every 20s)
+- `app/page.js` — the shell: sign-in state, the shared Homey data (polls every 20s, or the live
+  stream) and the open tab
+- `app/AppChrome.js` — top bar, navigation (bottom bar on phones, tabs on wide screens) and the menu
+- `app/HeatingTab.js`, `RoomsTab.js`, `LightingTab.js`, `WeatherTab.js`, `TemperatureTab.js`,
+  `ActivityTab.js` — one file per tab; `app/ui.js` holds the controls they share
 - `app/globals.css` — design tokens (light/dark theme) and shared classes; `app/*.module.css` hold each view's own styles
 - `app/api/auth/*` — OAuth login/callback/logout/status routes
 - `app/api/homey/*` — proxies that call your Homey via the Athom Cloud API
@@ -120,6 +125,19 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.0.0** (2026-11-19) — Redesign, mobile first. The dashboard opens on **Heating**: one card
+  per room with the temperature, the target (− / +) and the one reason the room is or is not
+  heating. Four rooms fit on a phone screen; a card opens to today's schedule as a timeline and
+  Boost / Pause / Reset, and a running Boost, Pause or manual target can be reset from the closed
+  card. On wide screens the cards are always open. **Rooms** and Rooms 2.0 are one tab: a list of
+  rooms (temperature, lights on, activity), each opening to lights, today's chart, status and all
+  devices; a light tile opens to brightness and warmth. A closed room draws no chart. Navigation is Heating, Rooms, Lighting, Weather; **Temperatures and Live activity
+  moved to the menu**, with the theme, Refresh and Disconnect. Phones get a floating bottom bar,
+  wide screens tabs in the top bar. The open tab is kept in the address (`?tab=`; `rooms2` still
+  works). Temperatures: the sensor cards under the chart are the legend and the picker in one, and
+  the tab is in English like the rest. New look: warm neutral surfaces, larger text and touch
+  targets, no explanatory paragraphs. The old Rooms tab's search is gone; `page.js` is split into
+  one file per tab.
 - **1.22.1** (2026-11-07) — Oliver's schedule follows room_heating_config 1.8.0: the same every
   day, Night 20 until 08:00, Day 22 08:00-21:00, Evening 20 from 21:00.
 - **1.22.0** (2026-11-06) — Bottom bar on phones and small tablets. Up to 900px wide, where the tabs

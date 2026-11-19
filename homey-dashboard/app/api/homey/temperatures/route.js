@@ -4,7 +4,7 @@ import { homeyFetch } from '../../../../lib/homey';
 import { buildZonePaths } from '../../../../lib/zones';
 import { HEATING_ROOMS } from '../../../../lib/heating';
 
-// Heating-output logs used by the Rooms 2.0 forecast model: the tado valve's
+// Heating-output logs used by the Rooms tab's forecast model: the tado valve's
 // target + heating power, and the smart plugs' power draw in plug-heated rooms.
 const HEATING_DEVICE_IDS = new Set(HEATING_ROOMS.flatMap((r) => [r.thermostatId, ...(r.plugIds || [])].filter(Boolean)));
 const HEATING_CAPS = new Set(['target_temperature', 'tado_heating_power', 'energy_power']);

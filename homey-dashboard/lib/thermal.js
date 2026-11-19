@@ -1,4 +1,4 @@
-// Per-room thermal model for the Rooms 2.0 forecast.
+// Per-room thermal model for the Rooms tab's forecast.
 //
 // One physical model for every room, heated or not:
 //

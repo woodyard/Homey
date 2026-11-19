@@ -1,15 +1,15 @@
 'use client';
 
-// Rooms 2.0 — experimental redesign of the Rooms view (the original Rooms tab is kept).
-// One full-width row per room:
-//  • Lights panel: each bulb as a live glowing tile + the room's adaptive-lighting
-//    schedule drawn as a 24h "day ribbon" (sky gradient, brightness curve coloured by
-//    white balance, sunrise/sunset + now markers). Phase chips apply a phase directly.
-//  • Climate panel: today's measured temperature since midnight, the room_heating
-//    schedule drawn on the same graph (slot bands + target step line), and a dashed
-//    prediction for the rest of the day (physical room model: drift toward outdoors +
-//    gains, radiator lifts toward the effective target — honouring boost/pause/manual
-//    modes — but never above it; see lib/thermal.js). Inline heating controls.
+// Rooms — one card per room, closed until tapped. A closed card shows the essentials
+// (temperature, lights on, activity). An open card has:
+//  • Lights: every bulb as a live tile (tap a tile for brightness and warmth), all on/off,
+//    and the room's adaptive-lighting phases.
+//  • Today: the measured temperature since midnight with the room_heating schedule (slot
+//    bands + target line), the light level, and a dashed forecast for the rest of the day
+//    (physical room model: drift toward outdoors + gains, radiator lifts toward the effective
+//    target — honouring boost/pause/manual — but never above it; see lib/thermal.js).
+//  • Status: why the heating is (not) on, activity, windows and doors, other devices, batteries.
+//  • All devices: every device in the room with its state and controls.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -20,15 +20,16 @@ import {
   HEATING_ROOMS, HEATING_ACTIONS, heatingDaySlots, heatingSlot, guessHeatFlow,
 } from '../lib/heating';
 import { estimateRoomModel, ROOM_MODEL_DEFAULTS, predictRoom } from '../lib/thermal';
-import { explainHeating, heatingRoomSensor, hhmm, liveWindowClosedAt, liveWindowOpen, optimisticMode } from '../lib/heatingState';
+import { explainHeating, heatingRoomSensor, liveWindowClosedAt, liveWindowOpen, optimisticMode } from '../lib/heatingState';
 import {
-  AppWindow, BatteryFull, BatteryLow, BatteryMedium, Blinds, Bot, Brain, CalendarClock, ChartSpline,
-  ClipboardList, Coffee, DoorClosed, DoorOpen, Fan, Flame, Footprints, Heater, House, Lightbulb,
-  LoaderCircle, Minus, Moon, Pause, Plug, Plus, Power, Refrigerator, RotateCcw, Snowflake, Sparkles,
-  Speaker, Thermometer, TriangleAlert, Tv, WashingMachine,
+  AppWindow, BatteryFull, BatteryLow, BatteryMedium, Blinds, Bot, CalendarClock, ChartSpline, ChevronDown,
+  CircleDot, ClipboardList, Coffee, DoorClosed, DoorOpen, Fan, Flame, Footprints, Heater, House, LayoutList,
+  Lightbulb, LoaderCircle, Minus, Moon, Pause, Plug, Plus, Power, Radar, Refrigerator, RotateCcw, Snowflake,
+  Speaker, SunMedium, Thermometer, TriangleAlert, Tv, WashingMachine,
 } from 'lucide-react';
 import HeatingReason, { HeatingTag, useNow } from './HeatingReason';
-import styles from './RoomsV2Tab.module.css';
+import { cx, SliderRow, Toggle } from './ui';
+import styles from './RoomsTab.module.css';
 
 const HIST_POLL_MS = 5 * 60 * 1000;   // temperature history refresh
 const STATUS_POLL_MS = 15 * 1000;     // heating status refresh
@@ -45,7 +46,6 @@ function roomNameFromPath(path) {
   const parts = (path || '').split(' > ');
   return parts[parts.length - 1] || path;
 }
-
 
 function cmpZoneOrder(a, b) {
   const A = a || [];
@@ -135,7 +135,7 @@ function Eyebrow({ icon: Icon, children }) {
 // Left card: room status — why the heating is (not) on, motion inactivity, open
 // windows/doors with duration, batteries, and any devices not covered by the
 // lights/heating sections.
-function StatusPanel({ room, zone, onControl, heatingWhy, now }) {
+function StatusPanel({ room, zone, onControl, heatingWhy, now, className }) {
   const motionDevs = room.devices.filter((d) => 'alarm_motion' in (d.capabilities || {}));
   const motionActive = motionDevs.some((d) => !!d.capabilities.alarm_motion);
   const motionTs = motionDevs
@@ -158,7 +158,7 @@ function StatusPanel({ room, zone, onControl, heatingWhy, now }) {
   ));
 
   return (
-    <div className={`hd-inset ${styles.panel}`}>
+    <div className={cx('hd-inset', styles.panel, className)}>
       <Eyebrow icon={ClipboardList}>Status</Eyebrow>
 
       {heatingWhy && (
@@ -266,26 +266,18 @@ function StatusPanel({ room, zone, onControl, heatingWhy, now }) {
   );
 }
 
-// Compact on/off switch (same look as the Rooms tab toggle, smaller).
-// `disabled` greys it out — used for "Always on" devices that cannot be switched off.
+// Compact on/off switch. `disabled` greys it out — used for "Always on" devices that cannot
+// be switched off.
 function MiniToggle({ on, onChange, title, disabled }) {
-  return (
-    <button
-      type="button" role="switch" aria-checked={on} aria-disabled={disabled || undefined}
-      title={disabled ? (title || 'Always on — cannot be switched off') : (title || (on ? 'Turn off' : 'Turn on'))}
-      onClick={(e) => { e.stopPropagation(); if (!disabled) onChange(!on); }}
-      className={`${styles.toggle}${on ? ` ${styles.toggleOn}` : ''}${disabled ? ` ${styles.toggleDisabled}` : ''}`}
-    >
-      <span className={styles.track}><span className={styles.knob} /></span>
-    </button>
-  );
+  return <Toggle size="sm" on={on} onChange={onChange} disabled={disabled} title={disabled ? (title || 'Always on — cannot be switched off') : title} />;
 }
 
 // A single bulb as a glowing tile with live state. `al` is resolveLightMode's
 // { mode, guess, st } for lights AdaptiveLighting manages, else null.
 const LIGHT_MODE_LABEL = { auto: 'Auto', manual: 'Manual', drift: 'Manual?', forced: 'Forced', off: 'Off', unknown: '—' };
 const LIGHT_MODE_TAG = { auto: 'hd-tag-good', manual: 'hd-tag-warn', drift: 'hd-tag-warn', forced: 'hd-tag-accent' };
-function LightTile({ device, al, onToggle }) {
+function LightTile({ device, al, onToggle, onSet }) {
+  const [open, setOpen] = useState(false);
   const mode = al ? al.mode : null;
   const c = device.capabilities || {};
   const on = !!c.onoff;
@@ -315,35 +307,157 @@ function LightTile({ device, al, onToggle }) {
     color: `color-mix(in srgb, ${color} 72%, var(--text))`,
     boxShadow: `0 0 ${Math.round(6 + level * 12)}px color-mix(in srgb, ${color} 65%, transparent)`,
   } : undefined;
+  const canDim = !!onSet && !unavailable && 'dim' in c;
+  const canWarm = !!onSet && !unavailable && 'light_temperature' in c;
+  const canAdjust = canDim || canWarm;
   return (
     <div
       title={unavailable
         ? `${device.name}: unavailable (unpowered or unreachable)`
         : `${device.name}: ${on ? (dim != null ? `${Math.round(dim * 100)}%` : 'on') : 'off'}${modeText ? ` · ${modeText}` : ''}${alText ? `\nScript: ${alText}` : ''}`}
-      className={`${styles.tile}${unavailable ? ` ${styles.tileUnavailable}` : ''}`}
+      className={cx(styles.tile, unavailable && styles.tileUnavailable)}
       style={tileStyle}
     >
-      <span className={styles.tileIcon} style={iconStyle}>
-        <Lightbulb size={17} strokeWidth={2} />
-      </span>
-      <div className={styles.tileBody}>
-        <span className={styles.tileName}>{device.name}</span>
-        <span className={styles.tileMeta}>
-          {unavailable && <span className={styles.warnIcon} title="Unavailable"><TriangleAlert size={12} /></span>}
-          <span>{on ? (dim != null ? `${Math.round(dim * 100)}%` : 'On') : 'Off'}</span>
-          {mode && (
-            <span className={`hd-tag ${LIGHT_MODE_TAG[mode] || ''}`} style={al.guess ? { opacity: 0.6 } : undefined} title={modeText}>
-              {mode === 'forced' ? 'Forced' : LIGHT_MODE_LABEL[mode] || mode}
+      <div className={styles.tileRow}>
+        <button
+          type="button" className={styles.tileMain} disabled={!canAdjust}
+          onClick={() => setOpen((o) => !o)} aria-expanded={canAdjust ? open : undefined}
+          aria-label={canAdjust ? `${device.name}: brightness and warmth` : undefined}
+        >
+          <span className={styles.tileIcon} style={iconStyle}>
+            <Lightbulb size={18} strokeWidth={2} />
+          </span>
+          <span className={styles.tileBody}>
+            <span className={styles.tileName}>{device.name}</span>
+            <span className={styles.tileMeta}>
+              {unavailable && <span className={styles.warnIcon} title="Unavailable"><TriangleAlert size={12} /></span>}
+              <span>{on ? (dim != null ? `${Math.round(dim * 100)}%` : 'On') : 'Off'}</span>
+              {mode && mode !== 'off' && (
+                <span className={`hd-tag ${LIGHT_MODE_TAG[mode] || ''}`} style={al.guess ? { opacity: 0.6 } : undefined}>
+                  {mode === 'forced' ? 'Forced' : LIGHT_MODE_LABEL[mode] || mode}
+                </span>
+              )}
             </span>
-          )}
-        </span>
+          </span>
+        </button>
+        {onToggle && 'onoff' in c && (
+          <MiniToggle
+            on={on} onChange={onToggle} disabled={!!device.alwaysOn || unavailable}
+            title={unavailable ? `${device.name}: unavailable`
+              : device.alwaysOn ? `${device.name}: always on` : `${device.name}: turn ${on ? 'off' : 'on'}`}
+          />
+        )}
       </div>
-      {onToggle && 'onoff' in c && (
-        <MiniToggle
-          on={on} onChange={onToggle} disabled={!!device.alwaysOn || unavailable}
-          title={unavailable ? `${device.name}: unavailable`
-            : device.alwaysOn ? `${device.name}: always on` : `${device.name}: turn ${on ? 'off' : 'on'}`}
-        />
+      {open && canAdjust && (
+        <div className={styles.tileSliders}>
+          {canDim && (
+            <SliderRow
+              icon={SunMedium} label={`${device.name} brightness`} value={dim ?? 0} accent="#f59e0b"
+              onCommit={(v) => onSet({ dim: v, ...('onoff' in c && v > 0 ? { onoff: true } : {}) })}
+            />
+          )}
+          {canWarm && (
+            <SliderRow
+              icon={Thermometer} label={`${device.name} warmth`} value={c.light_temperature ?? 0} accent="#fb923c"
+              fmt={(v) => (v >= 0.5 ? 'warm' : 'cool')}
+              onCommit={(v) => onSet({ light_temperature: v, ...('light_mode' in c ? { light_mode: 'temperature' } : {}) })}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------- all devices ----
+
+const TYPE_ICON = {
+  light: Lightbulb, thermostat: Thermometer, sensor: Radar, socket: Plug, tv: Tv,
+  mediaplayer: Speaker, coffeemachine: Coffee, fridge: Refrigerator, freezer: Snowflake,
+  washer: WashingMachine, vacuumcleaner: Bot, heater: Flame, curtain: Blinds,
+  fan: Fan, button: CircleDot, other: House,
+};
+
+function deviceStateLine(state) {
+  const st = state || {};
+  const parts = [];
+  if ('onoff' in st) parts.push(st.onoff ? 'On' : 'Off');
+  if (st.dim != null) parts.push(`${Math.round(st.dim * 100)}%`);
+  if (st.measure_temperature != null) parts.push(`${st.measure_temperature}°`);
+  if (st.measure_humidity != null) parts.push(`${st.measure_humidity}% humidity`);
+  if (st.target_temperature != null) parts.push(`target ${st.target_temperature}°`);
+  if ('alarm_motion' in st) parts.push(st.alarm_motion ? 'motion' : 'no motion');
+  if ('alarm_contact' in st) parts.push(st.alarm_contact ? 'open' : 'closed');
+  if (st.alarm_water) parts.push('leak!');
+  if (st.display_status) parts.push(st.display_status);
+  if (st.operational_state != null) parts.push(`state ${st.operational_state}`);
+  if (st.measure_battery != null) parts.push(`battery ${Math.round(st.measure_battery)}%`);
+  return parts.join(' · ');
+}
+
+// Every device in the room, closed until asked for: state, switch, and sliders for what
+// the cards above do not cover (blinds, a thermostat that is not a heating room).
+function DeviceList({ devices, heatingIds, onControl, className }) {
+  const [open, setOpen] = useState(false);
+  const sorted = useMemo(() => [...devices].sort((a, b) => a.name.localeCompare(b.name, 'da')), [devices]);
+  return (
+    <div className={cx('hd-inset', styles.panel, className)}>
+      <button type="button" className={styles.devToggle} onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <Eyebrow icon={LayoutList}>All devices</Eyebrow>
+        <span className={styles.devCount}>{devices.length}</span>
+        <ChevronDown size={16} className={cx(styles.chev, open && styles.chevOpen)} />
+      </button>
+      {open && (
+        <div className={styles.devList}>
+          {sorted.map((d) => {
+            const c = d.capabilities || {};
+            const line = deviceStateLine(c);
+            const Icon = TYPE_ICON[d.virtualClass || d.class] || House;
+            const unavailable = d.available === false;
+            const set = (values) => onControl(d.id, values);
+            const ownTarget = 'target_temperature' in c && !heatingIds.has(d.id);
+            return (
+              <div key={d.id} className={styles.devRow} style={unavailable ? { opacity: 0.55 } : undefined}>
+                <div className={styles.row}>
+                  <span className={styles.rowIcon}><Icon size={16} /></span>
+                  <span className={styles.devText}>
+                    <span className={styles.devName}>{d.name}</span>
+                    {(line || unavailable) && <span className={styles.devState}>{unavailable ? 'Unavailable' : line}</span>}
+                  </span>
+                  {'onoff' in c && onControl && (
+                    <span className={styles.rowEnd}>
+                      <MiniToggle
+                        on={!!c.onoff} onChange={(v) => set({ onoff: v })} disabled={!!d.alwaysOn || unavailable}
+                        title={d.alwaysOn ? `${d.name}: always on` : `${d.name}: turn ${c.onoff ? 'off' : 'on'}`}
+                      />
+                    </span>
+                  )}
+                </div>
+                {onControl && !unavailable && ('windowcoverings_set' in c || ownTarget) && (
+                  <div className={styles.devControls}>
+                    {'windowcoverings_set' in c && (
+                      <SliderRow icon={Blinds} label={`${d.name} position`} value={c.windowcoverings_set ?? 0} onCommit={(v) => set({ windowcoverings_set: v })} />
+                    )}
+                    {ownTarget && (
+                      <div className={styles.stepper}>
+                        <span className={styles.stepLabel}>Target</span>
+                        <button type="button" className="hd-step" aria-label={`Lower ${d.name} target`}
+                          onClick={() => set({ target_temperature: Math.round(((c.target_temperature ?? 20) - 0.5) * 2) / 2 })}>
+                          <Minus size={15} strokeWidth={2.4} />
+                        </button>
+                        <b className={styles.stepValue}>{c.target_temperature ?? '—'}°</b>
+                        <button type="button" className="hd-step" aria-label={`Raise ${d.name} target`}
+                          onClick={() => set({ target_temperature: Math.round(((c.target_temperature ?? 20) + 0.5) * 2) / 2 })}>
+                          <Plus size={15} strokeWidth={2.4} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -686,7 +800,7 @@ function actionText(label) {
 
 // ------------------------------------------------------------------ tab ----
 
-export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl, onReload }) {
+export default function RoomsTab({ devices, zones, flows, alStatus, onControl, onReload }) {
   const sun = useMemo(() => getSunTimes(new Date()), []);
   const nowMin = copenhagenMinutesNow();
   const weekend = isWeekendNow();                 // heating schedules
@@ -706,6 +820,18 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
   const [applying, setApplying] = useState(null);
   const [err, setErr] = useState('');
   const now = useNow(30000); // heating countdowns move between status polls
+
+  // Which rooms are open (remembered in this browser). A closed room draws no chart.
+  const [openRooms, setOpenRooms] = useState(() => new Set());
+  useEffect(() => {
+    try { setOpenRooms(new Set(JSON.parse(localStorage.getItem('rooms_open') || '[]'))); } catch { /* ignore */ }
+  }, []);
+  const toggleRoom = (path) => setOpenRooms((prev) => {
+    const next = new Set(prev);
+    if (next.has(path)) next.delete(path); else next.add(path);
+    try { localStorage.setItem('rooms_open', JSON.stringify([...next])); } catch { /* ignore */ }
+    return next;
+  });
 
   // Heating status (mode / windowOpen / away / effectiveTarget per zone).
   useEffect(() => {
@@ -879,7 +1005,7 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
     return m;
   }, [histSensors, weekSeries, outdoorWeek, heatSeries]);
 
-  // Build one row per zone that has lights or temperature sensors.
+  // One card per zone that has devices.
   const rooms = useMemo(() => {
     const groups = new Map();
     (devices || []).forEach((d) => {
@@ -900,7 +1026,6 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
         const alMembers = alByZonePath.get(g.path) || [];
         return { ...g, name, lights, sensors, heating, alMembers };
       })
-      .filter((g) => g.lights.length || g.sensors.length || g.heating)
       .sort((a, b) => cmpZoneOrder(a.order, b.order));
   }, [devices, histSensors, alByZonePath]);
 
@@ -1025,23 +1150,9 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
 
   return (
     <div>
-      <div className={styles.intro}>
-        <span className="hd-tag hd-tag-violet"><Sparkles size={12} strokeWidth={2.2} />Experimental</span>
-        <span className="hd-pill">
-          <CalendarClock size={14} />
-          <span>Today follows the <b>{weekend ? 'weekend' : 'weekday'}</b> schedules</span>
-        </span>
-      </div>
-      <p className="hd-lede">
-        Experimental room view: live lights with today&apos;s adaptive-lighting curve, and today&apos;s
-        temperature with the heating schedule and a <span className={styles.dashSample}>forecast</span> for
-        the rest of the day. The forecast is an estimate (assumes current boost/pause/manual mode runs out
-        as scheduled and ignores future motion/windows).
-      </p>
-
       {err && (
-        <div className="hd-error">
-          <TriangleAlert size={15} style={{ flex: 'none', marginTop: 1 }} />
+        <div className="hd-error" style={{ marginTop: 0 }}>
+          <TriangleAlert size={16} style={{ flex: 'none', marginTop: 1 }} />
           <span>{err}</span>
         </div>
       )}
@@ -1055,7 +1166,8 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
           const thermoCaps = thermo ? thermo.capabilities || {} : {};
 
           // Today's measured series for this room; thermostat's own sensor first.
-          const series = room.sensors
+          const open = openRooms.has(room.path);
+          const series = !open ? [] : room.sensors
             .map((s) => ({
               key: s.key, name: s.name,
               primary: room.heating && s.deviceId === room.heating.thermostatId,
@@ -1106,7 +1218,7 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
           const heatingActive = !!room.heating && heatingEnabled !== false && !windowOpen;
           const resumeAt = why && why.resumeAt && why.resumeAt > now ? why.resumeAt : null;
           let prediction = [];
-          if (startTemp != null && (room.sensors.length || room.heating)) {
+          if (open && startTemp != null && (room.sensors.length || room.heating)) {
             const startMin = lastPoint ? lastPoint.m : nowMin;
             const scheduleAt = heatingActive ? makeTargetAt({
               startMin,
@@ -1156,42 +1268,107 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
             }
           }
 
+          const motionDevs = room.devices.filter((d) => 'alarm_motion' in (d.capabilities || {}));
+          const motionTs = motionDevs.map((d) => (d.capTimes || {}).alarm_motion).filter(Boolean).sort().pop() || null;
+          const openContacts = room.devices.filter((d) => (d.capabilities || {}).alarm_contact === true).length;
+          const anyTemp = room.devices.map((d) => (d.capabilities || {}).measure_temperature).find((v) => typeof v === 'number');
+          const headTemp = curTemp != null ? curTemp : anyTemp != null ? anyTemp : null;
+          const showToday = hasClimate || !!profiles;
+          const heatingIds = new Set(room.heating ? [room.heating.thermostatId, ...(room.heating.plugIds || [])].filter(Boolean) : []);
+
           return (
-            <section key={room.path} className={`hd-card hd-fade-in ${styles.room}`}>
-              <header className={styles.roomHead}>
+            <section key={room.path} className={cx('hd-card', styles.room)} data-open={open || undefined}>
+              <button
+                type="button" className={styles.roomHead} onClick={() => toggleRoom(room.path)}
+                aria-expanded={open}
+              >
                 <div className={styles.roomTitle}>
                   <h3 className={styles.roomName}>{room.name}</h3>
-                  {motionNow && <span className={`hd-live-dot ${styles.liveDot}`} title="Motion right now" />}
-                  {room.path !== room.name && <span className={styles.roomPath}>{room.path}</span>}
+                  <div className={styles.roomSub}>
+                    {motionDevs.length > 0 && (motionNow
+                      ? <span className={styles.subActive}><span className="hd-live-dot" />Active now</span>
+                      : <span>{fmtAgo(motionTs) ? `Quiet for ${fmtAgo(motionTs)}` : 'Quiet'}</span>)}
+                    <HeatingTag info={why} />
+                    {openContacts > 0 && !(why && why.tag && why.tag.icon === 'window') && (
+                      <span className="hd-tag hd-tag-warn"><AppWindow size={12} strokeWidth={2.2} />Open</span>
+                    )}
+                  </div>
                 </div>
-                <div className={styles.headTags}>
-                  <HeatingTag info={why} />
-                  {curTemp != null && (
-                    <span className="hd-tag hd-num" title="Current temperature">
-                      <Thermometer size={12} strokeWidth={2.2} />{curTemp.toFixed(1)}°
-                    </span>
-                  )}
+                <div className={styles.headStats}>
+                  {headTemp != null && <span className={styles.headTemp}>{headTemp.toFixed(1)}°</span>}
                   {hasLights && (
-                    <span className={`hd-tag hd-num${lightsOn ? ' hd-tag-warn' : ''}`} title="Lights on">
-                      <Lightbulb size={12} strokeWidth={2.2} />{lightsOn}/{room.lights.length}
+                    <span className={cx(styles.headLights, lightsOn > 0 && styles.headLightsOn)} title="Lights on">
+                      <Lightbulb size={14} strokeWidth={2.2} />{lightsOn}/{room.lights.length}
                     </span>
                   )}
                 </div>
-              </header>
+                <ChevronDown size={18} className={cx(styles.chev, open && styles.chevOpen)} />
+              </button>
 
-              <div className={styles.grid}>
-                <StatusPanel
-                  room={room}
-                  zone={zones && room.devices[0] ? zones[room.devices[0].zoneId] : null}
-                  onControl={onControl}
-                  heatingWhy={why}
-                  now={now}
-                />
+              {open && (
+              <div className={styles.body}>
+                    {/* Lights: count + all on/off, phase chips, live tiles. */}
+                    {hasLights && (
+                      <div className={cx('hd-inset', styles.panel, styles.stack)}>
+                        <div className={styles.panelHead}>
+                          <Eyebrow icon={Lightbulb}>Lights</Eyebrow>
+                          <div className={styles.actions}>
+                            {[['All on', true], ['All off', false]].map(([label, on]) => (
+                              <button
+                                key={label} type="button" onClick={() => setAllLights(room, on)} disabled={busyAll}
+                                title={`Turn all lights in ${room.name} ${on ? 'on' : 'off'}`}
+                                className={`hd-btn ${on ? styles.allOn : ''} ${styles.actionBtn}`}
+                              >
+                                {busyAll
+                                  ? <LoaderCircle size={14} strokeWidth={2.2} className={styles.spin} />
+                                  : on ? <Lightbulb size={14} strokeWidth={2.2} /> : <Power size={14} strokeWidth={2.2} />}
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
 
-                {(hasClimate || hasLights) && (
-                  <div className={styles.col}>
+                        {profiles && (
+                          <div className={styles.phases}>
+                            {phaseList(profiles, sun).map((p) => {
+                              const active = isActive(p, nowMin);
+                              return (
+                                <button
+                                  key={p.name}
+                                  type="button"
+                                  onClick={() => applyPhase(room, p.name)}
+                                  disabled={applying === room.path}
+                                  aria-pressed={active}
+                                  title={`Set these lights to ${p.name} now (${Math.round(p.brightness * 100)}%)`}
+                                  className={`${styles.phase}${active ? ` ${styles.phaseActive}` : ''}`}
+                                >
+                                  <span className={styles.swatch} style={{ background: tempColor(p.temperature) }} />
+                                  {p.name}
+                                  <span className={styles.phaseTime}>{fmtMinutes(p.start)}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <div className={styles.tiles}>
+                          {room.lights.map((d) => {
+                            const al = room.alMembers.find((m) => m.id === d.id);
+                            return (
+                              <LightTile
+                                key={d.id} device={d} al={al ? lightMode(al) : null}
+                                onToggle={onControl ? (v) => onControl(d.id, { onoff: v }) : null}
+                                onSet={onControl ? (values) => onControl(d.id, values) : null}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Today: temperature + schedule + forecast + light level on one chart. */}
-                    <div className={`hd-inset ${styles.panel} ${styles.stack}`}>
+                    {showToday && (
+                    <div className={cx('hd-inset', styles.panel, styles.stack)}>
                       <div className={styles.panelHead}>
                         {/* One identical title on every room card; the legend tells the rest. */}
                         <Eyebrow icon={ChartSpline}>Today</Eyebrow>
@@ -1216,23 +1393,6 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
                               {s.name}
                             </LegendItem>
                           ))}
-                        </div>
-                      )}
-
-                      {prediction.length > 1 && (
-                        <div className={styles.note}
-                          title="Forecast model: the room drifts toward the outdoor temperature plus its internal gains; the radiator lifts it toward the thermostat target but never above it. Parameters fit from the last 7 days of Insights (room, outdoor, heating output).">
-                          <Brain size={13} className={styles.noteIcon} />
-                          <span>
-                            {model.learned
-                              ? `fit from ${model.samples} h this week: heat loss τ≈${(1 / (model.k * 60)).toFixed(1)} h · gains ${model.c >= 0 ? '+' : ''}${(model.c * 60).toFixed(2)} °C/h`
-                              : 'model defaults (not enough history yet)'}
-                            {room.heating && ` · radiator ≈${(model.g * 60).toFixed(1)} °C/h${model.gLearned ? '' : ' (default)'}`}
-                            {' · outdoor: '}
-                            {outForecast.length ? 'Open-Meteo forecast (home location)' : outsideLatest != null ? `current reading ${outsideLatest.toFixed(1)}°` : 'unknown'}
-                            {room.heating && !heatingActive && (heatingEnabled === false ? ' · heating off' : ' · window open — heating off')}
-                            {room.heating && heatingActive && resumeAt && ` · heating off until ≈ ${hhmm(resumeAt)} (settle delay)`}
-                          </span>
                         </div>
                       )}
 
@@ -1288,7 +1448,7 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
                               <CalendarClock size={12} strokeWidth={2.2} />{slot.name} · {slot.target}°
                             </span>
                           )}
-                          <div className={styles.actions}>
+                          <div className={styles.heatActions}>
                             {HEATING_ACTIONS.map((a) => {
                               const bk = `${room.heating.key}:${a.key}`;
                               const disabled = busy.has(bk) || heatingEnabled === false;
@@ -1307,77 +1467,25 @@ export default function RoomsV2Tab({ devices, zones, flows, alStatus, onControl,
                         </div>
                       )}
                     </div>
-
-                    {/* Lights: count + all on/off, phase chips, live tiles. */}
-                    {hasLights && (
-                      <div className={`hd-inset ${styles.panel} ${styles.stack}`}>
-                        <div className={styles.panelHead}>
-                          <Eyebrow icon={Lightbulb}>Lights</Eyebrow>
-                          <span className={styles.lightCount}>
-                            <b className="hd-big-num">{lightsOn}</b>
-                            <span className="hd-muted">/ {room.lights.length} on</span>
-                          </span>
-                          <div className={styles.actions}>
-                            {[['All on', true], ['All off', false]].map(([label, on]) => (
-                              <button
-                                key={label} type="button" onClick={() => setAllLights(room, on)} disabled={busyAll}
-                                title={`Turn all lights in ${room.name} ${on ? 'on' : 'off'}`}
-                                className={`hd-btn ${on ? styles.allOn : ''} ${styles.actionBtn}`}
-                              >
-                                {busyAll
-                                  ? <LoaderCircle size={14} strokeWidth={2.2} className={styles.spin} />
-                                  : on ? <Lightbulb size={14} strokeWidth={2.2} /> : <Power size={14} strokeWidth={2.2} />}
-                                {label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        {profiles && (
-                          <div className={styles.phases}>
-                            {phaseList(profiles, sun).map((p) => {
-                              const active = isActive(p, nowMin);
-                              return (
-                                <button
-                                  key={p.name}
-                                  type="button"
-                                  onClick={() => applyPhase(room, p.name)}
-                                  disabled={applying === room.path}
-                                  aria-pressed={active}
-                                  title={`Set these lights to ${p.name} now (${Math.round(p.brightness * 100)}%)`}
-                                  className={`${styles.phase}${active ? ` ${styles.phaseActive}` : ''}`}
-                                >
-                                  <span className={styles.swatch} style={{ background: tempColor(p.temperature) }} />
-                                  {p.name}
-                                  <span className={styles.phaseTime}>{fmtMinutes(p.start)}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        <div className={styles.tiles}>
-                          {room.lights.map((d) => {
-                            const al = room.alMembers.find((m) => m.id === d.id);
-                            return (
-                              <LightTile
-                                key={d.id} device={d} al={al ? lightMode(al) : null}
-                                onToggle={onControl ? (v) => onControl(d.id, { onoff: v }) : null}
-                              />
-                            );
-                          })}
-                        </div>
-                      </div>
                     )}
-                  </div>
-                )}
+
+                    <StatusPanel
+                      room={room}
+                      zone={zones && room.devices[0] ? zones[room.devices[0].zoneId] : null}
+                      onControl={onControl}
+                      heatingWhy={why}
+                      now={now}
+                    />
+
+                    <DeviceList devices={room.devices} heatingIds={heatingIds} onControl={onControl} />
               </div>
+              )}
             </section>
           );
         })}
 
         {rooms.length === 0 && (
-          <div className="hd-empty">No rooms with lights or temperature sensors found yet.</div>
+          <div className="hd-empty">No rooms found yet.</div>
         )}
       </div>
     </div>

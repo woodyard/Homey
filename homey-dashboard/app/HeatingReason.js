@@ -1,8 +1,9 @@
 'use client';
 
-// Heating "why" strip shared by the Heating tab and the Rooms 2.0 tab: the one main
-// reason a room is (or is not) heating right now, a countdown bar when it ends at a known
-// time, and the other factors as chips. The text comes from lib/heatingState.js.
+// Heating "why" strip of the Rooms tab: the one main reason a room is (or is not) heating
+// right now, a countdown bar when it ends at a known time, and the other factors as chips.
+// The text comes from lib/heatingState.js; the Heating tab draws the same explanation in its
+// own compact form and shares the icons and useNow from here.
 
 import { useEffect, useState } from 'react';
 import {

@@ -1,0 +1,232 @@
+/* Rooms tab — layout and component styles on top of the global design tokens.
+   Mobile first: a list of closed room cards; an open card stacks its panels, and from 900px
+   puts Today beside the rest. */
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- rooms ---------- */
+
+.rooms { display: flex; flex-direction: column; gap: 12px; }
+
+.room { min-width: 0; overflow: hidden; }
+
+.roomHead {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  min-height: 68px; padding: 12px 14px 12px 16px; border: none; background: transparent;
+  color: inherit; text-align: left; cursor: pointer;
+}
+.roomTitle { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.roomName {
+  margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.015em; line-height: 1.25;
+  color: var(--text); overflow-wrap: anywhere;
+}
+.roomSub {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; min-height: 20px;
+  font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.roomSub:empty { display: none; }
+.subActive { display: inline-flex; align-items: center; gap: 7px; color: var(--good-ink); font-weight: 600; }
+
+.headStats { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
+.headTemp { font-size: 20px; font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.headLights {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12.5px; font-weight: 600; color: var(--faint); font-variant-numeric: tabular-nums;
+}
+.headLightsOn { color: var(--warn-ink); }
+
+.chev { flex-shrink: 0; color: var(--faint); transition: transform 0.25s ease; }
+.chevOpen { transform: rotate(180deg); }
+
+.liveDot { flex: none; }
+
+.body {
+  display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr);
+  padding: 0 12px 12px;
+  animation: open 0.25s ease both;
+}
+@keyframes open { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+@media (min-width: 900px) {
+  .rooms { gap: 14px; }
+  .roomHead { padding: 14px 18px 14px 20px; }
+  /* Two balanced columns; a panel never splits across them. */
+  .body { display: block; column-count: 2; column-gap: 14px; padding: 0 16px 2px; }
+  .body > * { break-inside: avoid; margin-bottom: 14px; }
+}
+
+/* ---------- panels ---------- */
+
+.panel { padding: 14px; min-width: 0; display: flex; flex-direction: column; border: none; border-radius: 16px; }
+.stack { gap: 12px; }
+
+.panelHead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+
+.eyebrow { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---------- status ---------- */
+
+.subLabel {
+  font-size: 12.5px; font-weight: 600; color: var(--faint); margin: 14px 0 2px;
+}
+
+.row {
+  display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 40px;
+  padding: 3px 0; font-size: 14px; color: var(--text-2);
+}
+.row + .row { border-top: 1px solid var(--divider); }
+
+.rowIcon { flex: none; display: inline-flex; color: var(--muted); }
+.rowName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rowEnd { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+
+.stateText { font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.warnIcon { display: inline-flex; color: var(--warn); flex: none; }
+
+.batteries { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.battery {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 3px 10px 3px 8px; border-radius: 999px;
+  background: var(--surface-solid); border: 1px solid var(--border);
+  font-size: 12.5px; white-space: nowrap;
+}
+.batteryPct { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.batteryName { color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+.nothing { color: var(--faint); font-size: 13.5px; margin-top: 12px; }
+
+/* ---------- lights ---------- */
+
+.phases { display: flex; flex-wrap: wrap; gap: 6px; }
+.phase {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 36px;
+  padding: 5px 13px 5px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface-solid); color: var(--text-2);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
+}
+.phase:hover:not(:disabled) { border-color: var(--accent-border); color: var(--text); }
+.phase:active:not(:disabled) { transform: scale(0.97); }
+.phase:disabled { opacity: 0.6; cursor: default; }
+.phaseActive { background: var(--ink); border-color: transparent; color: var(--ink-contrast); }
+.phaseActive:hover:not(:disabled) { color: var(--ink-contrast); border-color: transparent; }
+.phaseTime { color: var(--faint); font-variant-numeric: tabular-nums; }
+.phaseActive .phaseTime { color: var(--ink-contrast); opacity: 0.7; }
+.swatch { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px var(--border-strong); }
+
+.tiles { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); align-items: start; }
+
+.tile {
+  min-width: 0; border-radius: 16px;
+  border: 1px solid var(--border); background: var(--surface-solid);
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.tileUnavailable { opacity: 0.55; }
+.tileRow { display: flex; align-items: center; gap: 4px; padding-right: 6px; }
+.tileMain {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 11px;
+  min-height: 58px; padding: 9px 4px 9px 10px; border: none; border-radius: 16px; background: transparent;
+  color: inherit; text-align: left; cursor: pointer;
+}
+.tileMain:disabled { cursor: default; }
+
+.tileIcon {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; border-radius: 12px;
+  background: var(--surface-2); color: var(--faint);
+  transition: background 0.3s ease, color 0.3s ease, box-shadow 0.3s ease;
+}
+.tileBody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tileName {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tileMeta {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.tileSliders { display: flex; flex-direction: column; gap: 2px; padding: 0 12px 10px; }
+
+/* ---------- all devices ---------- */
+
+.devToggle {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  min-height: 44px; margin: -12px 0; padding: 0; border: none; background: transparent;
+  color: inherit; text-align: left; cursor: pointer;
+}
+.devCount { font-size: 12.5px; font-weight: 600; color: var(--faint); font-variant-numeric: tabular-nums; margin-right: auto; }
+.devList { margin-top: 14px; }
+.devRow + .devRow { border-top: 1px solid var(--divider); }
+.devRow .row { min-height: 46px; }
+.devText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; padding: 4px 0; }
+.devName { font-size: 14px; font-weight: 550; color: var(--text); overflow-wrap: anywhere; }
+.devState { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.devControls { display: flex; flex-direction: column; gap: 6px; padding: 0 0 10px 26px; }
+
+/* ---------- buttons ---------- */
+
+.actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: 6px; }
+.actionBtn { min-height: 38px; }
+.heatActions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; }
+.heatActions > button { min-height: 44px; padding-left: 8px; padding-right: 8px; }
+
+.boost.boost { background: var(--heat-soft); color: var(--heat); border-color: transparent; }
+.boost.boost:hover:not(:disabled) { color: var(--heat); border-color: var(--heat); }
+
+.allOn.allOn { background: var(--good-soft); color: var(--good); border-color: transparent; }
+.allOn.allOn:hover:not(:disabled) { color: var(--good); border-color: var(--good); }
+
+.spin { animation: spin 0.9s linear infinite; }
+
+/* ---------- climate ---------- */
+
+.legend {
+  display: flex; flex-wrap: wrap; gap: 4px 12px; margin-left: auto;
+  font-size: 12px; color: var(--muted);
+}
+.legendLeft { margin-left: 0; }
+.legendItem { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+
+.note {
+  display: flex; align-items: flex-start; gap: 7px;
+  font-size: 12px; line-height: 1.55; color: var(--faint);
+}
+.noteIcon { flex: none; margin-top: 2px; }
+.noteWarn { color: var(--warn); }
+
+.footer {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px;
+  margin-top: auto; padding-top: 14px; border-top: 1px solid var(--divider);
+}
+.bigTemp { font-size: 30px; font-weight: 600; color: var(--text); margin-right: 4px; }
+
+.stepper {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 4px 3px 12px; border-radius: 999px;
+  background: var(--surface-solid); border: 1px solid var(--border);
+}
+.stepperStatic { padding: 6px 12px; }
+.stepLabel {
+  font-size: 12.5px; font-weight: 600; color: var(--muted);
+}
+.stepValue {
+  min-width: 44px; text-align: center; font-size: 16px; font-weight: 650;
+  font-variant-numeric: tabular-nums; color: var(--text);
+}
+
+/* ---------- chart ---------- */
+
+.chart { position: relative; width: 100%; min-width: 0; }
+.chartSvg { display: block; width: 100%; height: auto; font-variant-numeric: tabular-nums; }
+.chartEmpty { padding: 28px 16px; font-size: 12.5px; }
+
+.tooltip {
+  position: absolute; top: 4px; transform: translateX(-50%); z-index: 2;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px 10px;
+  padding: 8px 12px; border-radius: 12px;
+  background: var(--surface-solid); border: 1px solid var(--border-strong); box-shadow: var(--shadow-lg);
+  color: var(--text); font-size: 11.5px; white-space: nowrap; pointer-events: none;
+}
+.tooltipNarrow { left: 6px; right: 6px; transform: none; white-space: normal; }
+.tipItem { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); }
+.tipDot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }

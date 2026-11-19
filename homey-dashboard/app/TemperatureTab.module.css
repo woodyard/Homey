@@ -1,108 +1,23 @@
-/* Temperature tab — layout and the bits the global hd-* classes don't cover. */
+/* Temperature tab. Mobile first: period, chart, then the sensor cards (legend + picker). */
 
-.tab { display: flex; flex-direction: column; gap: 16px; }
+.tab { display: flex; flex-direction: column; gap: 12px; }
 
-/* ---------- header ---------- */
-
-.header {
-  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
-  gap: 12px 16px;
-}
-.headingBlock { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.headingIcon {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 8px;
-  background: var(--heat-soft); color: var(--heat);
-}
-.status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
-.headerControls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.periods > .periodBtn { min-height: 30px; white-space: nowrap; }
-.reloadBtn { min-height: 30px; min-width: 30px; }
+.bar { display: flex; align-items: center; gap: 8px; }
+.periods { flex: 1; min-width: 0; }
+.periods > button { flex: 1; min-width: 0; padding: 5px 4px; white-space: nowrap; }
 
 .spin { animation: spin 0.9s linear infinite; }
 
-/* ---------- body layout ---------- */
-
-.layout {
-  display: grid; gap: 16px;
-  grid-template-columns: minmax(250px, 300px) minmax(0, 1fr);
-  align-items: start;
-}
-.main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-
-/* ---------- sensor picker ---------- */
-
-.picker {
-  padding: 18px; position: sticky; top: 12px;
-  display: flex; flex-direction: column; gap: 12px; min-width: 0;
-}
-.pickerHead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.searchWrap { position: relative; }
-.searchIcon {
-  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
-  color: var(--faint); pointer-events: none;
-}
-.search { width: 100%; } /* left padding for the icon is inline (hd-input sets padding) */
-.actions { display: flex; flex-wrap: wrap; gap: 4px; margin: -4px 0 0 -6px; }
-.actions > button { min-height: 28px; }
-
-.list {
-  max-height: 560px; overflow: auto;
-  display: flex; flex-direction: column; gap: 14px;
-  margin-right: -8px; padding-right: 8px;
-}
-.loadingNote { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; }
-.group { display: flex; flex-direction: column; gap: 7px; }
-.groupLabel { display: flex; align-items: center; gap: 5px; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
-
-.chip {
-  display: inline-flex; align-items: center; gap: 7px;
-  max-width: 100%; min-height: 30px; padding: 4px 10px 4px 9px;
-  border-radius: 999px; border: 1px solid var(--border);
-  background: var(--surface-2); color: var(--muted);
-  font-size: 12.5px; font-weight: 550; line-height: 1.2; text-align: left;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
-}
-.chip:hover { border-color: var(--border-strong); color: var(--text-2); }
-.chip:active { transform: scale(0.97); }
-.chipOn {
-  color: var(--text);
-  background: color-mix(in srgb, var(--chip) 15%, transparent);
-  border-color: color-mix(in srgb, var(--chip) 55%, transparent);
-}
-.chipOn:hover { border-color: var(--chip); color: var(--text); }
-.chipName { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chipValue { color: var(--faint); font-size: 11.5px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.chipOn .chipValue { color: var(--muted); }
-
-.dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
-.dashSwatch { flex: none; display: block; }
-
-/* ---------- KPI strip ---------- */
-
-.kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.kpi { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.kpiHead { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
-.kpiHead > :first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.kpiIcon {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; border-radius: 9px;
-}
-.kpiValue { font-size: 26px; color: var(--text); white-space: nowrap; }
-.kpiUnit { font-size: 14px; font-weight: 600; color: var(--muted); margin-left: 3px; letter-spacing: 0; }
-
 /* ---------- chart ---------- */
 
-.chartCard { padding: 20px; min-width: 0; }
+.chartCard { padding: 14px 12px; min-width: 0; }
 .chartWrap { position: relative; min-height: 260px; }
 .chartWrap svg { width: 100%; height: auto; display: block; overflow: visible; touch-action: pan-y; }
 .axisText { font-size: 11px; font-variant-numeric: tabular-nums; }
 .line { transition: opacity 0.2s; }
 
 .chartSkeleton {
-  height: 380px; display: grid; place-items: center;
+  height: 260px; display: grid; place-items: center;
   color: var(--muted); font-size: 13px;
 }
 .chartSkeletonLabel {
@@ -111,7 +26,7 @@
   background: var(--surface-solid); border: 1px solid var(--border); box-shadow: var(--shadow-sm);
 }
 /* combined with hd-empty — only adds properties hd-empty doesn't set */
-.chartEmpty { display: grid; place-items: center; min-height: 380px; margin: 0; }
+.chartEmpty { display: grid; place-items: center; min-height: 260px; margin: 0; }
 
 .busy {
   position: absolute; inset: 0; display: grid; place-items: center;
@@ -132,49 +47,51 @@
 .tooltipName { flex: 1; min-width: 0; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tooltipValue { font-weight: 650; color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
-/* ---------- per-sensor stats ---------- */
+/* ---------- sensors ---------- */
 
-.stats { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); }
-.stat {
-  padding: 14px 16px; min-width: 0;
-  background-color: var(--surface);
-  background-image: linear-gradient(180deg, color-mix(in srgb, var(--chip) 11%, transparent), transparent 75%);
-  border: 1px solid var(--border); border-radius: var(--radius-md);
+.pickHead {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 4px 2px -2px; font-size: 13.5px; color: var(--muted);
+}
+
+.sensors { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.sensor {
+  display: flex; flex-direction: column; gap: 5px; min-width: 0;
+  padding: 12px 14px 10px; text-align: left; cursor: pointer;
+  background: var(--surface); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 16px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s, opacity 0.15s;
+}
+.sensor:active { transform: scale(0.98); }
+.sensor:not(.sensorOn) { background: transparent; border-style: dashed; border-color: var(--border-strong); }
+.sensorOn {
+  color: var(--text);
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--chip) 12%, transparent), transparent 80%);
+  border-color: color-mix(in srgb, var(--chip) 45%, var(--border));
   box-shadow: var(--shadow-sm);
-  display: flex; flex-direction: column; gap: 8px;
-  animation: fadeUp 0.3s ease both;
 }
-.statName {
-  display: flex; align-items: center; gap: 6px; min-width: 0;
-}
-.statNameText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.statValue { font-size: 24px; color: var(--text); white-space: nowrap; }
-.statRange { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
-.statRange b { color: var(--muted); font-weight: 600; }
+.sensorName { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.sensor:not(.sensorOn) .sensorName { color: var(--muted); }
+.sensorNameText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sensorValue { font-size: 24px; font-weight: 650; letter-spacing: -0.04em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.sensorRange { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* ---------- responsive ---------- */
+.dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+.dashSwatch { flex: none; display: block; }
 
-@media (max-width: 900px) {
-  .layout { grid-template-columns: minmax(0, 1fr); }
-  .picker { position: static; }
-  .list { max-height: 300px; }
+@media (min-width: 640px) {
+  .sensors { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
 }
 
-@media (max-width: 640px) {
-  .headerControls { width: 100%; flex-wrap: nowrap; }
-  .periods { flex: 1; min-width: 0; }
-  .periods > .periodBtn { flex: 1; padding: 5px 4px; font-size: 12px; }
-  .reloadLabel { display: none; }
-  .kpis { gap: 10px; }
-  .kpi { padding: 12px; gap: 8px; }
-  .kpiIcon { display: none; }
-  .kpiValue { font-size: 20px; }
-  .kpiUnit { font-size: 12px; margin-left: 2px; }
-  .chartCard { padding: 14px 12px; }
-  .chartSkeleton { height: 260px; }
-  .chartEmpty { min-height: 260px; }
-  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .statValue { font-size: 20px; }
+@media (min-width: 900px) {
+  .tab { gap: 16px; }
+  .bar { justify-content: space-between; }
+  .periods { flex: 0 1 auto; }
+  .periods > button { padding: 5px 16px; }
+  .chartCard { padding: 20px; }
+  .chartSkeleton { height: 380px; }
+  .chartEmpty { min-height: 380px; }
 }
 
 /* Local copies of the global keyframes: CSS modules scope animation names to this file. */

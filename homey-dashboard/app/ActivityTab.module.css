@@ -1,0 +1,23 @@
+/* Live activity tab. */
+
+.wrap { display: flex; flex-direction: column; gap: 4px; max-width: 760px; }
+.day { margin: 14px 2px 8px; font-size: 14px; font-weight: 650; color: var(--text-2); }
+
+.timeline { position: relative; padding: 8px 20px; }
+/* connector from each icon down to the next one (none after the last) */
+.tlItem:not(:last-child)::before {
+  content: ''; position: absolute; left: 12px; top: 36px; bottom: -10px; width: 2px;
+  background: var(--divider); border-radius: 2px;
+}
+.tlItem { position: relative; display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; }
+.tlIconWrap {
+  position: relative; z-index: 1; flex-shrink: 0; border-radius: 50%;
+  background: var(--surface-solid); box-shadow: 0 0 0 3px var(--surface-solid);
+}
+.tlIcon { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; }
+.tlBody { flex: 1; min-width: 0; font-size: 13px; line-height: 1.45; padding-top: 3px; color: var(--text); overflow-wrap: anywhere; }
+.tlRoom { color: var(--muted); }
+.tlSub { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; font-size: 12px; color: var(--muted); }
+.tlCap { font-family: ui-monospace, SFMono-Regular, 'Cascadia Code', Menlo, Consolas, monospace; font-size: 11.5px; }
+.tlExcerpt { color: var(--text-2); margin-top: 2px; }
+.tlTime { font-size: 11.5px; color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; padding-top: 4px; }

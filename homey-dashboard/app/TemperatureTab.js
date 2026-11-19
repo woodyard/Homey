@@ -1,18 +1,18 @@
 'use client';
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import {
-  LoaderCircle, MapPin, RefreshCw, Search, Thermometer, ThermometerSnowflake, ThermometerSun,
-  TriangleAlert, CheckCheck, X,
-} from 'lucide-react';
+// Temperatures: every temperature sensor's history on one chart. The sensor cards under the
+// chart are the legend and the picker in one: tap a card to show or hide its line.
+
+import { LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
 import styles from './TemperatureTab.module.css';
 
 const PERIODS = [
-  ['last6Hours', '6 timer'],
-  ['last24Hours', '24 timer'],
-  ['last7Days', '7 dage'],
-  ['last14Days', '14 dage'],
-  ['last31Days', '31 dage'],
+  ['last6Hours', '6 h'],
+  ['last24Hours', '24 h'],
+  ['last7Days', '7 d'],
+  ['last14Days', '14 d'],
+  ['last31Days', '31 d'],
 ];
 const PERIOD_KEY = 'homey-temperature-period-v1';
 const SELECTED_KEY = 'homey-temperature-sensors-v1';
@@ -33,15 +33,11 @@ function sensorDash(index) {
 
 function shortZone(zone) {
   const parts = String(zone || '').split(' > ');
-  return parts[parts.length - 1] || 'Uden rum';
+  return parts[parts.length - 1] || 'No room';
 }
 
 function fmtTemp(value) {
-  return typeof value === 'number' ? `${value.toLocaleString('da-DK', { maximumFractionDigits: 1 })} °C` : '—';
-}
-
-function fmtNum(value) {
-  return typeof value === 'number' ? value.toLocaleString('da-DK', { maximumFractionDigits: 1 }) : '—';
+  return typeof value === 'number' ? `${value.toFixed(1)}°` : '—';
 }
 
 function closestEntry(entries, targetMs) {
@@ -70,23 +66,6 @@ function SensorSwatch({ color, dash, off }) {
     <svg className={styles.dashSwatch} width="16" height="8" viewBox="0 0 16 8" aria-hidden="true">
       <line x1="1" x2="15" y1="4" y2="4" style={{ stroke: c }} strokeWidth="2.5" strokeDasharray={scaled} />
     </svg>
-  );
-}
-
-function Kpi({ label, icon: Icon, tone, value, unit }) {
-  return (
-    <div className={`hd-card ${styles.kpi}`}>
-      <div className={styles.kpiHead}>
-        <span className="hd-eyebrow">{label}</span>
-        <span className={styles.kpiIcon} style={{ background: `var(--${tone}-soft)`, color: `var(--${tone})` }}>
-          <Icon size={15} strokeWidth={2} />
-        </span>
-      </div>
-      <div className={`hd-big-num ${styles.kpiValue}`}>
-        {value}
-        {unit ? <span className={styles.kpiUnit}>{unit}</span> : null}
-      </div>
-    </div>
   );
 }
 
@@ -150,9 +129,9 @@ function TemperatureChart({ sensors, series, period, loading }) {
 
   function xLabel(ms) {
     const date = new Date(ms);
-    if (period === 'last6Hours') return date.toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' });
-    if (period === 'last24Hours') return date.toLocaleString('da-DK', { weekday: 'short', hour: '2-digit' });
-    return date.toLocaleDateString('da-DK', { day: 'numeric', month: 'short' });
+    if (period === 'last6Hours') return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    if (period === 'last24Hours') return date.toLocaleString('en-GB', { weekday: 'short', hour: '2-digit' });
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   }
 
   function onMove(event) {
@@ -176,17 +155,17 @@ function TemperatureChart({ sensors, series, period, loading }) {
         <div className={`hd-skeleton ${styles.chartSkeleton}`}>
           <span className={styles.chartSkeletonLabel}>
             <LoaderCircle size={14} className={styles.spin} />
-            Henter temperaturmålinger…
+            Loading history…
           </span>
         </div>
       )}
       {chart.empty && !loading && (
-        <div className={`hd-empty ${styles.chartEmpty}`}>Vælg mindst én måler med tilgængelige data.</div>
+        <div className={`hd-empty ${styles.chartEmpty}`}>No sensor selected.</div>
       )}
       {!chart.empty && (
         <svg
           viewBox={`0 0 ${W} ${H}`} role="img"
-          aria-label={`Temperaturmålinger for ${sensors.length} valgte målere`}
+          aria-label={`Temperature history for ${sensors.length} sensors`}
           onMouseMove={onMove} onMouseLeave={() => setHover(null)}
         >
           {chart.paths.length === 1 && (
@@ -253,14 +232,14 @@ function TemperatureChart({ sensors, series, period, loading }) {
         <div className={styles.busy}>
           <span className={styles.chartSkeletonLabel}>
             <LoaderCircle size={14} className={styles.spin} />
-            Opdaterer…
+            Updating…
           </span>
         </div>
       )}
       {!chart.empty && hover && (
         <div className={styles.tooltip} style={tooltipStyle}>
           <span className={styles.tooltipTime}>
-            {new Date(hover.ms).toLocaleString('da-DK', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+            {new Date(hover.ms).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
           </span>
           {hover.values.map(({ sensor, entry }) => (
             <span key={sensor.key} className={styles.tooltipRow}>
@@ -280,7 +259,6 @@ export default function TemperatureTab() {
   const [selected, setSelected] = useState([]);
   const [series, setSeries] = useState([]);
   const [period, setPeriod] = useState('last7Days');
-  const [search, setSearch] = useState('');
   const [loadingSensors, setLoadingSensors] = useState(true);
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState('');
@@ -294,7 +272,7 @@ export default function TemperatureTab() {
     fetch('/api/homey/temperatures')
       .then(async (response) => {
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Kunne ikke hente temperaturmålere');
+        if (!response.ok) throw new Error(data.error || 'Could not load the temperature sensors');
         if (cancelled) return;
         setSensors(data.sensors || []);
         const savedRaw = window.localStorage.getItem(SELECTED_KEY);
@@ -327,7 +305,7 @@ export default function TemperatureTab() {
         const params = new URLSearchParams({ period, ids: selected.join(',') });
         const response = await fetch(`/api/homey/temperatures?${params}`, { signal: controller.signal });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Kunne ikke hente temperaturdata');
+        if (!response.ok) throw new Error(data.error || 'Could not load the temperature history');
         setSeries(data.series || []);
       } catch (e) {
         if (e.name !== 'AbortError') setError(String(e.message || e));
@@ -345,25 +323,7 @@ export default function TemperatureTab() {
     () => sensors.map((sensor, i) => ({ ...sensor, color: sensorColor(i), dash: sensorDash(i) })),
     [sensors],
   );
-  const visibleSensors = useMemo(() => {
-    const term = search.trim().toLocaleLowerCase('da-DK');
-    if (!term) return coloredSensors;
-    return coloredSensors.filter((sensor) => `${sensor.name} ${sensor.zone}`.toLocaleLowerCase('da-DK').includes(term));
-  }, [coloredSensors, search]);
-  // The API sorts sensors by zone, so consecutive runs of one zone form a room group.
-  const visibleGroups = useMemo(() => {
-    const groups = [];
-    visibleSensors.forEach((sensor) => {
-      const last = groups[groups.length - 1];
-      if (last && last.zone === sensor.zone) last.sensors.push(sensor);
-      else groups.push({ zone: sensor.zone, sensors: [sensor] });
-    });
-    return groups;
-  }, [visibleSensors]);
   const activeSensors = useMemo(() => coloredSensors.filter((sensor) => selectedSet.has(sensor.key)), [coloredSensors, selectedSet]);
-  const allEntries = useMemo(() => series.flatMap((item) => item.entries || []), [series]);
-  const min = allEntries.length ? Math.min(...allEntries.map((entry) => entry.v)) : null;
-  const max = allEntries.length ? Math.max(...allEntries.map((entry) => entry.v)) : null;
   // Per-sensor min / max / newest sample over the loaded period, for the stat cards.
   const statsByKey = useMemo(() => {
     const map = new Map();
@@ -389,41 +349,25 @@ export default function TemperatureTab() {
     setSelected((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
   }
 
+  const allSelected = sensors.length > 0 && selected.length === sensors.length;
+
   return (
     <section className={styles.tab}>
-      <header className={styles.header}>
-        <div className={styles.headingBlock}>
-          <h2 className="hd-section-title" style={{ margin: 0 }}>
-            <span className={styles.headingIcon}><Thermometer size={15} strokeWidth={2} /></span>
-            Temperaturudvikling
-          </h2>
-          <span className={`hd-faint ${styles.status}`}>
-            {loadingData
-              ? (<><LoaderCircle size={12} className={styles.spin} />Opdaterer…</>)
-              : `${allEntries.length.toLocaleString('da-DK')} målepunkter`}
-          </span>
+      <div className={styles.bar}>
+        <div className={`hd-seg ${styles.periods}`} role="group" aria-label="Period">
+          {PERIODS.map(([value, label]) => (
+            <button key={value} type="button" aria-pressed={period === value} onClick={() => setPeriod(value)}>
+              {label}
+            </button>
+          ))}
         </div>
-        <div className={styles.headerControls}>
-          <div className={`hd-seg ${styles.periods}`} role="group" aria-label="Periode">
-            {PERIODS.map(([value, label]) => (
-              <button
-                key={value} type="button" className={styles.periodBtn}
-                aria-pressed={period === value} onClick={() => setPeriod(value)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button" className={`hd-btn hd-btn-sm ${styles.reloadBtn}`}
-            onClick={() => setReloadKey((value) => value + 1)} disabled={loadingData}
-            aria-label="Opdater" title="Opdater"
-          >
-            <RefreshCw size={14} strokeWidth={2} className={loadingData ? styles.spin : undefined} />
-            <span className={styles.reloadLabel}>Opdater</span>
-          </button>
-        </div>
-      </header>
+        <button
+          type="button" className="hd-icon-btn" onClick={() => setReloadKey((value) => value + 1)}
+          disabled={loadingData} aria-label="Refresh" title="Refresh"
+        >
+          <RefreshCw size={17} strokeWidth={2} className={loadingData ? styles.spin : undefined} />
+        </button>
+      </div>
 
       {error && (
         <div className="hd-error" role="alert" style={{ margin: 0 }}>
@@ -432,106 +376,44 @@ export default function TemperatureTab() {
         </div>
       )}
 
-      <div className={styles.layout}>
-        <aside className={`hd-card ${styles.picker}`}>
-          <div className={styles.pickerHead}>
-            <span className="hd-eyebrow">Målere</span>
-            <span className="hd-faint hd-num" style={{ fontSize: 12 }}>{selected.length} / {sensors.length} valgt</span>
-          </div>
-          <div className={styles.searchWrap}>
-            <Search size={15} strokeWidth={2} className={styles.searchIcon} />
-            <input
-              className={`hd-input ${styles.search}`} style={{ paddingLeft: 34 }}
-              value={search} onChange={(e) => setSearch(e.target.value)}
-              placeholder="Søg efter måler eller rum…" aria-label="Søg efter måler eller rum"
-            />
-          </div>
-          <div className={styles.actions}>
-            <button type="button" className="hd-btn hd-btn-ghost hd-btn-sm" onClick={() => setSelected(sensors.map((sensor) => sensor.key))}>
-              <CheckCheck size={14} strokeWidth={2} />Vælg alle
-            </button>
-            <button type="button" className="hd-btn hd-btn-ghost hd-btn-sm" onClick={() => setSelected([])}>
-              <X size={14} strokeWidth={2} />Fravælg alle
-            </button>
-          </div>
-          <div className={styles.list} aria-label="Temperaturmålere">
-            {loadingSensors && (
-              <span className={styles.loadingNote}>
-                <LoaderCircle size={14} className={styles.spin} />
-                Finder temperaturmålere…
-              </span>
-            )}
-            {!loadingSensors && sensors.length > 0 && !visibleSensors.length && (
-              <span className="hd-faint" style={{ fontSize: 12.5 }}>Ingen målere matcher søgningen.</span>
-            )}
-            {visibleGroups.map((group, index) => (
-              <div className={styles.group} key={`${group.zone}-${index}`}>
-                <span className={`hd-eyebrow ${styles.groupLabel}`} title={group.zone || 'Uden rum'}>
-                  <MapPin size={11} strokeWidth={2.2} />
-                  {shortZone(group.zone)}
-                </span>
-                <div className={styles.chips}>
-                  {group.sensors.map((sensor) => {
-                    const checked = selectedSet.has(sensor.key);
-                    return (
-                      <button
-                        key={sensor.key} type="button" aria-pressed={checked}
-                        className={`${styles.chip} ${checked ? styles.chipOn : ''}`}
-                        style={{ '--chip': sensor.color }}
-                        title={`${sensor.name} · ${shortZone(sensor.zone)}`}
-                        onClick={() => toggle(sensor.key)}
-                      >
-                        <SensorSwatch color={sensor.color} dash={sensor.dash} off={!checked} />
-                        <span className={styles.chipName}>{sensor.name}</span>
-                        <span className={styles.chipValue}>{fmtTemp(sensor.latest)}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </aside>
+      <div className={`hd-card ${styles.chartCard}`}>
+        <TemperatureChart sensors={activeSensors} series={series} period={period} loading={loadingData || loadingSensors} />
+      </div>
 
-        <div className={styles.main}>
-          <div className={styles.kpis}>
-            <Kpi label="Valgte målere" icon={Thermometer} tone="accent" value={selected.length} unit={`/ ${sensors.length}`} />
-            <Kpi label="Laveste" icon={ThermometerSnowflake} tone="cool" value={fmtNum(min)} unit={min === null ? '' : '°C'} />
-            <Kpi label="Højeste" icon={ThermometerSun} tone="heat" value={fmtNum(max)} unit={max === null ? '' : '°C'} />
-          </div>
-
-          <div className={`hd-card ${styles.chartCard}`}>
-            <TemperatureChart sensors={activeSensors} series={series} period={period} loading={loadingData} />
-          </div>
-
-          {activeSensors.length > 0 && (
-            <div className={styles.stats}>
-              {activeSensors.map((sensor) => {
-                const stat = statsByKey.get(sensor.key);
-                const latest = typeof sensor.latest === 'number' ? sensor.latest : (stat ? stat.last : null);
-                return (
-                  <div
-                    key={sensor.key} className={styles.stat} style={{ '--chip': sensor.color }}
-                    title={`${sensor.name} · ${sensor.zone || 'Uden rum'}`}
-                  >
-                    <span className={`hd-eyebrow ${styles.statName}`}>
-                      <SensorSwatch color={sensor.color} dash={sensor.dash} />
-                      <span className={styles.statNameText}>{sensor.name}</span>
-                    </span>
-                    <span className={`hd-big-num ${styles.statValue}`}>
-                      {fmtNum(latest)}
-                      {typeof latest === 'number' ? <span className={styles.kpiUnit}>°C</span> : null}
-                    </span>
-                    <span className={styles.statRange}>
-                      <span>min <b>{fmtTemp(stat ? stat.min : null)}</b></span>
-                      <span>maks <b>{fmtTemp(stat ? stat.max : null)}</b></span>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+      {sensors.length > 0 && (
+        <div className={styles.pickHead}>
+          <span className="hd-num">{selected.length} of {sensors.length} shown</span>
+          <button
+            type="button" className="hd-btn hd-btn-ghost hd-btn-sm"
+            onClick={() => setSelected(allSelected ? [] : sensors.map((sensor) => sensor.key))}
+          >
+            {allSelected ? 'Hide all' : 'Show all'}
+          </button>
         </div>
+      )}
+
+      <div className={styles.sensors}>
+        {coloredSensors.map((sensor) => {
+          const checked = selectedSet.has(sensor.key);
+          const stat = statsByKey.get(sensor.key);
+          const latest = typeof sensor.latest === 'number' ? sensor.latest : (stat ? stat.last : null);
+          return (
+            <button
+              key={sensor.key} type="button" aria-pressed={checked} title={`${sensor.name} · ${shortZone(sensor.zone)}`}
+              className={`${styles.sensor} ${checked ? styles.sensorOn : ''}`}
+              style={{ '--chip': sensor.color }} onClick={() => toggle(sensor.key)}
+            >
+              <span className={styles.sensorName}>
+                <SensorSwatch color={sensor.color} dash={sensor.dash} off={!checked} />
+                <span className={styles.sensorNameText}>{sensor.name}</span>
+              </span>
+              <span className={styles.sensorValue}>{fmtTemp(latest)}</span>
+              <span className={styles.sensorRange}>
+                {checked && stat ? `${fmtTemp(stat.min)} – ${fmtTemp(stat.max)}` : shortZone(sensor.zone)}
+              </span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
