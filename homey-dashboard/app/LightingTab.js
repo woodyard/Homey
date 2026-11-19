@@ -5,9 +5,9 @@
 // Rooms whose Daytime colour follows the sun show that curve on the strip. Lights the script
 // does not manage are shown too, in their room: other bulbs, and plugs whose type is set to
 // Light in Homey. Each light can be switched and adjusted; on a room with a light in Manual, the Manual badge is a button that
-// runs the room's light-reset flow and so returns it to Auto. Under the room's name: someone is
-// there, or how long it has been empty and — where the flows' timing is known — a countdown with a
-// bar to when the lights dim or switch off (lib/emptyRoom.js).
+// runs the room's light-reset flow and so returns it to Auto. At the bottom of the card, as on
+// Varme: someone is there, or how long it has been empty and — where the flows' timing is known —
+// a countdown with a bar to when the lights dim or switch off (lib/emptyRoom.js).
 
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -226,8 +226,8 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
             return (
               <div key={`plain:${zonePath}`} className="hd-card hd-card-pad">
                 <div className={styles.areaHead}><h3 className="hd-title">{area}</h3></div>
-                {occupancy}
                 <div className={cx(styles.members, styles.membersPlain)}>{extraTiles}</div>
+                {occupancy}
               </div>
             );
           }
@@ -264,7 +264,6 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
                   </select>
                 </label>
               )}
-              {occupancy}
               <ScheduleStrip profiles={chartProfiles} sun={sun} nowMin={nowMin} followsSun={repSun} />
               <div className={styles.members}>
                 {members.map((m, i) => {
@@ -282,6 +281,7 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
                 })}
                 {extraTiles}
               </div>
+              {occupancy}
             </div>
           );
         })}
@@ -290,7 +290,7 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
   );
 }
 
-// Under the room's name: someone is there (as on Varme), or how long it has been empty and,
+// At the bottom of the card: someone is there (as on Varme), or how long it has been empty and,
 // while its lights are on and the flows' timing is known, the time left until they dim or
 // switch off, with a bar. Nothing for a room without a motion sensor.
 function Occupancy({ devices, zones, zonePath, vars, nowMin, code, lightsOn, dimmed }) {

@@ -317,7 +317,11 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
 
   function roomData(room) {
     const zoneDevs = (devices || []).filter((d) => roomNameFromPath(d.zonePath) === room.zone);
-    const motionDevs = zoneDevs.filter((d) => 'alarm_motion' in d.capabilities);
+    // Motion in the zone or its child zones, as Homey's zone activity and the windows count it:
+    // Stue / Spisestue's sensor sits in its child zone Stue
+    const motionDevs = (devices || []).filter((d) => (
+      'alarm_motion' in (d.capabilities || {}) && (d.zonePath || '').split(' > ').includes(room.zone)
+    ));
     const hasMotion = motionDevs.length > 0;
     const motionNow = motionDevs.some((d) => !!d.capabilities.alarm_motion);
     const zoneId = zoneDevs[0] ? zoneDevs[0].zoneId : null;

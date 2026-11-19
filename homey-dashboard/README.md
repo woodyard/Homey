@@ -125,6 +125,11 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.6.3** (2026-11-19) — Varme: Stue shows "Der er nogen i rummet" / "Ingen bevægelse i …" again.
+  The heating room is the zone Stue / Spisestue and its motion sensor sits in the child zone Stue;
+  motion sensors are now found in child zones too, as the windows already were.
+- **2.6.2** (2026-11-19) — Lys: the presence / no-motion line and its countdown bar sit at the
+  bottom of the room card, below the lights, as on Varme.
 - **2.6.1** (2026-11-19) — Lys: under a room's name, the same lines as on Varme (now shared
   components): "Der er nogen i rummet" while a motion sensor in the lights' zone sees movement,
   else "Ingen bevægelse i 1:15". While the lights are on and the flows' timing is known, the line

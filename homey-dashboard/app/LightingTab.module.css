@@ -20,9 +20,9 @@
 .modeBtn:hover:not(:disabled) { background: color-mix(in srgb, var(--warn) 24%, transparent); }
 .modeBtn:active:not(:disabled) { transform: scale(0.96); }
 .modeBtn:disabled { opacity: 0.6; cursor: default; }
-/* Under the room's name: someone there, or empty for how long and the countdown to dim/off */
-.presence { display: flex; margin: -6px 0 12px; }
-.occupancy { display: grid; gap: 7px; margin: -6px 0 12px; }
+/* At the bottom of the card, as on Varme: someone there, or empty for how long and the countdown to dim/off */
+.presence { display: flex; margin-top: 14px; }
+.occupancy { display: grid; gap: 7px; margin-top: 14px; }
 .flowPick { display: flex; align-items: center; gap: 10px; margin: -4px 0 14px; font-size: 13px; color: var(--muted); }
 .flowPick select { flex: 1; min-width: 0; }
 
