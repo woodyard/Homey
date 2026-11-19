@@ -125,6 +125,12 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.2.0** (2026-11-19) — The dashboard is in Danish: tabs (Varme, Lys, Vejr, Temperaturer,
+  Aktivitet), buttons, the heating explanations, weather, dates and the script's slot names (Evening
+  → Aften). The script detail in a light's tooltip stays in English. Fixed: choosing a colour for a
+  bulb did nothing. The server only forwarded a fixed list of settings to Homey, and hue and
+  saturation were not on it, so they were dropped without a word. They are forwarded now, and a
+  setting that is not supported comes back as an error.
 - **2.1.1** (2026-11-19) — A light in Manual shows the hand Heating uses for a manual target, in
   place of the word.
 - **2.1.0** (2026-11-19) — The Rooms tab is gone; Lighting takes over its lights. Heating and

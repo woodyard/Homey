@@ -12,16 +12,16 @@ import { cx, clamp, ErrorBox, SPIN } from './ui';
 import styles from './WeatherTab.module.css';
 
 const WMO = {
-  0: ['☀️', 'Clear sky'], 1: ['🌤️', 'Mainly clear'], 2: ['⛅', 'Partly cloudy'], 3: ['☁️', 'Overcast'],
-  45: ['🌫️', 'Fog'], 48: ['🌫️', 'Rime fog'],
-  51: ['🌦️', 'Light drizzle'], 53: ['🌦️', 'Drizzle'], 55: ['🌦️', 'Dense drizzle'],
-  56: ['🌧️', 'Freezing drizzle'], 57: ['🌧️', 'Freezing drizzle'],
-  61: ['🌦️', 'Light rain'], 63: ['🌧️', 'Rain'], 65: ['🌧️', 'Heavy rain'],
-  66: ['🌧️', 'Freezing rain'], 67: ['🌧️', 'Freezing rain'],
-  71: ['🌨️', 'Light snow'], 73: ['🌨️', 'Snow'], 75: ['❄️', 'Heavy snow'], 77: ['🌨️', 'Snow grains'],
-  80: ['🌦️', 'Rain showers'], 81: ['🌧️', 'Rain showers'], 82: ['⛈️', 'Violent showers'],
-  85: ['🌨️', 'Snow showers'], 86: ['❄️', 'Snow showers'],
-  95: ['⛈️', 'Thunderstorm'], 96: ['⛈️', 'Thunderstorm, hail'], 99: ['⛈️', 'Thunderstorm, hail'],
+  0: ['☀️', 'Klart'], 1: ['🌤️', 'Mest klart'], 2: ['⛅', 'Let skyet'], 3: ['☁️', 'Overskyet'],
+  45: ['🌫️', 'Tåge'], 48: ['🌫️', 'Rimtåge'],
+  51: ['🌦️', 'Let støvregn'], 53: ['🌦️', 'Støvregn'], 55: ['🌦️', 'Tæt støvregn'],
+  56: ['🌧️', 'Isslag'], 57: ['🌧️', 'Isslag'],
+  61: ['🌦️', 'Let regn'], 63: ['🌧️', 'Regn'], 65: ['🌧️', 'Kraftig regn'],
+  66: ['🌧️', 'Isslag'], 67: ['🌧️', 'Isslag'],
+  71: ['🌨️', 'Let sne'], 73: ['🌨️', 'Sne'], 75: ['❄️', 'Kraftig sne'], 77: ['🌨️', 'Kornsne'],
+  80: ['🌦️', 'Regnbyger'], 81: ['🌧️', 'Regnbyger'], 82: ['⛈️', 'Skybrud'],
+  85: ['🌨️', 'Snebyger'], 86: ['❄️', 'Snebyger'],
+  95: ['⛈️', 'Torden'], 96: ['⛈️', 'Torden med hagl'], 99: ['⛈️', 'Torden med hagl'],
 };
 const wmo = (code) => WMO[code] || ['❓', '—'];
 // Clear / mainly clear at night shows a moon, partly cloudy a plain cloud (no sun after dark).
@@ -30,10 +30,12 @@ const timeOnly = (iso) => { const m = String(iso).match(/T(\d{2}:\d{2})/); retur
 const hourLabel = (iso) => { const m = String(iso).match(/T(\d{2})/); return m ? m[1] : iso; };
 function dayLabel(iso) {
   const [y, mo, da] = String(iso).slice(0, 10).split('-').map(Number);
-  return new Date(y, mo - 1, da).toLocaleDateString('en-US', { weekday: 'short' });
+  // "man." → "Man"
+  const day = new Date(y, mo - 1, da).toLocaleDateString('da-DK', { weekday: 'short' }).replace('.', '');
+  return day.charAt(0).toUpperCase() + day.slice(1);
 }
 function windDir(deg) {
-  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const dirs = ['N', 'NØ', 'Ø', 'SØ', 'S', 'SV', 'V', 'NV'];
   return dirs[Math.round(((deg || 0) % 360) / 45) % 8];
 }
 
@@ -155,7 +157,7 @@ function PopCell({ pop }) {
   if (pop == null) return <span className={styles.pop} />;
   if (pop <= 0) return <span className={cx(styles.pop, styles.popZero)}>{pop}%</span>;
   return (
-    <span className={styles.pop} title={`${pop}% chance of precipitation`}>
+    <span className={styles.pop} title={`${pop}% risiko for nedbør`}>
       {pop}%
       <span className={styles.popBar}><span style={{ width: `${clamp(pop, 0, 100)}%` }} /></span>
     </span>
@@ -175,7 +177,7 @@ export default function WeatherTab() {
       const qs = coords ? `?lat=${coords.lat}&lon=${coords.lon}` : '';
       const r = await fetch(`/api/weather${qs}`);
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'failed to load weather');
+      if (!r.ok) throw new Error(j.error || 'Kunne ikke hente vejret');
       setData(j); setErr('');
     } catch (e) { setErr(String(e.message || e)); }
   }
@@ -234,7 +236,7 @@ export default function WeatherTab() {
     return (
       <div>
         <div className="hd-skeleton" style={{ height: 300, borderRadius: 24 }} />
-        <div className={styles.updated}>Loading weather…</div>
+        <div className={styles.updated}>Henter vejret…</div>
       </div>
     );
   }
@@ -263,9 +265,9 @@ export default function WeatherTab() {
   const windDeg = cur.wind_direction_10m || 0;
 
   const stats = [
-    { Icon: Droplets, label: 'Humidity', value: `${cur.relative_humidity_2m}%` },
+    { Icon: Droplets, label: 'Luftfugtighed', value: `${cur.relative_humidity_2m}%` },
     {
-      Icon: Wind, label: 'Wind', title: `Wind from ${windDir(cur.wind_direction_10m)} (${Math.round(windDeg)}°)`,
+      Icon: Wind, label: 'Vind', title: `Vind fra ${windDir(cur.wind_direction_10m)} (${Math.round(windDeg)}°)`,
       value: (
         <>
           <ArrowUp size={15} strokeWidth={2.6} style={{ transform: `rotate(${windDeg + 180}deg)`, flexShrink: 0 }} />
@@ -274,8 +276,8 @@ export default function WeatherTab() {
         </>
       ),
     },
-    { Icon: Umbrella, label: 'Precipitation', value: <>{cur.precipitation}<span className={styles.statUnit}>mm</span></> },
-    { Icon: Sunrise, label: 'Daylight', title: 'Sunrise and sunset', value: `${timeOnly(daily.sunrise[0])}–${timeOnly(daily.sunset[0])}` },
+    { Icon: Umbrella, label: 'Nedbør', value: <>{cur.precipitation}<span className={styles.statUnit}>mm</span></> },
+    { Icon: Sunrise, label: 'Dagslys', title: 'Solopgang og solnedgang', value: `${timeOnly(daily.sunrise[0])}–${timeOnly(daily.sunset[0])}` },
   ];
 
   const weekMin = Math.min(...daily.temperature_2m_min);
@@ -287,7 +289,7 @@ export default function WeatherTab() {
       <div className={styles.locBar}>
         <button
           type="button" className="hd-icon-btn" onClick={detect} disabled={locating}
-          aria-label="Use my location" title="Use my location"
+          aria-label="Brug min placering" title="Brug min placering"
         >
           {locating ? <LoaderCircle size={17} style={SPIN} /> : <LocateFixed size={17} />}
         </button>
@@ -296,10 +298,10 @@ export default function WeatherTab() {
             <Search size={16} className={styles.searchIcon} />
             <input
               className="hd-input" value={q} onChange={(e) => setQ(e.target.value)} enterKeyHint="search"
-              placeholder="Search city" aria-label="Search city"
+              placeholder="Søg by" aria-label="Søg by"
             />
             {(q || results.length > 0) && (
-              <button type="button" className={styles.searchClear} aria-label="Clear search" onClick={() => { setQ(''); setResults([]); }}>
+              <button type="button" className={styles.searchClear} aria-label="Ryd søgning" onClick={() => { setQ(''); setResults([]); }}>
                 <X size={16} />
               </button>
             )}
@@ -324,14 +326,14 @@ export default function WeatherTab() {
             <div className={styles.heroCond}>{curDesc}</div>
             <div className={styles.heroTemp}>{Math.round(avgT)}°</div>
             <div className={styles.heroMeta}>
-              Feels like {Math.round(cur.apparent_temperature)}° · H: {Math.round(todayMax)}° L: {Math.round(todayMin)}°
+              Føles som {Math.round(cur.apparent_temperature)}° · Maks {Math.round(todayMax)}° · Min {Math.round(todayMin)}°
             </div>
             {bothT && (
               <div className={styles.heroSources}>
                 <span className={styles.glassChip}>
                   {diffT <= 1
-                    ? <><Check size={12} strokeWidth={3} /> Sources agree</>
-                    : <><TriangleAlert size={12} /> Differ {diffT.toFixed(1)}°</>}
+                    ? <><Check size={12} strokeWidth={3} /> Kilderne er enige</>
+                    : <><TriangleAlert size={12} /> Afviger {diffT.toFixed(1)}°</>}
                 </span>
                 <span className={styles.heroSourcesText}>
                   Open-Meteo {Math.round(omT)}° {heroIcon} · YR {Math.round(yrT)}° {yrIcon(yr.current.symbol)}
@@ -351,10 +353,10 @@ export default function WeatherTab() {
         </div>
       </section>
       <div className={styles.updated}>
-        Updated {timeOnly(cur.time)} · Open-Meteo &amp; MET Norway (YR)
+        Opdateret {timeOnly(cur.time)} · Open-Meteo &amp; MET Norway (YR)
       </div>
 
-      <h3 className="hd-section-title">Next 24 hours</h3>
+      <h3 className="hd-section-title">De næste 24 timer</h3>
       <div className={cx('hd-card', styles.hourlyCard)}>
         <div className={styles.hourlyScroll}>
           <div className={styles.hourlyInner} style={{ width: hours.length * HOUR_W }}>
@@ -363,7 +365,7 @@ export default function WeatherTab() {
               {hours.map((h, i) => (
                 <div key={i} className={styles.hourCol}>
                   <span className={cx(styles.hourLabel, i === 0 && styles.hourNow)} title={`${hourLabel(h.time)}:00`}>
-                    {i === 0 ? 'Now' : hourLabel(h.time)}
+                    {i === 0 ? 'Nu' : hourLabel(h.time)}
                   </span>
                   <span className={styles.hourEmoji} title={wmo(h.code)[1]}>{wmoGlyph(h.code, h.isDay)}</span>
                   <PopCell pop={h.pop} />
@@ -374,7 +376,7 @@ export default function WeatherTab() {
         </div>
       </div>
 
-      <h3 className="hd-section-title">Next 7 days</h3>
+      <h3 className="hd-section-title">De næste 7 dage</h3>
       <div className={cx('hd-card', styles.dayList)}>
         {daily.time.map((d, i) => {
           const [icon, desc] = wmo(daily.weather_code[i]);
@@ -387,12 +389,12 @@ export default function WeatherTab() {
           return (
             <div key={i} className={styles.dayRow}>
               <span className={styles.dayNameWrap}>
-                <span className={cx(styles.dayName, i === 0 && styles.dayToday)}>{i === 0 ? 'Today' : dayLabel(d)}</span>
+                <span className={cx(styles.dayName, i === 0 && styles.dayToday)}>{i === 0 ? 'I dag' : dayLabel(d)}</span>
                 <span className={styles.daySub}>{desc}</span>
               </span>
               <span className={styles.dayEmoji} title={desc}>{icon}</span>
               <span className={styles.dayDesc}>{desc}</span>
-              <span className={cx(styles.dayRain, !(pop > 0) && styles.dayRainZero)} title={pop != null ? `${pop}% chance of precipitation` : undefined}>
+              <span className={cx(styles.dayRain, !(pop > 0) && styles.dayRainZero)} title={pop != null ? `${pop}% risiko for nedbør` : undefined}>
                 {pop != null && (pop > 0 ? <><Droplets size={12} />{pop}%</> : `${pop}%`)}
               </span>
               <span className={styles.dayMin}>{Math.round(lo)}°</span>
@@ -402,7 +404,7 @@ export default function WeatherTab() {
                     className={styles.rangeFill}
                     style={{ left: `${left}%`, width: `${width}%`, background: `linear-gradient(90deg, ${tempTint(lo)}, ${tempTint(hi)})` }}
                   />
-                  {i === 0 && <div className={styles.rangeNow} style={{ left: `${nowPos}%` }} title={`Now ${Math.round(avgT)}°`} />}
+                  {i === 0 && <div className={styles.rangeNow} style={{ left: `${nowPos}%` }} title={`Nu ${Math.round(avgT)}°`} />}
                 </div>
               </div>
               <span className={styles.dayMax}>{Math.round(hi)}°</span>

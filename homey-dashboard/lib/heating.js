@@ -16,10 +16,11 @@ export const HEATING_ROOMS = [
 export const TARGET_MIN = 5;
 export const TARGET_MAX = 25;
 
+// `label` is what the button says; `flow` is the action's word in the Homey flow's name.
 export const HEATING_ACTIONS = [
-  { key: 'boost', label: '🔥 Boost', flow: 'Boost', match: /boost/i },
-  { key: 'pause', label: '⏸ Pause', flow: 'Pause', match: /pause/i },
-  { key: 'reset', label: '↺ Reset', flow: 'Reset', match: /cancel|reset|resume/i },
+  { key: 'boost', label: 'Boost', flow: 'Boost', match: /boost/i },
+  { key: 'pause', label: 'Pause', flow: 'Pause', match: /pause/i },
+  { key: 'reset', label: 'Nulstil', flow: 'Reset', match: /cancel|reset|resume/i },
 ];
 
 export const HM = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };

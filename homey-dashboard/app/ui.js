@@ -42,8 +42,8 @@ export function fmtDuration(secs) {
 
 export function fmtLongDuration(secs) {
   const m = Math.floor(secs / 60);
-  if (m < 60) return `${m}m`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)} t ${m % 60} min`;
 }
 
 export function ErrorBox({ children, style }) {
@@ -84,7 +84,7 @@ export function Toggle({ on, onChange, size, title, disabled, label }) {
   return (
     <button
       type="button" role="switch" aria-checked={on} aria-label={label} aria-disabled={disabled || undefined}
-      title={title || (on ? 'Turn off' : 'Turn on')}
+      title={title || (on ? 'Sluk' : 'Tænd')}
       onClick={(e) => { e.stopPropagation(); if (!disabled) onChange(!on); }}
       className={cx(styles.toggle, size === 'lg' && styles.toggleLg, size === 'sm' && styles.toggleSm, on && styles.toggleOn, disabled && styles.toggleDisabled)}
     >

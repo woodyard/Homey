@@ -15,14 +15,15 @@ import {
   isWeekendScheduleNow, resolveLightMode, describeLightStatus, isIdle, sunColourSamples, SUN_PROFILE,
 } from '../lib/adaptiveLighting';
 import { cx, cmpZonePath, DayStrip, ErrorBox, Pill, SPIN } from './ui';
+import { slotName } from '../lib/heatingState';
 import LightTile from './LightTile';
 import styles from './LightingTab.module.css';
 
 function warmthLabel(t) {
-  if (t >= 0.75) return 'very warm';
-  if (t >= 0.6) return 'warm';
+  if (t >= 0.75) return 'meget varm';
+  if (t >= 0.6) return 'varm';
   if (t >= 0.45) return 'neutral';
-  return 'cool';
+  return 'kold';
 }
 
 // Best-guess a room's reset flow by token overlap with the flow name.
@@ -150,7 +151,7 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
   for (const { members } of areas) for (const m of members) if (isManualish(modeForMember(m))) manualCount += 1;
 
   async function resetRoom(area, flow) {
-    if (!flow) { setErr(`No reset flow selected for ${area}.`); return; }
+    if (!flow) { setErr(`Intet nulstil-flow valgt for ${area}.`); return; }
     setErr('');
     setBusy((prev) => new Set(prev).add(area));
     try {
@@ -159,7 +160,7 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
         body: JSON.stringify({ flowId: flow.id, advanced: flow.type === 'advanced' }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'flow trigger failed');
+      if (!r.ok) throw new Error(data.error || 'Kunne ikke starte flowet');
       setTimeout(() => onReload && onReload(), 1600); // let the flow run, then refresh live state
     } catch (e) {
       setErr(String(e.message || e));
@@ -175,10 +176,10 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
       {err && <ErrorBox>{err}</ErrorBox>}
 
       <div className={styles.alBar}>
-        <Pill><Sunrise size={14} className={styles.amber} /> Sunrise <b className="hd-num">{fmtMinutes(sun.sunriseMinutes)}</b></Pill>
-        <Pill><Sunset size={14} className={styles.amber} /> Sunset <b className="hd-num">{fmtMinutes(sun.sunsetMinutes)}</b></Pill>
+        <Pill><Sunrise size={14} className={styles.amber} /> Solopgang <b className="hd-num">{fmtMinutes(sun.sunriseMinutes)}</b></Pill>
+        <Pill><Sunset size={14} className={styles.amber} /> Solnedgang <b className="hd-num">{fmtMinutes(sun.sunsetMinutes)}</b></Pill>
         {manualCount > 0 && (
-          <span className="hd-pill" style={tonePill('warn')}><Hand size={14} /> {manualCount} manual</span>
+          <span className="hd-pill" style={tonePill('warn')}><Hand size={14} /> {manualCount} manuelt</span>
         )}
       </div>
 
@@ -200,19 +201,19 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
                 {manual && roomFlow && (
                   <button
                     type="button" className={styles.modeBtn} onClick={() => resetRoom(area, roomFlow)} disabled={roomBusy}
-                    aria-label={`${area} is in Manual. Back to Auto`} title="Back to Auto"
+                    aria-label={`${area} er i manuelt. Tilbage til auto`} title="Tilbage til auto"
                   >
                     {roomBusy ? <LoaderCircle size={13} style={SPIN} /> : <RotateCcw size={13} strokeWidth={2.4} />}
-                    Manual
+                    Manuelt
                   </button>
                 )}
                 {roomMode !== 'auto' && !(manual && roomFlow) && <ModeBadge mode={roomMode} />}
               </div>
               {manual && !roomFlow && (
                 <label className={styles.flowPick}>
-                  <span>Reset flow</span>
+                  <span>Nulstil-flow</span>
                   <select className="hd-select hd-select-sm" value="" onChange={(e) => setFlowForRoom(area, e.target.value)}>
-                    <option value="">— none —</option>
+                    <option value="">— intet —</option>
                     {resetFlows.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
                   </select>
                 </label>
@@ -244,10 +245,10 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
 function ModeBadge({ mode, guess = false, st = null }) {
   const map = {
     auto: { label: 'Auto', cls: 'hd-tag-good' },
-    manual: { label: 'Manual', cls: 'hd-tag-warn' },
-    drift: { label: 'Manual?', cls: 'hd-tag-warn', dashed: true },
-    forced: { label: st?.profile || 'Forced', cls: 'hd-tag-accent', Icon: Pin },
-    off: { label: 'Off', cls: '' },
+    manual: { label: 'Manuelt', cls: 'hd-tag-warn' },
+    drift: { label: 'Manuelt?', cls: 'hd-tag-warn', dashed: true },
+    forced: { label: st?.profile ? slotName(st.profile) : 'Låst', cls: 'hd-tag-accent', Icon: Pin },
+    off: { label: 'Slukket', cls: '' },
     unknown: { label: '—', cls: '', faint: true },
   };
   const s = map[mode] || map.unknown;
@@ -255,9 +256,9 @@ function ModeBadge({ mode, guess = false, st = null }) {
   // AL dimmed it for an empty room: "Auto · idle" (the mode underneath stays)
   const idle = !guess && mode !== 'off' && isIdle(st);
   const title = guess
-    ? 'Guessed from the schedule — the script has not reported this light'
+    ? 'Gættet ud fra tidsplanen — scriptet har ikke meldt denne lampe'
     : mode === 'drift'
-      ? `Differs from what the script set (${describeLightStatus(st)}); it will switch to Manual on its next check`
+      ? `Afviger fra det, scriptet satte (${describeLightStatus(st)}); skifter til manuelt ved næste tjek`
       : describeLightStatus(st) || undefined;
   return (
     <span
@@ -271,7 +272,7 @@ function ModeBadge({ mode, guess = false, st = null }) {
     >
       {guess ? '~' : ''}
       {BadgeIcon && <BadgeIcon size={11} />}
-      {s.label}{idle ? ' · idle' : ''}
+      {s.label}{idle ? ' · dæmpet' : ''}
     </span>
   );
 }
@@ -293,8 +294,8 @@ function ScheduleStrip({ profiles, sun, nowMin, followsSun }) {
         ? `linear-gradient(90deg, ${samples.map((x) => `${tint(x.temperature, p.brightness)} ${(((x.m - start) / (end - start)) * 100).toFixed(1)}%`).join(', ')})`
         : tint(p.temperature, p.brightness);
       segments.push({
-        start, end, label: pct, color, icon: samples.length > 1 ? <Sun size={12} strokeWidth={2.6} aria-label="Colour follows the sun" /> : null,
-        title: `${p.name}: ${fmtMinutes(p.start)}–${fmtMinutes(p.end)} · ${pct} · ${samples.length > 1 ? 'colour follows the sun' : warmthLabel(p.temperature)}`,
+        start, end, label: pct, color, icon: samples.length > 1 ? <Sun size={12} strokeWidth={2.6} aria-label="Farven følger solen" /> : null,
+        title: `${slotName(p.name)}: ${fmtMinutes(p.start)}–${fmtMinutes(p.end)} · ${pct} · ${samples.length > 1 ? 'farven følger solen' : warmthLabel(p.temperature)}`,
       });
     });
   });

@@ -15,6 +15,7 @@ import {
 } from '../lib/heating';
 import {
   explainHeating, heatingRoomSensor, liveWindowClosedAt, liveWindowOpen, optimisticMode, SCRIPT_INTERVAL_MIN, SETTLE_ACTIONS,
+  slotName,
 } from '../lib/heatingState';
 import {
   BigTemp, clamp, cx, DayStrip, ErrorBox, fmtDuration, fmtLongDuration, INACTIVE_COUNTER_LIMIT, roomNameFromPath, SPIN, Toggle,
@@ -53,7 +54,7 @@ function HeatingInactivity({ motionActive, seedTs, timeoutMin, offset }) {
   }, [motionActive, seedTs]);
 
   if (motionActive) {
-    return <span className={styles.infoItem} style={{ color: 'var(--good-ink)' }}><Activity size={14} /> Someone is in the room</span>;
+    return <span className={styles.infoItem} style={{ color: 'var(--good-ink)' }}><Activity size={14} /> Der er nogen i rummet</span>;
   }
 
   const since = sinceRef.current ?? Date.now();
@@ -62,17 +63,17 @@ function HeatingInactivity({ motionActive, seedTs, timeoutMin, offset }) {
   const timeoutSecs = (timeoutMin || 30) * 60;
   const reached = secs >= timeoutSecs;
   return (
-    <span className={styles.infoItem} title={`No motion since ${new Date(since).toLocaleTimeString()}`}>
+    <span className={styles.infoItem} title={`Ingen bevægelse siden ${new Date(since).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}>
       <Moon size={14} />
-      <span>No motion for <span className="hd-num">{label}</span></span>
+      <span>Ingen bevægelse i <span className="hd-num">{label}</span></span>
       {offset > 0 && (reached
-        ? <span style={{ color: 'var(--warn-ink)' }}>· −{offset}° applied</span>
-        : <span className="hd-faint">· −{offset}° in <span className="hd-num">{fmtDuration(timeoutSecs - secs)}</span></span>)}
+        ? <span style={{ color: 'var(--warn-ink)' }}>· −{offset}° i brug</span>
+        : <span className="hd-faint">· −{offset}° om <span className="hd-num">{fmtDuration(timeoutSecs - secs)}</span></span>)}
     </span>
   );
 }
 
-// Boost / Pause / Reset buttons: icon + tint (labels come from HEATING_ACTIONS, minus their emoji).
+// Boost / Pause / Reset buttons: icon + tint (labels come from HEATING_ACTIONS).
 const HEAT_ACTION_UI = {
   boost: { Icon: Flame, cls: styles.btnBoost },
   pause: { Icon: Pause, cls: '' },
@@ -104,7 +105,7 @@ function DayTimeline({ slots, nowMin }) {
     return {
       start: s.start, end: s.end, label: `${s.target}°`,
       color: `color-mix(in srgb, var(--heat) ${Math.round(14 + warmth * 66)}%, var(--surface-3))`,
-      title: `${s.name}: ${fmtMinutes(s.start)}–${fmtMinutes(s.end === 1440 ? 0 : s.end)} · ${s.target}°`,
+      title: `${slotName(s.name)}: ${fmtMinutes(s.start)}–${fmtMinutes(s.end === 1440 ? 0 : s.end)} · ${s.target}°`,
     };
   });
   return <div className={styles.timeline}><DayStrip segments={segments} nowMin={nowMin} /></div>;
@@ -118,7 +119,7 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
     return (
       <article className={styles.card}>
         <div className={styles.head}><h3 className={styles.name}>{room.label}</h3></div>
-        <div className={styles.missing}>Thermostat not found.</div>
+        <div className={styles.missing}>Termostaten blev ikke fundet.</div>
       </article>
     );
   }
@@ -141,7 +142,7 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
         {heatingNow && (
           <span className={styles.heatChip}>
             <Flame size={13} strokeWidth={2.4} />
-            {d.kind === 'tado' ? `${Math.round(d.power)}%` : 'On'}
+            {d.kind === 'tado' ? `${Math.round(d.power)}%` : 'Tændt'}
           </span>
         )}
         <ChevronDown size={18} className={styles.chev} />
@@ -151,30 +152,30 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
         <div className={styles.now}>
           <BigTemp value={d.temp} className={styles.temp} />
           {d.humidity != null && (
-            <span className={styles.humidity} title="Humidity"><Droplets size={13} /> {Math.round(d.humidity)}%</span>
+            <span className={styles.humidity} title="Luftfugtighed"><Droplets size={13} /> {Math.round(d.humidity)}%</span>
           )}
         </div>
         {d.setTarget != null ? (
-          <div className={styles.stepper} role="group" aria-label={`${room.label} target`}>
+          <div className={styles.stepper} role="group" aria-label={`Mål for ${room.label}`}>
             <button
               type="button" className="hd-step" onClick={() => onAdjust(-0.5)}
-              disabled={systemOff || d.setTarget <= TARGET_MIN} aria-label={`Lower ${room.label} target`}
+              disabled={systemOff || d.setTarget <= TARGET_MIN} aria-label={`Sænk målet for ${room.label}`}
             >
               −
             </button>
             <div className={styles.target}>
-              <span className={styles.targetLabel}>Target</span>
+              <span className={styles.targetLabel}>Mål</span>
               <span className={styles.targetVal}>{d.setTarget}°</span>
             </div>
             <button
               type="button" className="hd-step" onClick={() => onAdjust(0.5)}
-              disabled={systemOff || d.setTarget >= TARGET_MAX} aria-label={`Raise ${room.label} target`}
+              disabled={systemOff || d.setTarget >= TARGET_MAX} aria-label={`Hæv målet for ${room.label}`}
             >
               +
             </button>
           </div>
         ) : (
-          <span className={styles.noTarget}>Follows the schedule</span>
+          <span className={styles.noTarget}>Følger tidsplanen</span>
         )}
       </div>
 
@@ -186,7 +187,7 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
           {pct != null && (
             <div
               className={styles.progress} role="progressbar" aria-valuemin={0} aria-valuemax={100}
-              aria-valuenow={Math.round(pct)} aria-label="Time elapsed"
+              aria-valuenow={Math.round(pct)} aria-label="Tid gået"
             >
               <span style={{ width: `${pct}%` }} />
             </div>
@@ -195,10 +196,10 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
         {inOverride && reset && (
           <button
             type="button" className={cx('hd-btn hd-btn-sm', styles.quickReset)} onClick={reset.onClick}
-            disabled={reset.disabled} title="Cancel the override and follow the schedule again"
+            disabled={reset.disabled} title="Annullér og følg tidsplanen igen"
           >
             {reset.busy ? <LoaderCircle size={14} style={SPIN} /> : <RotateCcw size={14} />}
-            Reset
+            Nulstil
           </button>
         )}
       </div>
@@ -223,9 +224,9 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
               <div className={styles.schedHead}>
                 <CalendarClock size={14} />
                 <span>
-                  <b>{d.scheduled.name}</b> · {d.scheduled.target}° until {fmtMinutes(d.scheduled.end === 1440 ? 0 : d.scheduled.end)}
+                  <b>{slotName(d.scheduled.name)}</b> · {d.scheduled.target}° til {fmtMinutes(d.scheduled.end === 1440 ? 0 : d.scheduled.end)}
                   {d.setTarget != null && d.setTarget < d.scheduled.target - 0.05 && (
-                    <span style={{ color: 'var(--warn-ink)' }}> · now set to {d.setTarget}°</span>
+                    <span style={{ color: 'var(--warn-ink)' }}> · sat til {d.setTarget}° nu</span>
                   )}
                 </span>
               </div>
@@ -237,7 +238,7 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
             <div className={cx(styles.info, dim)}>
               {d.kind === 'plug' && (
                 <span className={styles.infoItem} style={d.plugOn ? { color: 'var(--heat-ink)' } : undefined}>
-                  <Flame size={14} /> Radiator{d.plugCount === 1 ? '' : 's'} {d.plugOn ? 'on' : 'off'}
+                  <Flame size={14} /> {d.plugCount === 1 ? 'Radiator' : 'Radiatorer'} {d.plugOn ? 'tændt' : 'slukket'}
                 </span>
               )}
               {d.hasMotion && d.scheduled && (
@@ -390,7 +391,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
         body: JSON.stringify({ enabled: next }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'failed to set heating');
+      if (!r.ok) throw new Error(data.error || 'Kunne ikke ændre varmen');
       if (!next) {
         const offFlow = (flows || []).find((f) => /switched\s*off/i.test(f.name) && /heat|varme/i.test(f.name));
         if (offFlow) {
@@ -419,7 +420,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
         body: JSON.stringify({ room: room.key, target }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'failed to set target');
+      if (!r.ok) throw new Error(data.error || 'Kunne ikke sætte målet');
       const flow = (flows || []).find((f) => f.name === room.targetFlow);
       if (flow) {
         await fetch('/api/homey/reset', {
@@ -466,7 +467,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
 
   async function runAction(room, action) {
     const flow = flowFor(room, action);
-    if (!flow) { setErr(`No flow named "${room.code} - Heating ${action.flow}" in Homey.`); return; }
+    if (!flow) { setErr(`Intet flow hedder "${room.code} - Heating ${action.flow}" i Homey.`); return; }
     const bk = `${room.key}:${action.key}`;
     setErr('');
     setBusy((prev) => new Set(prev).add(bk));
@@ -481,7 +482,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
         body: JSON.stringify({ flowId: flow.id, advanced: flow.type === 'advanced' }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'flow trigger failed');
+      if (!r.ok) throw new Error(data.error || 'Kunne ikke starte flowet');
       // The flow runs the script, which publishes HeatingStatus after a few seconds —
       // re-poll a few times to replace the optimistic value with the real one.
       [1500, 3500, 6000].forEach((ms) => setTimeout(loadStatus, ms));
@@ -518,14 +519,14 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
     .map((dev) => (dev.capabilities || {})['measure_temperature.outside'])
     .find((v) => typeof v === 'number');
 
-  let title = 'Heating';
-  let sub = 'Checking status…';
+  let title = 'Varme';
+  let sub = 'Henter status…';
   if (masterOff) {
-    title = 'Heating is off';
-    sub = outside != null ? `${outside.toFixed(1)}° outside` : '';
+    title = 'Varmen er slukket';
+    sub = outside != null ? `${outside.toFixed(1)}° ude` : '';
   } else if (heatingEnabled != null) {
-    title = heatingCount > 0 ? `${heatingCount} of ${found.length} rooms heating` : 'No rooms heating';
-    sub = outside != null ? `${outside.toFixed(1)}° outside` : 'Rooms follow their schedule';
+    title = heatingCount > 0 ? `${heatingCount} af ${found.length} rum varmer` : 'Ingen rum varmer';
+    sub = outside != null ? `${outside.toFixed(1)}° ude` : 'Rummene følger tidsplanen';
   }
 
   return (
@@ -536,11 +537,11 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
         </span>
         <div className={styles.summaryText}>
           <h2 className={styles.summaryTitle}>{title}</h2>
-          {(masterBusy || sub) && <div className={styles.summarySub}>{masterBusy ? 'Updating…' : sub}</div>}
+          {(masterBusy || sub) && <div className={styles.summarySub}>{masterBusy ? 'Opdaterer…' : sub}</div>}
         </div>
         <Toggle
-          size="lg" on={!!heatingEnabled} label="Heating system"
-          title={heatingEnabled ? 'Switch all heating off' : 'Switch the heating on'}
+          size="lg" on={!!heatingEnabled} label="Varmeanlæg"
+          title={heatingEnabled ? 'Sluk al varme' : 'Tænd varmen'}
           onChange={(v) => !masterBusy && toggleMaster(v)}
         />
       </section>
@@ -563,7 +564,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
               key: a.key, label: actionLabel(a), Icon: ui.Icon, cls: ui.cls, busy: isBusy,
               active: !!d && !masterOff && d.mode === a.key, // Boost or Pause is running
               disabled: isBusy || !flow || masterOff,
-              title: masterOff ? 'Heating system is off' : flow ? `Runs flow: ${flow.name}` : `No flow named "${room.code} - Heating ${a.flow}"`,
+              title: masterOff ? 'Varmeanlægget er slukket' : flow ? `Kører flowet: ${flow.name}` : `Intet flow hedder "${room.code} - Heating ${a.flow}"`,
               onClick: () => runAction(room, a),
             };
           });
@@ -581,7 +582,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
       {(flowMissing || showConfig) && (
       <div className={styles.setup}>
         <button type="button" className="hd-btn hd-btn-ghost hd-btn-sm" onClick={() => setShowConfig((s) => !s)} aria-expanded={showConfig}>
-          <Settings2 size={15} /> Flow mapping
+          <Settings2 size={15} /> Flow-kobling
           <ChevronDown size={15} className={cx(styles.setupChev, showConfig && styles.setupChevOpen)} />
         </button>
         {showConfig && (
@@ -598,7 +599,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
                         className="hd-select hd-select-sm" value={flow ? flow.id : ''}
                         onChange={(e) => setFlowFor(room.key, a.key, e.target.value)}
                       >
-                        <option value="">— none —</option>
+                        <option value="">— intet —</option>
                         {flowOptions.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
                       </select>
                     </label>

@@ -2,12 +2,16 @@ import { NextResponse } from 'next/server';
 import { readSession, persistSession } from '../../../../lib/sessionCookie';
 import { homeyFetch } from '../../../../lib/homey';
 
-// Set capability values on one or more devices (lighting phase, thermostat target, etc.).
-// Body: { items: [{ deviceId, values: { onoff?, light_mode?, dim?, light_temperature?,
-//                                       windowcoverings_set?, target_temperature? } }] }
+// Set capability values on one or more devices (a light's state and colour, a thermostat target, …).
+// Body: { items: [{ deviceId, values: { onoff?, light_mode?, light_hue?, light_saturation?, dim?,
+//                                       light_temperature?, windowcoverings_set?, target_temperature? } }] }
 // Uses homey.device.control — allowed for OAuth clients (unlike running HomeyScript).
-// onoff/light_mode are applied before dim/light_temperature so temperature takes effect.
-const CAP_ORDER = ['onoff', 'light_mode', 'dim', 'light_temperature', 'windowcoverings_set', 'target_temperature'];
+// onoff/light_mode are applied first, so the colour or temperature that follows takes effect.
+// A capability that is not on this list is reported back, never dropped in silence.
+const CAP_ORDER = [
+  'onoff', 'light_mode', 'light_hue', 'light_saturation', 'dim', 'light_temperature',
+  'windowcoverings_set', 'target_temperature',
+];
 
 export async function POST(request) {
   const session = readSession();
@@ -28,6 +32,9 @@ export async function POST(request) {
     const deviceId = item?.deviceId;
     const values = item?.values || {};
     if (!deviceId || typeof deviceId !== 'string') continue;
+    for (const cap of Object.keys(values)) {
+      if (!CAP_ORDER.includes(cap)) errors.push(`${cap}: not supported`);
+    }
     for (const cap of CAP_ORDER) {
       if (!(cap in values)) continue;
       try {

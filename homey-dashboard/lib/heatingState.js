@@ -38,13 +38,13 @@ export function hhmm(ms) {
 
 const NB = ' '; // keeps "≈ 14:18" and "18 min" together when the text wraps
 
-/** "4 min", "1 h 05 min", "2 h". Rounded up so a countdown never shows 0 while running. */
+/** "4 min", "1 t 05 min", "2 t". Rounded up so a countdown never shows 0 while running. */
 export function fmtMins(mins) {
   const m = Math.max(0, Math.round(mins));
   if (m < 60) return `${m}${NB}min`;
   const h = Math.floor(m / 60);
   const r = m % 60;
-  return r ? `${h}${NB}h ${String(r).padStart(2, '0')}${NB}min` : `${h}${NB}h`;
+  return r ? `${h}${NB}t ${String(r).padStart(2, '0')}${NB}min` : `${h}${NB}t`;
 }
 
 const deg = (v) => (v == null || !Number.isFinite(Number(v)) ? '—' : `${Math.round(Number(v) * 10) / 10}°`);
@@ -54,10 +54,19 @@ function minsBetween(from, to) {
   return (to - from) / MIN;
 }
 
-// "20:00 → 19°C (Evening)" → "20:00 → 19° (Evening)"; anything else passes through.
+// The script's slot and mode names, as the dashboard shows them.
+const SLOT_NAMES = { Night: 'Nat', Morning: 'Morgen', Day: 'Dag', Daytime: 'Dag', Evening: 'Aften' };
+const MODE_NAMES = { pause: 'pause', boost: 'boost', manual: 'manuelt' };
+
+/** A schedule slot's name in Danish ("Evening" → "Aften"); other names pass through. */
+export function slotName(name) {
+  return SLOT_NAMES[name] || name;
+}
+
+// "20:00 → 19°C (Evening)" → "20:00 → 19° (Aften)"; anything else passes through.
 function shortNextChange(s) {
   if (!s || typeof s !== 'string') return null;
-  return s.replace(/°C/g, '°').trim() || null;
+  return s.replace(/°C/g, '°').replace(/\(([^)]+)\)/g, (m, name) => `(${slotName(name)})`).trim() || null;
 }
 
 export const SETTLE_ACTIONS = new Set(['window_closed_waiting', 'window_settle_retry']);
@@ -148,20 +157,20 @@ export function explainHeating({
   if (heatingEnabled === false) {
     return out({
       state: 'master_off', tone: 'muted', icon: 'power',
-      headline: 'Off — system switched off',
-      tag: { tone: 'muted', icon: 'power', text: 'System off' },
+      headline: 'Slukket — anlægget er slukket',
+      tag: { tone: 'muted', icon: 'power', text: 'Anlæg slukket' },
       heatingOff: true,
     });
   }
 
   if (!sc) {
     if (loading) {
-      return out({ state: 'loading', tone: 'muted', icon: 'help', headline: 'Checking heating status…' });
+      return out({ state: 'loading', tone: 'muted', icon: 'help', headline: 'Henter varmestatus…' });
     }
     return out({
       state: 'unknown', tone: 'muted', icon: 'help',
-      headline: 'State unknown',
-      detail: 'No status available for this room right now',
+      headline: 'Ukendt tilstand',
+      detail: 'Ingen status for rummet lige nu',
     });
   }
 
@@ -189,39 +198,39 @@ export function explainHeating({
   const updatedAt = num(sc.updatedAt);
   const ageMin = updatedAt != null ? minsBetween(updatedAt, now) : null;
   const stale = ageMin != null && ageMin > STALE_AFTER_MIN;
-  if (stale) staleTag = { tone: 'bad', icon: 'alert', text: 'No update' };
+  if (stale) staleTag = { tone: 'bad', icon: 'alert', text: 'Ingen opdatering' };
   const inOverride = mode && mode !== 'auto';
   const offset = num(settings.inactivityOffset) || 0;
 
   const addFactor = (f) => factors.push(f);
   const addCommonFactors = (skip = {}) => {
     if (!skip.awayPaused && tadoAway && !away && !inOverride) {
-      addFactor({ key: 'away_paused', tone: 'accent', icon: 'footprints', text: 'Away paused — room in use' });
+      addFactor({ key: 'away_paused', tone: 'accent', icon: 'footprints', text: 'Ude sat på pause — rummet er i brug' });
     }
     if (!skip.away && away && !inOverride) {
       // While the window logic keeps the heating off, nothing holds the away temperature yet.
-      const word = skip.awayThen ? 'then' : 'holds';
-      addFactor({ key: 'away', tone: 'accent', icon: 'away', text: `Away${effTarget != null ? ` · ${word} ${deg(effTarget)}` : ''}` });
+      const word = skip.awayThen ? 'derefter' : 'holder';
+      addFactor({ key: 'away', tone: 'accent', icon: 'away', text: `Ude${effTarget != null ? ` · ${word} ${deg(effTarget)}` : ''}` });
     }
     if (!skip.eco && sc.inactive && offset > 0 && !away && !inOverride) {
-      addFactor({ key: 'eco', tone: 'muted', icon: 'moon', text: `No activity · −${deg(offset)}` });
+      addFactor({ key: 'eco', tone: 'muted', icon: 'moon', text: `Ingen aktivitet · −${deg(offset)}` });
     }
     if (!skip.window && (inOverride ? (liveWindow ?? sc.windowOpen) : (sc.windowOpen && liveWindow !== false))) {
       // A plug room's manual target keeps the radiators off with the window open; the rest ignore it.
-      const windowText = !inOverride ? 'Window open'
-        : kind === 'plug' && mode === 'manual' ? 'Window open · radiators off'
-          : `Window open (ignored in ${mode})`;
+      const windowText = !inOverride ? 'Vindue åbent'
+        : kind === 'plug' && mode === 'manual' ? 'Vindue åbent · radiatorer slukket'
+          : `Vindue åbent (ignoreres under ${MODE_NAMES[mode] || mode})`;
       addFactor({ key: 'window', tone: 'warn', icon: 'window', text: windowText });
     }
     if (!skip.justOpened && !inOverride && !stale && !sc.windowOpen && liveWindow === true) {
-      addFactor({ key: 'window_new', tone: 'warn', icon: 'window', text: 'Window just opened · heating reacts shortly' });
+      addFactor({ key: 'window_new', tone: 'warn', icon: 'window', text: 'Vindue lige åbnet · varmen reagerer om lidt' });
     }
     const nc = shortNextChange(sc.nextChange);
     if (!skip.next && nc && !inOverride) {
-      addFactor({ key: 'next', tone: 'muted', icon: 'clock', text: `Next ${nc}` });
+      addFactor({ key: 'next', tone: 'muted', icon: 'clock', text: `Næste ${nc}` });
     }
     if (stale && !skip.stale) {
-      addFactor({ key: 'stale', tone: 'bad', icon: 'alert', text: `No update from the heating script for ${fmtMins(ageMin)}` });
+      addFactor({ key: 'stale', tone: 'bad', icon: 'alert', text: `Ingen opdatering fra varmescriptet i ${fmtMins(ageMin)}` });
     }
   };
 
@@ -230,8 +239,8 @@ export function explainHeating({
     addCommonFactors({ window: true, stale: true, awayThen: true });
     return out({
       state: 'stale', tone: 'bad', icon: 'alert',
-      headline: `Status unknown — no update for ${fmtMins(ageMin)}`,
-      detail: `Last known: ${lastKnown} · no change until the heating script runs again`,
+      headline: `Ukendt status — ingen opdatering i ${fmtMins(ageMin)}`,
+      detail: `Sidst kendt: ${lastKnown} · ingen ændring, før varmescriptet kører igen`,
       heatingOff: !heatingNow,
     });
   };
@@ -243,26 +252,26 @@ export function explainHeating({
     const running = left != null && left > 0;
     const dur = mode === 'manual' ? manualMinutes : MODE_MINUTES[mode];
     const progress = running ? { from: exp - dur * MIN, to: exp } : null;
-    const until = running ? ` until ${hhmm(exp)}` : '';
-    const leftTxt = running ? `${fmtMins(Math.ceil(left))} left` : 'ending at the next check';
-    if (stale && !running) return scriptSilent(mode);
+    const until = running ? ` til ${hhmm(exp)}` : '';
+    const leftTxt = running ? `${fmtMins(Math.ceil(left))} tilbage` : 'slutter ved næste tjek';
+    if (stale && !running) return scriptSilent(MODE_NAMES[mode] || mode);
     addCommonFactors();
     const failed = action === `${mode}_error`; // the valve refused the command; the next run tries again
-    const failedTxt = `Valve did not respond — retrying · ${leftTxt}`;
+    const failedTxt = `Ventilen svarede ikke — prøver igen · ${leftTxt}`;
     if (mode === 'pause') {
       return out({
         state: 'pause', tone: failed ? 'bad' : 'muted', icon: failed ? 'alert' : 'pause',
-        headline: `Paused${until}`,
-        detail: failed ? failedTxt : `${heatingNow ? 'Still heating, stops shortly' : 'Heating off'} · ${leftTxt}, then the schedule resumes`,
+        headline: `Pause${until}`,
+        detail: failed ? failedTxt : `${heatingNow ? 'Varmer stadig, stopper om lidt' : 'Varmen er slukket'} · ${leftTxt}, derefter følges tidsplanen igen`,
         progress, heatingOff: !heatingNow,
-        tag: { tone: failed ? 'bad' : 'muted', icon: 'pause', text: running ? `Paused ${fmtMins(Math.ceil(left))}` : 'Paused' },
+        tag: { tone: failed ? 'bad' : 'muted', icon: 'pause', text: running ? `Pause ${fmtMins(Math.ceil(left))}` : 'Pause' },
       });
     }
     if (mode === 'boost') {
       return out({
         state: 'boost', tone: failed ? 'bad' : 'heat', icon: failed ? 'alert' : 'flame',
         headline: `Boost${until}`,
-        detail: failed ? failedTxt : `${kind === 'plug' ? (heatingNow ? 'Radiators on' : 'Radiators off — at boost temperature') : 'Valve set to 25°'} · ${leftTxt}`,
+        detail: failed ? failedTxt : `${kind === 'plug' ? (heatingNow ? 'Radiatorer tændt' : 'Radiatorer slukket — boost-temperaturen er nået') : 'Ventilen sat til 25°'} · ${leftTxt}`,
         progress,
         tag: { tone: failed ? 'bad' : 'heat', icon: 'flame', text: running ? `Boost ${fmtMins(Math.ceil(left))}` : 'Boost' },
       });
@@ -270,10 +279,10 @@ export function explainHeating({
     const mt = num(deviceTarget) != null ? num(deviceTarget) : effTarget;
     return out({
       state: 'manual', tone: 'warn', icon: 'hand',
-      headline: `Manual ${mt != null ? deg(mt) : ''}${until}`.replace(/\s+/g, ' ').trim(),
-      detail: `${kind === 'plug' ? `Radiators ${heatingNow ? 'on' : 'off'}` : 'Set by hand'} · ${running ? `${leftTxt}, then the schedule takes over` : 'schedule takes over at the next check'}`,
+      headline: `Manuelt ${mt != null ? deg(mt) : ''}${until}`.replace(/\s+/g, ' ').trim(),
+      detail: `${kind === 'plug' ? `Radiatorer ${heatingNow ? 'tændt' : 'slukket'}` : 'Sat i hånden'} · ${running ? `${leftTxt}, derefter tager tidsplanen over` : 'tidsplanen tager over ved næste tjek'}`,
       progress,
-      tag: { tone: 'warn', icon: 'hand', text: running ? `Manual ${fmtMins(Math.ceil(left))}` : 'Manual' },
+      tag: { tone: 'warn', icon: 'hand', text: running ? `Manuelt ${fmtMins(Math.ceil(left))}` : 'Manuelt' },
     });
   }
 
@@ -282,10 +291,10 @@ export function explainHeating({
     addCommonFactors({ justOpened: true });
     return out({
       state: 'sensor_stale', tone: 'bad', icon: 'alert',
-      headline: 'Off — temperature sensor silent',
-      detail: 'Radiators stay off until the sensor reports again',
+      headline: 'Slukket — temperaturføleren er tavs',
+      detail: 'Radiatorerne er slukket, til føleren melder igen',
       heatingOff: true,
-      tag: { tone: 'bad', icon: 'alert', text: 'Sensor silent' },
+      tag: { tone: 'bad', icon: 'alert', text: 'Føler tavs' },
     });
   }
 
@@ -294,10 +303,10 @@ export function explainHeating({
     addCommonFactors({ away: true, justOpened: true });
     return out({
       state: 'away_off', tone: 'accent', icon: 'away',
-      headline: 'Away — heating off',
-      detail: 'Nobody home (TADO) · resumes when someone is home or the room is used',
+      headline: 'Ude — varmen er slukket',
+      detail: 'Ingen hjemme (TADO) · starter igen, når nogen er hjemme, eller rummet bruges',
       heatingOff: true,
-      tag: { tone: 'accent', icon: 'away', text: 'Away · off' },
+      tag: { tone: 'accent', icon: 'away', text: 'Ude · slukket' },
     });
   }
 
@@ -309,22 +318,22 @@ export function explainHeating({
   const settleExpected = closedUnseen && !(openSince != null && openTimeoutS != null
     && (closedAt - openSince) / 1000 < openTimeoutS);
   if (settleExpected) {
-    if (stale) return scriptSilent('window open');
+    if (stale) return scriptSilent('vindue åbent');
     const off = !heatingNow;
     const settledAt = delayS != null ? closedAt + delayS * 1000 : null;
     const left = settledAt != null ? minsBetween(now, settledAt) : null;
     const leftTxt = left != null && left > 0 ? fmtMins(Math.ceil(left)) : null;
     addCommonFactors({ window: true, awayThen: off });
-    let headline = 'Window closed — still heating';
+    let headline = 'Vindue lukket — varmer stadig';
     if (off) {
-      if (leftTxt) headline = `Off — resumes in ${leftTxt} (≈${NB}${hhmm(settledAt)})`;
-      else headline = settledAt != null ? 'Off — resuming at the next check' : 'Off — window just closed';
+      if (leftTxt) headline = `Slukket — starter om ${leftTxt} (≈${NB}${hhmm(settledAt)})`;
+      else headline = settledAt != null ? 'Slukket — starter ved næste tjek' : 'Slukket — vinduet er lige lukket';
     }
-    let detail = 'Window closed · waiting for the air to settle';
+    let detail = 'Vindue lukket · venter på, at luften falder til ro';
     if (delayMin != null) {
       detail = off
-        ? `Window closed · air settles for ${fmtMins(delayMin)}`
-        : `Settle delay of ${fmtMins(delayMin)}${leftTxt ? ` · schedule resumes in ${leftTxt}` : ''}`;
+        ? `Vindue lukket · luften falder til ro i ${fmtMins(delayMin)}`
+        : `Ventetid på ${fmtMins(delayMin)}${leftTxt ? ` · tidsplanen følges igen om ${leftTxt}` : ''}`;
     }
     return out({
       state: 'settle_pending', tone: 'warn', icon: 'hourglass',
@@ -332,13 +341,13 @@ export function explainHeating({
       detail,
       progress: leftTxt ? { from: closedAt, to: settledAt } : null,
       heatingOff: off, resumeAt: off && settledAt != null ? Math.max(settledAt, now) : null,
-      tag: { tone: 'warn', icon: 'hourglass', text: leftTxt ? `Waiting ${leftTxt}` : 'Window closed' },
+      tag: { tone: 'warn', icon: 'hourglass', text: leftTxt ? `Venter ${leftTxt}` : 'Vindue lukket' },
     });
   }
 
   // 6. Window open.
   if (sc.windowOpen && !closedUnseen) {
-    if (stale) return scriptSilent('window open');
+    if (stale) return scriptSilent('vindue åbent');
     const openMin = openSince != null ? minsBetween(openSince, now) : null;
     // What the last run did, not what the clock says now: nothing is switched off before a
     // run has seen the window open past the timeout. Without the timestamps window_open_skip
@@ -347,15 +356,15 @@ export function explainHeating({
       ? (updatedAt - openSince) / 1000 >= openTimeoutS
       : action === 'window_timeout_off' || (action === 'window_open_skip' && !heatingNow);
     const resumeTxt = delayMin != null && delayMin > 0
-      ? `resumes ${fmtMins(delayMin)} after it closes`
-      : 'resumes when it closes';
-    const windowTag = { tone: 'warn', icon: 'window', text: 'Window open' };
+      ? `starter igen ${fmtMins(delayMin)} efter, at det er lukket`
+      : 'starter igen, når det lukkes';
+    const windowTag = { tone: 'warn', icon: 'window', text: 'Vindue åbent' };
     if (ranPastTimeout && !heatingNow) {
       addCommonFactors({ window: true, awayThen: true });
       return out({
         state: 'window_off', tone: 'warn', icon: 'window',
-        headline: 'Off — window open',
-        detail: openMin != null ? `Open ${fmtMins(Math.floor(openMin))} · heating ${resumeTxt}` : `Heating ${resumeTxt}`,
+        headline: 'Slukket — vindue åbent',
+        detail: openMin != null ? `Åbent i ${fmtMins(Math.floor(openMin))} · varmen ${resumeTxt}` : `Varmen ${resumeTxt}`,
         heatingOff: true,
         tag: windowTag,
       });
@@ -366,35 +375,35 @@ export function explainHeating({
       ? openSince + (openTimeoutS + TIMEOUT_TIMER_MARGIN_S) * 1000 : null;
     const pastStop = ranPastTimeout || (stopAt != null && now >= stopAt);
     const limit = openTimeoutS != null
-      ? `open longer than ${openTimeoutS >= 60 ? fmtMins(openTimeoutS / 60) : `${openTimeoutS}${NB}s`}`
+      ? `det er åbent længere end ${openTimeoutS >= 60 ? fmtMins(openTimeoutS / 60) : `${openTimeoutS}${NB}s`}`
       : null;
     addCommonFactors({ window: true });
     if (heatingNow) {
       const how = kind === 'tado'
-        ? (num(power) != null ? `Valve at ${Math.round(power)}%` : 'Valve open')
-        : 'Radiators on';
-      let headline = 'Window open — still heating';
-      if (pastStop) headline = 'Window open — heating stops at the next check';
-      else if (stopAt != null) headline = `Window open — heating stops ≈${NB}${hhmm(stopAt)}`;
+        ? (num(power) != null ? `Ventil på ${Math.round(power)}%` : 'Ventil åben')
+        : 'Radiatorer tændt';
+      let headline = 'Vindue åbent — varmer stadig';
+      if (pastStop) headline = 'Vindue åbent — varmen stopper ved næste tjek';
+      else if (stopAt != null) headline = `Vindue åbent — varmen stopper ≈${NB}${hhmm(stopAt)}`;
       return out({
         state: 'window_grace', tone: 'warn', icon: 'window',
         headline,
         detail: pastStop
-          ? `${how} · heating ${resumeTxt}`
-          : `${how} · switches off if ${limit || 'it stays open'}`,
+          ? `${how} · varmen ${resumeTxt}`
+          : `${how} · slukker, hvis ${limit || 'det bliver stående åbent'}`,
         progress: !pastStop && stopAt != null ? { from: openSince, to: stopAt } : null,
         tag: windowTag,
       });
     }
     const why = t != null && effTarget != null && t >= effTarget - 0.3
-      ? `Warm enough, room ${deg(t)}`
-      : `${effTarget != null ? `Target ${deg(effTarget)}` : 'Valve idle'}${t != null ? ` · room ${deg(t)}` : ''}`;
-    let then = 'stays off if it stays open';
-    if (pastStop) then = 'stays off while it is open';
-    else if (stopAt != null) then = `off from ≈${NB}${hhmm(stopAt)} if still open`;
+      ? `Varmt nok, rummet ${deg(t)}`
+      : `${effTarget != null ? `Mål ${deg(effTarget)}` : 'Ventilen hviler'}${t != null ? ` · rummet ${deg(t)}` : ''}`;
+    let then = 'forbliver slukket, hvis det står åbent';
+    if (pastStop) then = 'forbliver slukket, så længe det er åbent';
+    else if (stopAt != null) then = `slukket fra ≈${NB}${hhmm(stopAt)}, hvis det stadig er åbent`;
     return out({
       state: 'window_grace', tone: 'warn', icon: 'window',
-      headline: 'Window open — not heating',
+      headline: 'Vindue åbent — varmer ikke',
       detail: `${why} · ${then}`,
       tag: windowTag,
     });
@@ -403,12 +412,12 @@ export function explainHeating({
   // 7. Settle delay after a long window opening. The script sends no command while it runs,
   // so the heating is off only if a run reached the timeout first.
   if (closedSince != null || SETTLE_ACTIONS.has(action)) {
-    if (stale) return scriptSilent('waiting after window closed');
+    if (stale) return scriptSilent('venter efter vindue lukket');
     const off = !heatingNow;
     addCommonFactors({ window: true, awayThen: off });
     const retry = action === 'window_settle_retry';
-    const retryHead = off ? 'Off — resume failed, retrying' : 'Resume failed, retrying';
-    const retryDetail = `The settle delay is over but the radiators did not respond · retried every ${fmtMins(SCRIPT_INTERVAL_MIN)}`;
+    const retryHead = off ? 'Slukket — genstart mislykkedes, prøver igen' : 'Genstart mislykkedes, prøver igen';
+    const retryDetail = `Ventetiden er slut, men radiatorerne svarede ikke · prøver igen med ${fmtMins(SCRIPT_INTERVAL_MIN)} mellemrum`;
     if (closedSince != null && delayS != null) {
       const resumeAt = closedSince + delayS * 1000;
       const left = minsBetween(now, resumeAt);
@@ -416,35 +425,35 @@ export function explainHeating({
         const leftTxt = fmtMins(Math.ceil(left));
         return out({
           state: 'settle', tone: 'warn', icon: 'hourglass',
-          headline: off ? `Off — resumes in ${leftTxt} (≈${NB}${hhmm(resumeAt)})` : 'Window closed — still heating',
+          headline: off ? `Slukket — starter om ${leftTxt} (≈${NB}${hhmm(resumeAt)})` : 'Vindue lukket — varmer stadig',
           detail: off
-            ? `Window closed · air settles for ${fmtMins(delayMin)}`
-            : `Settle delay · schedule resumes in ${leftTxt} (≈${NB}${hhmm(resumeAt)})`,
+            ? `Vindue lukket · luften falder til ro i ${fmtMins(delayMin)}`
+            : `Ventetid · tidsplanen følges igen om ${leftTxt} (≈${NB}${hhmm(resumeAt)})`,
           progress: { from: closedSince, to: resumeAt },
           heatingOff: off, resumeAt: off ? resumeAt : null,
-          tag: { tone: 'warn', icon: 'hourglass', text: `Waiting ${leftTxt}` },
+          tag: { tone: 'warn', icon: 'hourglass', text: `Venter ${leftTxt}` },
         });
       }
-      let headline = off ? 'Off — resuming at the next check' : 'Window closed — schedule resumes at the next check';
+      let headline = off ? 'Slukket — starter ved næste tjek' : 'Vindue lukket — tidsplanen følges igen ved næste tjek';
       if (retry) headline = retryHead;
       return out({
         state: 'settle_due', tone: retry ? 'bad' : 'warn', icon: 'hourglass',
         headline,
-        detail: retry ? retryDetail : `Air settled at ${hhmm(resumeAt)} · the script checks every ${fmtMins(SCRIPT_INTERVAL_MIN)}`,
+        detail: retry ? retryDetail : `Luften faldt til ro ${hhmm(resumeAt)} · scriptet tjekker med ${fmtMins(SCRIPT_INTERVAL_MIN)} mellemrum`,
         progress: { from: closedSince, to: resumeAt },
         heatingOff: off, resumeAt: off ? now : null,
-        tag: { tone: retry ? 'bad' : 'warn', icon: 'hourglass', text: retry ? 'Retrying' : 'Resuming' },
+        tag: { tone: retry ? 'bad' : 'warn', icon: 'hourglass', text: retry ? 'Prøver igen' : 'Starter' },
       });
     }
-    const upTo = `up to ${delayMin != null ? fmtMins(delayMin) : 'a while'} after the window closed`;
-    let headline = off ? 'Off — waiting after window closed' : 'Window closed — still heating';
+    const upTo = `op til ${delayMin != null ? fmtMins(delayMin) : 'et stykke tid'} efter, at vinduet blev lukket`;
+    let headline = off ? 'Slukket — venter efter vindue lukket' : 'Vindue lukket — varmer stadig';
     if (retry) headline = retryHead;
     return out({
       state: 'settle', tone: retry ? 'bad' : 'warn', icon: 'hourglass',
       headline,
-      detail: retry ? retryDetail : `${off ? 'Air settles before heating resumes ·' : 'Settle delay · schedule resumes'} ${upTo}`,
+      detail: retry ? retryDetail : `${off ? 'Luften falder til ro, før varmen starter ·' : 'Ventetid · tidsplanen følges igen'} ${upTo}`,
       heatingOff: off,
-      tag: { tone: retry ? 'bad' : 'warn', icon: 'hourglass', text: retry ? 'Retrying' : 'Waiting' },
+      tag: { tone: retry ? 'bad' : 'warn', icon: 'hourglass', text: retry ? 'Prøver igen' : 'Venter' },
     });
   }
 
@@ -454,9 +463,9 @@ export function explainHeating({
     const lowered = effTarget != null && schedTarget != null && effTarget < schedTarget - 0.05;
     return out({
       state: 'away', tone: 'accent', icon: 'away',
-      headline: heatingNow ? `Away — heating to ${deg(effTarget)}` : `Away — holding ${deg(effTarget)}`,
-      detail: `Nobody home (TADO)${lowered ? ` · schedule ${deg(schedTarget)}` : ''}${t != null ? ` · room ${deg(t)}` : ''}`,
-      tag: { tone: 'accent', icon: 'away', text: effTarget != null ? `Away ${deg(effTarget)}` : 'Away' },
+      headline: heatingNow ? `Ude — varmer til ${deg(effTarget)}` : `Ude — holder ${deg(effTarget)}`,
+      detail: `Ingen hjemme (TADO)${lowered ? ` · tidsplan ${deg(schedTarget)}` : ''}${t != null ? ` · rummet ${deg(t)}` : ''}`,
+      tag: { tone: 'accent', icon: 'away', text: effTarget != null ? `Ude ${deg(effTarget)}` : 'Ude' },
     });
   }
 
@@ -465,12 +474,12 @@ export function explainHeating({
   // 9. Heating right now.
   if (heatingNow) {
     const how = kind === 'tado'
-      ? (num(power) != null ? `Valve at ${Math.round(power)}%` : 'Valve open')
-      : 'Radiators on';
+      ? (num(power) != null ? `Ventil på ${Math.round(power)}%` : 'Ventil åben')
+      : 'Radiatorer tændt';
     return out({
       state: 'heating', tone: 'heat', icon: 'flame',
-      headline: `Heating to ${deg(effTarget)}`,
-      detail: `${how}${t != null ? ` · room ${deg(t)}` : ''}`,
+      headline: `Varmer til ${deg(effTarget)}`,
+      detail: `${how}${t != null ? ` · rummet ${deg(t)}` : ''}`,
     });
   }
 
@@ -478,17 +487,17 @@ export function explainHeating({
   if (t != null && effTarget != null && t >= effTarget - 0.3) {
     return out({
       state: 'warm', tone: 'good', icon: 'check',
-      headline: `Warm enough — ${deg(t)}`,
-      detail: `Target ${deg(effTarget)}${schedTarget != null && Math.abs(schedTarget - effTarget) > 0.05 ? ` (schedule ${deg(schedTarget)})` : ''} · heats again when it drops below`,
+      headline: `Varmt nok — ${deg(t)}`,
+      detail: `Mål ${deg(effTarget)}${schedTarget != null && Math.abs(schedTarget - effTarget) > 0.05 ? ` (tidsplan ${deg(schedTarget)})` : ''} · varmer igen, når det falder under`,
     });
   }
 
   // 11. Below target but not heating: the valve/thermostat decides (or the next run will).
   return out({
     state: 'idle', tone: 'muted', icon: 'idle',
-    headline: effTarget != null ? `Not heating — target ${deg(effTarget)}` : 'Not heating',
+    headline: effTarget != null ? `Varmer ikke — mål ${deg(effTarget)}` : 'Varmer ikke',
     detail: kind === 'tado'
-      ? `The valve is not calling for heat right now${t != null ? ` · room ${deg(t)}` : ''}`
-      : `Radiators switch on at the next check${t != null ? ` · room ${deg(t)}` : ''}`,
+      ? `Ventilen kalder ikke på varme lige nu${t != null ? ` · rummet ${deg(t)}` : ''}`
+      : `Radiatorerne tænder ved næste tjek${t != null ? ` · rummet ${deg(t)}` : ''}`,
   });
 }

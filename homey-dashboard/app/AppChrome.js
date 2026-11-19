@@ -15,8 +15,8 @@ import styles from './AppChrome.module.css';
 
 const THEMES = [
   ['system', 'Auto', Monitor],
-  ['light', 'Light', Sun],
-  ['dark', 'Dark', Moon],
+  ['light', 'Lyst', Sun],
+  ['dark', 'Mørkt', Moon],
 ];
 
 export default function AppChrome({
@@ -49,10 +49,10 @@ export default function AppChrome({
   const liveDot = liveEnabled && signedIn && (
     <span
       className={styles.live} data-live={live || undefined}
-      title={live ? 'Live — updates stream in from Homey' : 'Connecting to the live stream…'}
+      title={live ? 'Live — opdateringer kommer løbende fra Homey' : 'Forbinder til live-strømmen…'}
     >
       {live ? <span className="hd-live-dot" /> : <LoaderCircle size={13} style={SPIN} />}
-      <span className={styles.liveText}>{live ? 'Live' : 'Connecting…'}</span>
+      <span className={styles.liveText}>{live ? 'Live' : 'Forbinder…'}</span>
     </span>
   );
 
@@ -68,7 +68,7 @@ export default function AppChrome({
             </h1>
           </div>
 
-          <nav className={styles.tabs} aria-label="Sections">
+          <nav className={styles.tabs} aria-label="Sektioner">
             {main.map(({ key, label, Icon }) => (
               <button
                 key={key} type="button" onClick={() => choose(key)}
@@ -94,7 +94,7 @@ export default function AppChrome({
         </div>
       </header>
 
-      <nav className={styles.bar} aria-label="Sections">
+      <nav className={styles.bar} aria-label="Sektioner">
         {main.map(({ key, short, Icon }) => (
           <button
             key={key} type="button" onClick={() => choose(key)}
@@ -117,7 +117,7 @@ export default function AppChrome({
 
       {open && (
         <>
-          <button type="button" className={styles.backdrop} aria-label="Close menu" onClick={() => setOpen(false)} />
+          <button type="button" className={styles.backdrop} aria-label="Luk menu" onClick={() => setOpen(false)} />
           <div id="app-menu" className={styles.sheet} role="dialog" aria-label="Menu">
             <div className={styles.grab} aria-hidden="true" />
             <div className={styles.group}>
@@ -136,8 +136,8 @@ export default function AppChrome({
 
             <div className={styles.group}>
               <div className={styles.themeRow}>
-                <span className={styles.rowLabel}>Theme</span>
-                <div className="hd-seg" role="group" aria-label="Theme">
+                <span className={styles.rowLabel}>Tema</span>
+                <div className="hd-seg" role="group" aria-label="Tema">
                   {THEMES.map(([key, label, Icon]) => (
                     <button key={key} type="button" aria-pressed={themePref === key} onClick={() => onTheme(key)}>
                       <Icon size={14} /> {label}
@@ -148,14 +148,14 @@ export default function AppChrome({
               {signedIn && (
                 <button type="button" className={styles.row} onClick={onRefresh} disabled={refreshing}>
                   <span className={styles.rowIcon}><RefreshCw size={19} strokeWidth={2} style={refreshing ? SPIN : undefined} /></span>
-                  <span className={styles.rowLabel}>{refreshing ? 'Refreshing…' : 'Refresh now'}</span>
-                  <span className={styles.rowNote}>{live ? 'live' : `next in ${countdown}s`}</span>
+                  <span className={styles.rowLabel}>{refreshing ? 'Opdaterer…' : 'Opdater nu'}</span>
+                  <span className={styles.rowNote}>{live ? 'live' : `om ${countdown} s`}</span>
                 </button>
               )}
               {signedIn && (
                 <a className={styles.row} href="/api/auth/logout">
                   <span className={styles.rowIcon}><LogOut size={19} strokeWidth={2} /></span>
-                  <span className={styles.rowLabel}>Disconnect</span>
+                  <span className={styles.rowLabel}>Log af</span>
                   {homeyName && <span className={styles.rowNote}>{homeyName}</span>}
                 </a>
               )}

@@ -6,7 +6,7 @@ const inter = Inter({ subsets: ['latin'], display: 'swap', variable: '--font-int
 
 export const metadata = {
   title: 'Skovgaard Dashboard',
-  description: 'Live room status and flow overview for your Homey.',
+  description: 'Varme, lys og vejr for hjemmet, via Homey.',
 };
 
 export const viewport = {
@@ -25,7 +25,7 @@ const THEME_INIT = `try{var t=localStorage.getItem('hd-theme');if(t==='light'||t
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className={inter.variable} suppressHydrationWarning>
+    <html lang="da" className={inter.variable} suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT }} />
       </head>

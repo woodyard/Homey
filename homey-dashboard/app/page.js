@@ -26,7 +26,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '2.1.1';
+const APP_VERSION = '2.2.0';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).
@@ -40,11 +40,11 @@ const TZ = 'Europe/Copenhagen';
 
 // [key, label, Icon, short label for the bottom bar]
 const TABS = [
-  ['heating', 'Heating', Flame],
-  ['lighting', 'Lighting', Lightbulb, 'Lights'],
-  ['weather', 'Weather', CloudSun],
-  ['temperatures', 'Temperatures', Thermometer, 'Temps'],
-  ['activity', 'Live activity', Activity, 'Activity'],
+  ['heating', 'Varme', Flame],
+  ['lighting', 'Lys', Lightbulb],
+  ['weather', 'Vejr', CloudSun],
+  ['temperatures', 'Temperaturer', Thermometer, 'Temp.'],
+  ['activity', 'Aktivitet', Activity],
 ];
 const NAV_TABS = ['heating', 'lighting', 'weather', 'temperatures']; // in the bar; the rest live in the menu
 const TAB_KEYS = TABS.map((t) => t[0]);
@@ -145,7 +145,7 @@ export default function Page() {
       const r = await fetch('/api/homey/devices');
       if (r.status === 401) { setAuthState('signedOut'); return; }
       const data = await r.json();
-      if (!r.ok) throw new Error(data.error || 'failed to load devices');
+      if (!r.ok) throw new Error(data.error || 'Kunne ikke hente enheder');
       diffAndLog(data.devices);
       setDevices(data.devices);
       if (data.zones) setZones(data.zones);
@@ -166,7 +166,7 @@ export default function Page() {
         body: JSON.stringify({ items: [{ deviceId, values }] }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'control failed');
+      if (!r.ok) throw new Error(data.error || 'Kunne ikke betjene enheden');
       if (data.errors && data.errors.length) { setError(data.errors.join(' · ')); refreshRef.current(); }
     } catch (e) {
       setError(String(e.message || e));
@@ -179,7 +179,7 @@ export default function Page() {
       const r = await fetch('/api/homey/notifications');
       if (r.status === 401) { setAuthState('signedOut'); return; }
       const data = await r.json();
-      if (!r.ok) throw new Error(data.error || 'failed to load notifications');
+      if (!r.ok) throw new Error(data.error || 'Kunne ikke hente notifikationer');
       setNotifications(data.notifications.map((n) => ({ ...n, ts: new Date(n.dateCreated) })));
     } catch { /* notifications are best-effort */ }
   }
@@ -189,7 +189,7 @@ export default function Page() {
       const r = await fetch('/api/homey/flows');
       if (r.status === 401) { setAuthState('signedOut'); return; }
       const data = await r.json();
-      if (!r.ok) throw new Error(data.error || 'failed to load flows');
+      if (!r.ok) throw new Error(data.error || 'Kunne ikke hente flows');
       setFlows(data.flows);
     } catch (e) {
       setError(String(e.message || e));
@@ -332,7 +332,7 @@ export default function Page() {
 
   const homeyTab = !!tab && tab !== 'weather';
   const signedIn = authState === 'signedIn';
-  const dateLabel = clock ? clock.toLocaleDateString('en-GB', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' }) : '';
+  const dateLabel = clock ? clock.toLocaleDateString('da-DK', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'short' }) : '';
   const timeLabel = clock ? clock.toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }) : '';
   const reload = () => refreshRef.current();
 
@@ -350,17 +350,17 @@ export default function Page() {
 
         {homeyTab && authState === 'checking' && (
           <div className={styles.checking}>
-            <LoaderCircle size={18} style={SPIN} /> Checking your Homey connection…
+            <LoaderCircle size={18} style={SPIN} /> Tjekker forbindelsen til Homey…
           </div>
         )}
 
         {homeyTab && authState === 'signedOut' && (
           <div className={cx('hd-card', styles.connectCard)}>
             <div className={styles.connectIcon} aria-hidden="true"><Plug size={26} strokeWidth={2} /></div>
-            <h2 className={styles.connectTitle}>Connect to Homey</h2>
+            <h2 className={styles.connectTitle}>Forbind til Homey</h2>
             {errBox}
             <a href="/api/auth/login" className={cx('hd-btn hd-btn-primary', styles.btnLg)}>
-              <Plug size={17} /> Connect to Homey
+              <Plug size={17} /> Forbind til Homey
             </a>
           </div>
         )}

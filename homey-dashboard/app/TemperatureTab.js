@@ -8,8 +8,8 @@ import { LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react';
 import styles from './TemperatureTab.module.css';
 
 const PERIODS = [
-  ['last6Hours', '6 h'],
-  ['last24Hours', '24 h'],
+  ['last6Hours', '6 t'],
+  ['last24Hours', '24 t'],
   ['last7Days', '7 d'],
   ['last14Days', '14 d'],
   ['last31Days', '31 d'],
@@ -33,7 +33,7 @@ function sensorDash(index) {
 
 function shortZone(zone) {
   const parts = String(zone || '').split(' > ');
-  return parts[parts.length - 1] || 'No room';
+  return parts[parts.length - 1] || 'Uden rum';
 }
 
 function fmtTemp(value) {
@@ -130,8 +130,8 @@ function TemperatureChart({ sensors, series, period, loading }) {
   function xLabel(ms) {
     const date = new Date(ms);
     if (period === 'last6Hours') return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    if (period === 'last24Hours') return date.toLocaleString('en-GB', { weekday: 'short', hour: '2-digit' });
-    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    if (period === 'last24Hours') return `${date.toLocaleDateString('da-DK', { weekday: 'short' })} ${date.toLocaleTimeString('en-GB', { hour: '2-digit' })}`;
+    return date.toLocaleDateString('da-DK', { day: 'numeric', month: 'short' });
   }
 
   function onMove(event) {
@@ -155,17 +155,17 @@ function TemperatureChart({ sensors, series, period, loading }) {
         <div className={`hd-skeleton ${styles.chartSkeleton}`}>
           <span className={styles.chartSkeletonLabel}>
             <LoaderCircle size={14} className={styles.spin} />
-            Loading history…
+            Henter historik…
           </span>
         </div>
       )}
       {chart.empty && !loading && (
-        <div className={`hd-empty ${styles.chartEmpty}`}>No sensor selected.</div>
+        <div className={`hd-empty ${styles.chartEmpty}`}>Ingen måler valgt.</div>
       )}
       {!chart.empty && (
         <svg
           viewBox={`0 0 ${W} ${H}`} role="img"
-          aria-label={`Temperature history for ${sensors.length} sensors`}
+          aria-label={`Temperaturhistorik for ${sensors.length} målere`}
           onMouseMove={onMove} onMouseLeave={() => setHover(null)}
         >
           {chart.paths.length === 1 && (
@@ -232,14 +232,14 @@ function TemperatureChart({ sensors, series, period, loading }) {
         <div className={styles.busy}>
           <span className={styles.chartSkeletonLabel}>
             <LoaderCircle size={14} className={styles.spin} />
-            Updating…
+            Opdaterer…
           </span>
         </div>
       )}
       {!chart.empty && hover && (
         <div className={styles.tooltip} style={tooltipStyle}>
           <span className={styles.tooltipTime}>
-            {new Date(hover.ms).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+            {`${new Date(hover.ms).toLocaleDateString('da-DK', { weekday: 'short', day: 'numeric', month: 'short' })} ${new Date(hover.ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}
           </span>
           {hover.values.map(({ sensor, entry }) => (
             <span key={sensor.key} className={styles.tooltipRow}>
@@ -272,7 +272,7 @@ export default function TemperatureTab() {
     fetch('/api/homey/temperatures')
       .then(async (response) => {
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Could not load the temperature sensors');
+        if (!response.ok) throw new Error(data.error || 'Kunne ikke hente temperaturmålerne');
         if (cancelled) return;
         setSensors(data.sensors || []);
         const savedRaw = window.localStorage.getItem(SELECTED_KEY);
@@ -305,7 +305,7 @@ export default function TemperatureTab() {
         const params = new URLSearchParams({ period, ids: selected.join(',') });
         const response = await fetch(`/api/homey/temperatures?${params}`, { signal: controller.signal });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Could not load the temperature history');
+        if (!response.ok) throw new Error(data.error || 'Kunne ikke hente temperaturhistorikken');
         setSeries(data.series || []);
       } catch (e) {
         if (e.name !== 'AbortError') setError(String(e.message || e));
@@ -354,7 +354,7 @@ export default function TemperatureTab() {
   return (
     <section className={styles.tab}>
       <div className={styles.bar}>
-        <div className={`hd-seg ${styles.periods}`} role="group" aria-label="Period">
+        <div className={`hd-seg ${styles.periods}`} role="group" aria-label="Periode">
           {PERIODS.map(([value, label]) => (
             <button key={value} type="button" aria-pressed={period === value} onClick={() => setPeriod(value)}>
               {label}
@@ -363,7 +363,7 @@ export default function TemperatureTab() {
         </div>
         <button
           type="button" className="hd-icon-btn" onClick={() => setReloadKey((value) => value + 1)}
-          disabled={loadingData} aria-label="Refresh" title="Refresh"
+          disabled={loadingData} aria-label="Opdater" title="Opdater"
         >
           <RefreshCw size={17} strokeWidth={2} className={loadingData ? styles.spin : undefined} />
         </button>
@@ -382,12 +382,12 @@ export default function TemperatureTab() {
 
       {sensors.length > 0 && (
         <div className={styles.pickHead}>
-          <span className="hd-num">{selected.length} of {sensors.length} shown</span>
+          <span className="hd-num">{selected.length} af {sensors.length} vist</span>
           <button
             type="button" className="hd-btn hd-btn-ghost hd-btn-sm"
             onClick={() => setSelected(allSelected ? [] : sensors.map((sensor) => sensor.key))}
           >
-            {allSelected ? 'Hide all' : 'Show all'}
+            {allSelected ? 'Skjul alle' : 'Vis alle'}
           </button>
         </div>
       )}

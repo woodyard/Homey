@@ -19,8 +19,8 @@ function renderExcerpt(text) {
 }
 
 function fmtVal(v) {
-  if (v === true) return 'on';
-  if (v === false) return 'off';
+  if (v === true) return 'til';
+  if (v === false) return 'fra';
   if (v === null || v === undefined) return '—';
   return String(v);
 }
@@ -97,14 +97,15 @@ function dayKey(ts) {
   const d = new Date(ts);
   const today = new Date();
   const days = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
-  if (days === 0) return 'Today';
-  if (days === 1) return 'Yesterday';
-  return d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+  if (days === 0) return 'I dag';
+  if (days === 1) return 'I går';
+  const day = d.toLocaleDateString('da-DK', { weekday: 'long', day: 'numeric', month: 'long' });
+  return day.charAt(0).toUpperCase() + day.slice(1);
 }
 
 export default function ActivityTab({ feed }) {
   if (!feed.length) {
-    return <Empty icon={Activity}>Nothing yet. Notifications and device changes appear here as they happen.</Empty>;
+    return <Empty icon={Activity}>Intet endnu. Notifikationer og enhedsændringer vises her, når de sker.</Empty>;
   }
   const groups = [];
   feed.forEach((item) => {

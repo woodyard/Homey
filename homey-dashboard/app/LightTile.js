@@ -7,6 +7,7 @@
 import { useState } from 'react';
 import { ChevronDown, Hand, Lightbulb, Palette, SunMedium, Thermometer, TriangleAlert } from 'lucide-react';
 import { describeLightStatus, isIdle, tempColor } from '../lib/adaptiveLighting';
+import { slotName } from '../lib/heatingState';
 import { cx, SliderRow } from './ui';
 import styles from './LightTile.module.css';
 
@@ -15,7 +16,7 @@ const WARMTH_TRACK = `linear-gradient(90deg, ${tempColor(0)}, ${tempColor(1)})`;
 
 // A single bulb as a glowing tile with live state. `al` is resolveLightMode's
 // { mode, guess, st } for lights AdaptiveLighting manages, else null.
-const LIGHT_MODE_LABEL = { auto: 'Auto', manual: 'Manual', drift: 'Manual?', forced: 'Forced', off: 'Off', unknown: '—' };
+const LIGHT_MODE_LABEL = { auto: 'Auto', manual: 'Manuelt', drift: 'Manuelt?', forced: 'Låst', off: 'Slukket', unknown: '—' };
 export default function LightTile({ device, al, onToggle, onSet }) {
   const [open, setOpen] = useState(false);
   const mode = al ? al.mode : null;
@@ -32,7 +33,7 @@ export default function LightTile({ device, al, onToggle, onSet }) {
   }
   const dim = c.dim;
   const modeText = mode
-    ? `${mode === 'forced' && al.st?.profile ? `Forced ${al.st.profile}` : LIGHT_MODE_LABEL[mode] || mode}${al.guess ? ' (guessed)' : ''}${!al.guess && mode !== 'off' && isIdle(al.st) ? ' · idle' : ''}`
+    ? `${mode === 'forced' && al.st?.profile ? `Låst ${slotName(al.st.profile)}` : LIGHT_MODE_LABEL[mode] || mode}${al.guess ? ' (gættet)' : ''}${!al.guess && mode !== 'off' && isIdle(al.st) ? ' · dæmpet' : ''}`
     : '';
   const alText = al && al.st ? describeLightStatus(al.st) : '';
   // A lit tile is tinted by the bulb's own colour with a glow that grows with brightness.
@@ -57,8 +58,8 @@ export default function LightTile({ device, al, onToggle, onSet }) {
   return (
     <div
       title={unavailable
-        ? `${device.name}: unavailable (unpowered or unreachable)`
-        : `${device.name}: ${on ? (dim != null ? `${Math.round(dim * 100)}%` : 'on') : 'off'}${modeText ? ` · ${modeText}` : ''}${alText ? `\nScript: ${alText}` : ''}`}
+        ? `${device.name}: utilgængelig (uden strøm eller uden forbindelse)`
+        : `${device.name}: ${on ? (dim != null ? `${Math.round(dim * 100)}%` : 'tændt') : 'slukket'}${modeText ? ` · ${modeText}` : ''}${alText ? `\nScript: ${alText}` : ''}`}
       className={cx(styles.tile, unavailable && styles.tileUnavailable)}
       style={tileStyle}
     >
@@ -66,20 +67,20 @@ export default function LightTile({ device, al, onToggle, onSet }) {
         <button
           type="button" className={styles.bulb} style={iconStyle} disabled={!canSwitch}
           onClick={() => onToggle(!on)} aria-pressed={on}
-          aria-label={device.alwaysOn ? `${device.name}: always on` : `Turn ${device.name} ${on ? 'off' : 'on'}`}
+          aria-label={device.alwaysOn ? `${device.name}: altid tændt` : `${on ? 'Sluk' : 'Tænd'} ${device.name}`}
         >
           <Lightbulb size={20} strokeWidth={2} />
         </button>
         <button
           type="button" className={styles.tileMain} disabled={!canAdjust}
           onClick={() => setOpen((o) => !o)} aria-expanded={canAdjust ? open : undefined}
-          aria-label={canAdjust ? `Adjust ${device.name}` : undefined}
+          aria-label={canAdjust ? `Justér ${device.name}` : undefined}
         >
           <span className={styles.tileBody}>
             <span className={styles.tileName}>{device.name}</span>
             <span className={styles.tileMeta}>
-              {unavailable && <span className={styles.warnIcon} title="Unavailable"><TriangleAlert size={12} /></span>}
-              <span>{on ? (dim != null ? `${Math.round(dim * 100)}%` : 'On') : 'Off'}</span>
+              {unavailable && <span className={styles.warnIcon} title="Utilgængelig"><TriangleAlert size={12} /></span>}
+              <span>{on ? (dim != null ? `${Math.round(dim * 100)}%` : 'Tændt') : 'Slukket'}</span>
               {/* Auto is the normal state and gets no tag: only what differs from it is shown.
                   Manual is the hand Heating uses for a manual target, without the word. */}
               {(mode === 'manual' || mode === 'drift') && (
@@ -90,8 +91,8 @@ export default function LightTile({ device, al, onToggle, onSet }) {
                   <Hand size={13} strokeWidth={2.4} />
                 </span>
               )}
-              {mode === 'forced' && <span className="hd-tag hd-tag-accent">{al.st?.profile || 'Forced'}</span>}
-              {idle && <span className="hd-tag">Idle</span>}
+              {mode === 'forced' && <span className="hd-tag hd-tag-accent">{al.st?.profile ? slotName(al.st.profile) : 'Låst'}</span>}
+              {idle && <span className="hd-tag">Dæmpet</span>}
             </span>
           </span>
           {canAdjust && <ChevronDown size={17} className={cx(styles.chev, open && styles.chevOpen)} />}
@@ -101,21 +102,21 @@ export default function LightTile({ device, al, onToggle, onSet }) {
         <div className={styles.tileSliders}>
           {canDim && (
             <SliderRow
-              icon={SunMedium} label={`${device.name} brightness`} value={dim ?? 0}
+              icon={SunMedium} label={`${device.name} lysstyrke`} value={dim ?? 0}
               track={`linear-gradient(90deg, var(--surface-3), ${color})`}
               onCommit={(v) => onSet({ dim: v, ...(v > 0 ? turnOn : {}) })}
             />
           )}
           {canWarm && (
             <SliderRow
-              icon={Thermometer} label={`${device.name} warmth`} value={c.light_temperature ?? 0}
+              icon={Thermometer} label={`${device.name} farvetemperatur`} value={c.light_temperature ?? 0}
               track={WARMTH_TRACK} fmt={() => null}
               onCommit={(v) => onSet({ light_temperature: v, ...('light_mode' in c ? { light_mode: 'temperature' } : {}), ...turnOn })}
             />
           )}
           {canColour && (
             <SliderRow
-              icon={Palette} label={`${device.name} colour`} value={c.light_hue ?? 0}
+              icon={Palette} label={`${device.name} farve`} value={c.light_hue ?? 0}
               track={HUE_TRACK} fmt={() => null}
               onCommit={(v) => onSet({
                 light_hue: v,
