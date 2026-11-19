@@ -31,15 +31,23 @@ export function emptyRoomPlan(code, vars, nowMin) {
 }
 
 /**
- * When the room became empty (ms), or null while someone is there. The zone's own moment
- * when Homey has it, else the last time a motion sensor in the zone changed.
+ * When the room became empty: { since (ms), counting } — or null while someone is there or it is
+ * not known. `since` is the latest of the motion sensors' last change (live, with every update)
+ * and the zone going inactive (polled, so it can be minutes old — never earlier than the motion).
+ * `counting` is false while the zone still reads active from something other than motion (an open
+ * door): the flows' countdown starts only when the zone goes inactive.
  */
 export function emptySince(motionDevs, zone) {
   if (motionDevs.some((d) => d.capabilities && d.capabilities.alarm_motion === true)) return null;
-  if (zone && zone.active === true) return null;
-  if (zone && zone.active === false && zone.activeLastUpdated) return new Date(zone.activeLastUpdated).getTime();
-  const times = motionDevs
+  const motionAt = Math.max(0, ...motionDevs
     .map((d) => (d.capTimes && d.capTimes.alarm_motion ? new Date(d.capTimes.alarm_motion).getTime() : 0))
-    .filter((t) => t > 0);
-  return times.length ? Math.max(...times) : null;
+    .filter((t) => Number.isFinite(t)));
+  const zoneAt = zone && zone.activeLastUpdated ? new Date(zone.activeLastUpdated).getTime() : 0;
+  if (zone && zone.active === true) {
+    // Active since after the last motion: something else holds it (a door) — no countdown yet.
+    // Active from before it: the poll is behind the motion sensor
+    return motionAt > 0 ? { since: motionAt, counting: !(zoneAt > motionAt) } : null;
+  }
+  const since = Math.max(motionAt, zone && zone.active === false ? zoneAt : 0);
+  return since > 0 ? { since, counting: true } : null;
 }

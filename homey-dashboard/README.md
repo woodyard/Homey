@@ -125,6 +125,11 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.6.4** (2026-11-19) — Lys: when the motion stops, "Ingen bevægelse i" starts at 0:00, as on
+  Varme. It counted from the zone's inactive time, which is polled every 20 s and could be minutes
+  old ("Der er nogen i rummet" → "Ingen bevægelse i 4 min"). Now the latest of the motion sensor's
+  own change, the zone's time and the moment the page saw the motion stop. While the zone still
+  reads active from something else (an open door) the countdown waits, as the flows do.
 - **2.6.3** (2026-11-19) — Varme: Stue shows "Der er nogen i rummet" / "Ingen bevægelse i …" again.
   The heating room is the zone Stue / Spisestue and its motion sensor sits in the child zone Stue;
   motion sensors are now found in child zones too, as the windows already were.

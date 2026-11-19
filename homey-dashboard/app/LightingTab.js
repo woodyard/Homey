@@ -9,7 +9,7 @@
 // Varme: someone is there, or how long it has been empty and — where the flows' timing is known —
 // a countdown with a bar to when the lights dim or switch off (lib/emptyRoom.js).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Hand, LoaderCircle, Pin, RotateCcw, Sun, Sunrise, Sunset,
 } from 'lucide-react';
@@ -301,14 +301,23 @@ function Occupancy({ devices, zones, zonePath, vars, nowMin, code, lightsOn, dim
     return () => clearInterval(iv);
   }, []);
   const motionDevs = (devices || []).filter((d) => d.zonePath === zonePath && d.capabilities && 'alarm_motion' in d.capabilities);
+  const present = motionDevs.some((d) => d.capabilities.alarm_motion === true);
+  // As on Varme: the moment this page saw the motion stop counts too, so the counter starts at
+  // 0:00 even when Homey's times arrive late
+  const stoppedRef = useRef(null);
+  const wasPresentRef = useRef(present);
+  if (present) stoppedRef.current = null;
+  else if (wasPresentRef.current) stoppedRef.current = Date.now();
+  wasPresentRef.current = present;
   if (!motionDevs.length) return null;
-  if (motionDevs.some((d) => d.capabilities.alarm_motion === true)) return <Presence className={styles.presence} />;
+  if (present) return <Presence className={styles.presence} />;
   const zoneId = motionDevs[0].zoneId;
-  const since = emptySince(motionDevs, zones && zoneId ? zones[zoneId] : null);
-  if (since == null) return null;
+  const empty = emptySince(motionDevs, zones && zoneId ? zones[zoneId] : null);
+  if (!empty && stoppedRef.current == null) return null;
+  const since = Math.max(empty ? empty.since : 0, stoppedRef.current || 0);
   const now = Date.now();
   const secs = Math.max(0, Math.floor((now - since) / 1000));
-  const plan = lightsOn && !dimmed ? emptyRoomPlan(code, vars, nowMin) : null;
+  const plan = lightsOn && !dimmed && (!empty || empty.counting) ? emptyRoomPlan(code, vars, nowMin) : null;
   const left = plan ? plan.seconds - secs : -1;
   const counting = plan && left > 0;
   const tone = plan && plan.action === 'dim' ? 'var(--accent)' : 'var(--warn)';
