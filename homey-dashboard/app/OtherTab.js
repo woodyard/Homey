@@ -3,13 +3,16 @@
 // Andet: devices that have no tab of their own.
 //  • The washing machine: how far the wash has come, when it is done, and what else the
 //    machine reports (program, phase, spin speed, energy and water used).
-//  • The robot vacuum: what it is doing, how it cleans, and anything it needs help with.
-// Read-only: the devices are started where they always are.
+//  • The robot vacuum: what it is doing, how it cleans, anything it needs help with, and
+//    buttons to start it, pause it, continue and send it home.
+// The washing machine is read-only: it is started at the machine.
 
+import { useEffect, useState } from 'react';
 import {
-  Bot, CircleCheck, Droplets, Info, RotateCw, Sparkles, Timer, TriangleAlert, WashingMachine, Zap,
+  Bot, CircleCheck, Droplets, House, Info, LoaderCircle, Pause, Play, RotateCw, Sparkles, Timer, TriangleAlert,
+  WashingMachine, Zap,
 } from 'lucide-react';
-import { clamp, cx, Empty, roomNameFromPath } from './ui';
+import { clamp, cx, Empty, roomNameFromPath, SPIN } from './ui';
 import styles from './OtherTab.module.css';
 
 const TZ = 'Europe/Copenhagen';
@@ -183,6 +186,7 @@ const VACUUM_DA = {
 // Without a title from Homey: the numbers this robot reports (as its flow cards list them).
 const VACUUM_STATE_BY_ID = { 0: 'Stopped', 1: 'Running', 2: 'Paused', 3: 'Error', 64: 'Seeking charger', 65: 'Charging', 66: 'Docked' };
 const VACUUM_JOB_BY_ID = { 0: 'Idle', 1: 'Cleaning', 2: 'Mapping' };
+const VACUUM_JOB_CLEANING = '1'; // setting the job mode to Cleaning starts the robot
 // Homey leaves some titles as a raw key ("Cluster.rvc_run_mode.tag.mapping"): keep its last word.
 const vacuumLabel = (label) => {
   const s = label == null ? '' : String(label).trim();
@@ -201,20 +205,54 @@ const VACUUM_ALARMS = [
   ['alarm_cleaning_pad_missing', 'Moppen mangler'],
 ];
 
-function VacuumCard({ device }) {
+function VacuumCard({ device, onControl, onReload }) {
   const c = device.capabilities || {};
   const labels = device.capLabels || {};
-  const raw = vacuumLabel(labels.operational_state) || VACUUM_STATE_BY_ID[c.operational_state] || '';
+  // The numbers are known for this robot, and follow a press at once; Homey's title is the fallback.
+  const raw = VACUUM_STATE_BY_ID[c.operational_state] || vacuumLabel(labels.operational_state) || '';
   const key = raw.trim().toLowerCase();
   const alarms = VACUUM_ALARMS.filter(([cap]) => c[cap] === true);
+  const running = key === 'running';
+  const goingHome = key === 'seeking charger' || key === 'returning to dock';
   let state = 'idle';
   if (key === 'error' || alarms.length) state = 'failure';
-  else if (key === 'running' || key === 'seeking charger' || key === 'returning to dock') state = 'running';
+  else if (running || goingHome) state = 'running';
   else if (key === 'paused') state = 'paused';
-  const job = translate(VACUUM_DA, vacuumLabel(labels.vacuumcleaner_job_mode) || VACUUM_JOB_BY_ID[c.vacuumcleaner_job_mode]);
+  const jobRaw = VACUUM_JOB_BY_ID[c.vacuumcleaner_job_mode] || vacuumLabel(labels.vacuumcleaner_job_mode);
+  const job = translate(VACUUM_DA, jobRaw);
+  const jobIdle = String(jobRaw || '').toLowerCase() === 'idle';
   // The clean mode has no known list: shown only when Homey gives it a title.
   const mode = translate(VACUUM_DA, vacuumLabel(labels['vacuumcleaner_job_mode.clean_mode']));
-  const statusText = device.available === false ? 'Ikke forbundet' : (translate(VACUUM_DA, raw) || '—');
+  const unavailable = device.available === false;
+  const statusText = unavailable ? 'Ikke forbundet' : (translate(VACUUM_DA, raw) || '—');
+
+  // A pressed button spins until the robot reports a new state (or 15 s have passed).
+  const [pending, setPending] = useState(null);
+  useEffect(() => { setPending(null); }, [c.operational_state, c.vacuumcleaner_job_mode]);
+  function press(name, values) {
+    setPending(name);
+    onControl(device.id, values);
+    [2500, 6000, 12000].forEach((ms) => setTimeout(() => onReload && onReload(), ms));
+    setTimeout(() => setPending((p) => (p === name ? null : p)), 15000);
+  }
+
+  // What can be done now. Start is "set the job to Cleaning"; the rest are the robot's own buttons.
+  const docked = key === 'docked' || key === 'charging';
+  const actions = [];
+  if (onControl && !unavailable) {
+    const has = (cap) => cap in c;
+    if (running || goingHome) {
+      if (has('button.operational_state_pause')) actions.push(['pause', 'Pause', Pause, { 'button.operational_state_pause': true }]);
+    } else if (jobIdle || !key || key === 'stopped' || docked) {
+      if (has('vacuumcleaner_job_mode')) actions.push(['start', 'Start', Play, { vacuumcleaner_job_mode: VACUUM_JOB_CLEANING }, true]);
+    } else if (has('button.operational_state_resume')) {
+      actions.push(['resume', 'Fortsæt', Play, { 'button.operational_state_resume': true }, true]);
+    }
+    if (!docked && !goingHome && has('button.operational_state_go_home')) {
+      actions.push(['home', 'Hjem', House, { 'button.operational_state_go_home': true }]);
+    }
+  }
+
   return (
     <article className={styles.card} data-state={state}>
       <header className={styles.head}>
@@ -236,18 +274,32 @@ function VacuumCard({ device }) {
           {mode && <Fact icon={Sparkles} label="Rengøring" value={mode} />}
         </dl>
       )}
+
+      {actions.length > 0 && (
+        <div className={styles.actions}>
+          {actions.map(([name, label, Icon, values, primary]) => (
+            <button
+              key={name} type="button" className={cx('hd-btn', primary && 'hd-btn-primary')}
+              onClick={() => press(name, values)} disabled={pending != null}
+            >
+              {pending === name ? <LoaderCircle size={16} style={SPIN} /> : <Icon size={16} />}
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
     </article>
   );
 }
 
-export default function OtherTab({ devices }) {
+export default function OtherTab({ devices, onControl, onReload }) {
   const washers = (devices || []).filter((d) => d.class === 'washer');
   const vacuums = (devices || []).filter((d) => d.class === 'vacuumcleaner');
   if (!washers.length && !vacuums.length) return <Empty icon={WashingMachine}>Ingen enheder fundet.</Empty>;
   return (
     <div className={styles.wrap}>
       {washers.map((d) => <WasherCard key={d.id} device={d} />)}
-      {vacuums.map((d) => <VacuumCard key={d.id} device={d} />)}
+      {vacuums.map((d) => <VacuumCard key={d.id} device={d} onControl={onControl} onReload={onReload} />)}
     </div>
   );
 }

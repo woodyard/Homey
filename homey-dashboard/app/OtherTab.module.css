@@ -73,6 +73,11 @@
 .fact dt svg { flex-shrink: 0; }
 .fact dd { margin: 4px 0 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 
+/* ---------- actions ---------- */
+
+.actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
+.actions > button { min-height: 46px; border-radius: 14px; }
+
 @media (min-width: 900px) {
   .card { padding: 20px; }
 }

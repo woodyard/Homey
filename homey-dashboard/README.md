@@ -125,6 +125,13 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.5.0** (2026-11-19) — The robot vacuum can be operated from Andet: Start while it is idle or
+  docked, Pause while it runs, Fortsæt when it is paused mid-job, and Hjem to send it to its dock.
+  Start sets the robot's job mode to Cleaning; the others press the robot's own pause, resume and
+  go-home buttons. A pressed button spins until the robot reports a new state. Fixed: a light's
+  brightness, warmth and colour sliders often did nothing on a phone until tried a few times. The
+  value was sent on pointerup, which a finger drag rarely delivers; it is now sent on the slider's
+  own change event.
 - **2.4.0** (2026-11-19) — The robot vacuum is on Andet: what it is doing (docked, running, paused,
   on its way home), its job and cleaning mode, and a line for each thing it needs help with (stuck,
   lost, bin full or missing, water tank empty, missing or open, mop missing). The robot reports its

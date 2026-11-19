@@ -2,7 +2,7 @@
 
 // Small shared pieces used by several tabs.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { TriangleAlert } from 'lucide-react';
 import styles from './ui.module.css';
 
@@ -96,20 +96,31 @@ export function Toggle({ on, onChange, size, title, disabled, label }) {
 // A 0–1 slider with an icon; commits on release, not while dragging. `track` is the CSS
 // background of the track (a gradient that shows what the slider changes). The value is shown
 // as a percentage, or as fmt(v); a fmt that returns null shows no value.
+//
+// The commit listens for the browser's own `change` event, which fires once when the thumb is
+// let go, however it was moved (mouse, finger, keyboard). A pointerup handler misses most
+// finger drags: the browser takes the gesture over and sends pointercancel instead.
 export function SliderRow({ icon: Icon, value, onCommit, track, fmt, label }) {
   const [v, setV] = useState(value);
   useEffect(() => { setV(value); }, [value]);
+  const inputRef = useRef(null);
+  const commitRef = useRef(onCommit);
+  commitRef.current = onCommit;
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return undefined;
+    const onChange = () => commitRef.current(el.valueAsNumber / 100);
+    el.addEventListener('change', onChange);
+    return () => el.removeEventListener('change', onChange);
+  }, []);
   const pct = Math.round((v ?? 0) * 100);
-  const commit = (e) => onCommit(e.target.valueAsNumber / 100);
   const text = fmt ? fmt(v) : `${pct}%`;
   return (
     <div className={styles.sliderRow}>
       <span className={styles.sliderIcon}>{Icon && <Icon size={17} />}</span>
       <input
-        type="range" min={0} max={100} value={pct} aria-label={label}
+        ref={inputRef} type="range" min={0} max={100} value={pct} aria-label={label}
         onChange={(e) => setV(e.target.valueAsNumber / 100)}
-        onPointerUp={commit}
-        onKeyUp={commit}
         className={styles.slider}
         style={track ? { '--track': track } : undefined}
       />

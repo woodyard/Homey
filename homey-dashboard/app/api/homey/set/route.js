@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { readSession, persistSession } from '../../../../lib/sessionCookie';
 import { homeyFetch } from '../../../../lib/homey';
 
-// Set capability values on one or more devices (a light's state and colour, a thermostat target, …).
+// Set capability values on one or more devices (a light's state and colour, a thermostat target,
+// a robot vacuum's job and its pause / resume / go-home buttons, …).
 // Body: { items: [{ deviceId, values: { onoff?, light_mode?, light_hue?, light_saturation?, dim?,
 //                                       light_temperature?, windowcoverings_set?, target_temperature? } }] }
 // Uses homey.device.control — allowed for OAuth clients (unlike running HomeyScript).
@@ -11,6 +12,8 @@ import { homeyFetch } from '../../../../lib/homey';
 const CAP_ORDER = [
   'onoff', 'light_mode', 'light_hue', 'light_saturation', 'dim', 'light_temperature',
   'windowcoverings_set', 'target_temperature',
+  'vacuumcleaner_job_mode', 'button.operational_state_pause', 'button.operational_state_resume',
+  'button.operational_state_go_home',
 ];
 
 export async function POST(request) {
