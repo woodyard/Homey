@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { readSession, persistSession } from '../../../../lib/sessionCookie';
 import { homeyFetch } from '../../../../lib/homey';
 import { buildZonePaths, buildZoneOrders } from '../../../../lib/zones';
+import { capLabels } from '../../../../lib/capLabels';
 
 export async function GET() {
   const session = readSession();
@@ -43,6 +44,7 @@ export async function GET() {
         // "Always on" (energy setting): the device cannot meaningfully be switched off.
         alwaysOn: !!(d.settings && d.settings.energy_alwayson),
         capabilities,
+        capLabels: capLabels(d.capabilitiesObj), // Homey's own title for each enum value
         capTimes,
       };
     });

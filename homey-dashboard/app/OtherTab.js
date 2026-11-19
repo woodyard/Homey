@@ -1,11 +1,13 @@
 'use client';
 
-// Andet: devices that have no tab of their own. For now the washing machine: how far the
-// wash has come, when it is done, and what else the machine reports (program, phase, spin
-// speed, energy and water used). Read-only: the machine is started at the machine.
+// Andet: devices that have no tab of their own.
+//  • The washing machine: how far the wash has come, when it is done, and what else the
+//    machine reports (program, phase, spin speed, energy and water used).
+//  • The robot vacuum: what it is doing, how it cleans, and anything it needs help with.
+// Read-only: the devices are started where they always are.
 
 import {
-  CircleCheck, Droplets, Info, RotateCw, Timer, TriangleAlert, WashingMachine, Zap,
+  Bot, CircleCheck, Droplets, Info, RotateCw, Sparkles, Timer, TriangleAlert, WashingMachine, Zap,
 } from 'lucide-react';
 import { clamp, cx, Empty, roomNameFromPath } from './ui';
 import styles from './OtherTab.module.css';
@@ -167,12 +169,85 @@ function WasherCard({ device }) {
   );
 }
 
+// ------------------------------------------------------------- robot vacuum ----
+
+// Homey gives each state and mode a title (passed along as device.capLabels). Known English
+// titles are shown in Danish; anything else passes through as Homey wrote it.
+const VACUUM_DA = {
+  stopped: 'Stoppet', running: 'Kører', paused: 'På pause', error: 'Fejl', 'seeking charger': 'På vej hjem',
+  'returning to dock': 'På vej hjem', charging: 'Lader', docked: 'I dock',
+  idle: 'Ledig', cleaning: 'Gør rent', mapping: 'Kortlægger',
+  vacuum: 'Støvsugning', mop: 'Gulvvask', 'vacuum and mop': 'Støvsugning og gulvvask', 'vacuum & mop': 'Støvsugning og gulvvask',
+  'vacuum then mop': 'Støvsugning, så gulvvask', 'deep clean': 'Grundig rengøring', quiet: 'Stille', auto: 'Auto',
+};
+// Without a title from Homey: the numbers this robot reports (as its flow cards list them).
+const VACUUM_STATE_BY_ID = { 0: 'Stopped', 1: 'Running', 2: 'Paused', 3: 'Error', 64: 'Seeking charger', 65: 'Charging', 66: 'Docked' };
+const VACUUM_JOB_BY_ID = { 0: 'Idle', 1: 'Cleaning', 2: 'Mapping' };
+// Homey leaves some titles as a raw key ("Cluster.rvc_run_mode.tag.mapping"): keep its last word.
+const vacuumLabel = (label) => {
+  const s = label == null ? '' : String(label).trim();
+  const tag = /\.tag\.([a-z_]+)$/i.exec(s);
+  return tag ? tag[1].replace(/_/g, ' ') : s;
+};
+// What the robot may need help with, most urgent first.
+const VACUUM_ALARMS = [
+  ['alarm_stuck', 'Sidder fast'],
+  ['alarm_lost', 'Kan ikke finde vej'],
+  ['alarm_bin_full', 'Støvbeholderen er fuld'],
+  ['alarm_bin_missing', 'Støvbeholderen mangler'],
+  ['alarm_tank_empty', 'Vandtanken er tom'],
+  ['alarm_tank_missing', 'Vandtanken mangler'],
+  ['alarm_tank_open', 'Vandtanken er åben'],
+  ['alarm_cleaning_pad_missing', 'Moppen mangler'],
+];
+
+function VacuumCard({ device }) {
+  const c = device.capabilities || {};
+  const labels = device.capLabels || {};
+  const raw = vacuumLabel(labels.operational_state) || VACUUM_STATE_BY_ID[c.operational_state] || '';
+  const key = raw.trim().toLowerCase();
+  const alarms = VACUUM_ALARMS.filter(([cap]) => c[cap] === true);
+  let state = 'idle';
+  if (key === 'error' || alarms.length) state = 'failure';
+  else if (key === 'running' || key === 'seeking charger' || key === 'returning to dock') state = 'running';
+  else if (key === 'paused') state = 'paused';
+  const job = translate(VACUUM_DA, vacuumLabel(labels.vacuumcleaner_job_mode) || VACUUM_JOB_BY_ID[c.vacuumcleaner_job_mode]);
+  // The clean mode has no known list: shown only when Homey gives it a title.
+  const mode = translate(VACUUM_DA, vacuumLabel(labels['vacuumcleaner_job_mode.clean_mode']));
+  const statusText = device.available === false ? 'Ikke forbundet' : (translate(VACUUM_DA, raw) || '—');
+  return (
+    <article className={styles.card} data-state={state}>
+      <header className={styles.head}>
+        <span className={styles.icon} aria-hidden="true"><Bot size={22} strokeWidth={2} /></span>
+        <div className={styles.titles}>
+          <h2 className={styles.title}>Robotstøvsuger</h2>
+          <div className={styles.room}>{roomNameFromPath(device.zonePath)}</div>
+        </div>
+        <span className={styles.status}>{statusText}</span>
+      </header>
+
+      {alarms.map(([cap, text]) => (
+        <div key={cap} className={styles.note} data-tone="bad"><TriangleAlert size={18} strokeWidth={2.2} />{text}</div>
+      ))}
+
+      {(job || mode) && (
+        <dl className={styles.facts}>
+          {job && <Fact icon={Bot} label="Opgave" value={job} />}
+          {mode && <Fact icon={Sparkles} label="Rengøring" value={mode} />}
+        </dl>
+      )}
+    </article>
+  );
+}
+
 export default function OtherTab({ devices }) {
   const washers = (devices || []).filter((d) => d.class === 'washer');
-  if (!washers.length) return <Empty icon={WashingMachine}>Ingen vaskemaskine fundet.</Empty>;
+  const vacuums = (devices || []).filter((d) => d.class === 'vacuumcleaner');
+  if (!washers.length && !vacuums.length) return <Empty icon={WashingMachine}>Ingen enheder fundet.</Empty>;
   return (
     <div className={styles.wrap}>
       {washers.map((d) => <WasherCard key={d.id} device={d} />)}
+      {vacuums.map((d) => <VacuumCard key={d.id} device={d} />)}
     </div>
   );
 }

@@ -125,6 +125,11 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.4.0** (2026-11-19) — The robot vacuum is on Andet: what it is doing (docked, running, paused,
+  on its way home), its job and cleaning mode, and a line for each thing it needs help with (stuck,
+  lost, bin full or missing, water tank empty, missing or open, mop missing). The robot reports its
+  state as numbers, so the dashboard now gets Homey's own title for each enum value (`capLabels`) and
+  shows the known ones in Danish. Read-only.
 - **2.3.1** (2026-11-19) — Lys shows every light, not only the ones the lighting script manages:
   plugs whose type is set to Light in Homey, and bulbs without a schedule. Each sits in its room's
   card after the adaptive lights; a room with no adaptive lights gets a card with just its lights.

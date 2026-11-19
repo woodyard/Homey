@@ -1,6 +1,7 @@
 import { readSession } from '../../../../lib/sessionCookie';
 import { homeyFetch } from '../../../../lib/homey';
 import { buildZonePaths, buildZoneOrders } from '../../../../lib/zones';
+import { capLabels } from '../../../../lib/capLabels';
 
 // Server-Sent Events stream of live device changes. A persistent server (the NAS
 // deployment) polls Homey quickly and pushes only the devices whose capability
@@ -68,6 +69,7 @@ export async function GET(request) {
                 available: d.available,
                 alwaysOn: !!(d.settings && d.settings.energy_alwayson),
                 capabilities,
+                capLabels: capLabels(d.capabilitiesObj), // Homey's own title for each enum value
                 capTimes,
               });
             }
