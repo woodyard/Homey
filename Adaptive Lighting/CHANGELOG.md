@@ -48,6 +48,10 @@ With every change: bump the version in the script and add an entry here.
 - A change by hand is still caught: values off the fade's way
   (brighter than where it began, another colour), or read more
   than 60 s after the fade ended
+- "<id> idle watchdog": Room_watchdog 2.21 asks for idle when the
+  flow's dimming never came; it has seen nobody for the room's
+  whole threshold, so this idle run skips its zone check (the
+  zone can still read active)
 - AL_VERSION in the published status says 2.33.1 (2.33.0 still
   published 2.32.4)
 - Tests: entrance_idle.mjs replays 19 Nov (wake and a full check
@@ -1471,6 +1475,26 @@ Kids' rooms: Daytime at full, cool white:
 ## Room_watchdog
 
 `room_watchdog.js`
+
+### 2.21 — 2026-11-19 — Entre 9 is dimmed, not switched off, when the evening dimming never came
+
+- 19 Nov 2026: E9 switched on at 20:32:57 (Evening 70 %), last
+  motion 20:33:11. The flow's countdown never ran AdaptiveLighting
+  "idle", so no light was held idle, and at 20:38:05 the watchdog
+  faded the hall off (WATCHDOG-FADE idle=294s)
+- Inside the room's idleWindow while the Logic variable Mørkt is
+  true, a light the watchdog would fade is dimmed instead: it runs
+  AdaptiveLighting "<id> idle watchdog" on the primary light and
+  the extra lights (HomeyScript's "Run a script with an argument"
+  card, the script id as in E9 - Light flow) and logs
+  WATCHDOG-IDLE. The light AL then holds idle is left on until
+  22:00, as any idle light (4b)
+- Not dark, after the window, or AdaptiveLighting can't be reached
+  or doesn't take it (WATCHDOG-ERROR, once per 10 min): the fade
+  and off as before
+- Tests: entrance_idle.mjs replays 20:38 (zone inactive and zone
+  still active), and the fade when light, after 22:00 and when the
+  card fails
 
 ### 2.20 — 2026-11-18 — Entre 9's evening idle (AdaptiveLighting 2.33.0)
 

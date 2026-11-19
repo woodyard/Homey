@@ -2331,7 +2331,7 @@ function rememberIdleLevel(brightness, temperature) {
  * ctx: { device, roomName, activeProfile (own, uncapped), idleCfg, token, currentMinutes }
  */
 async function runIdle(ctx) {
-  const { device, roomName, activeProfile, idleCfg, token, currentMinutes } = ctx;
+  const { device, roomName, activeProfile, idleCfg, token, currentMinutes, fromWatchdog } = ctx;
   const fade = idleCfg.fadeSeconds;
   const stillIdle = () => readStoredState(stateKey(DEVICE_ID)).idle?.token === token;
   const woken = () => {
@@ -2348,9 +2348,10 @@ async function runIdle(ctx) {
     return { room: roomName, skipped: true, reason: 'light_off' };
   }
   // Someone moved just as the inactive trigger fired: the wake ran first and
-  // found nothing to do, and no new zone trigger comes while they stay
+  // found nothing to do, and no new zone trigger comes while they stay.
+  // Room_watchdog has seen nobody for the room's whole threshold: no check
   try {
-    const zone = await Homey.zones.getZone({ id: device.zone });
+    const zone = fromWatchdog ? null : await Homey.zones.getZone({ id: device.zone });
     if (zone?.active === true) {
       saveWhileIdle(token, { idle: null });
       diagLog(`AL-IDLE-SKIP | ${roomName} | zone active`);
@@ -2604,6 +2605,9 @@ const BUTTON_DIM = MODE_ARG === 'dim-down' || MODE_ARG === 'dim' || MODE_ARG ===
 const BUTTON_MAX = MODE_ARG === 'max' || MODE_ARG === 'button-max';
 const BUTTON_TOGGLE = MODE_ARG === 'toggle' || MODE_ARG === 'button-toggle';
 const IDLE_MODE = MODE_ARG === 'idle';   // room empty: dim (see IDLE (ROOM EMPTY AFTER DARK))
+// "<id> idle watchdog": Room_watchdog asks, having seen nobody for the room's
+// whole threshold — no zone check (the zone can still read active) (2.33.1)
+const IDLE_FROM_WATCHDOG = IDLE_MODE && (argParts[2] || '').toLowerCase() === 'watchdog';
 const WAKE_MODE = MODE_ARG === 'wake';   // room in use again: undo idle
 const RUN_STARTED_AT = Date.now();       // wake logs its run time
 
@@ -2885,7 +2889,7 @@ try {
   // Idle and wake return here: never past the clears, the normal-mode skips or
   // the off→on path (manual stays manual, nothing is switched on)
   if (IDLE_MODE) {
-    return await runIdle({ device, roomName, activeProfile, idleCfg, token: leaseToken, currentMinutes });
+    return await runIdle({ device, roomName, activeProfile, idleCfg, token: leaseToken, currentMinutes, fromWatchdog: IDLE_FROM_WATCHDOG });
   }
   if (WAKE_MODE) {
     return await runWake({

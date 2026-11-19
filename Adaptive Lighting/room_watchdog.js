@@ -11,7 +11,9 @@
 //              automatic off (a flip-back) gets the room's normal timeout.
 //              A room with an idleWindow (E9): a light AdaptiveLighting holds
 //              idle (dimmed for an empty room) is left on inside the window
-//              and faded off after it, without a notification.
+//              and faded off after it, without a notification. Inside the
+//              window while Mørkt, a light that would be faded is dimmed
+//              instead: the watchdog asks AdaptiveLighting for "idle" (2.21).
 //
 // Usage: Pass room name as argument (e.g. "B9" or "E9")
 //        Each room's config (devices, sensors, variables) is defined below.
@@ -21,7 +23,7 @@
 //        Condition: zone "all lights are off" (inverted) — some light is on
 //        Action:    Run HomeyScript "Room_Watchdog" with argument "B9"
 //
-// Version: 2.20 (2026-11-18) — history in CHANGELOG.md
+// Version: 2.21 (2026-11-19) — history in CHANGELOG.md
 
 // ====== ROOMS — same block in room_watchdog.js and gradualfadeout.js;
 // change both together ======
@@ -78,6 +80,18 @@ const ROOMS = {
 // ====== SETTINGS ======
 const DEFAULT_INACTIVITY = 300;
 const FADE_DURATION = 20;
+// Evening dimming instead of an off (2.21): the Logic variable that says it is
+// dark, and AdaptiveLighting run as the flows run it (HomeyScript's "Run a
+// script with an argument" card; the script's id as in E9 - Light flow)
+const DARK_VAR = 'Mørkt';
+const AL_SCRIPT = { id: 'a6f9d44b-f818-4ca8-b4ec-681c3eceec5e', name: 'AdaptiveLighting' };
+async function runAdaptiveLighting(argument) {
+  await Homey.flow.runFlowCardAction({
+    uri: 'homey:app:com.athom.homeyscript',
+    id: 'homey:app:com.athom.homeyscript:runWithArg',
+    args: { script: AL_SCRIPT, argument }
+  });
+}
 const RESTORE_BUFFER = 15; // Seconds the restore window stays open after the fade
                            // ends — RestoreSavedSettings can run ~10s after the
                            // zone-active trigger under load
@@ -360,8 +374,11 @@ try {
 
   // ====== 4. READ INACTIVITY THRESHOLD FROM LOGIC VARIABLE ======
   let inactivitySeconds = DEFAULT_INACTIVITY;
+  let dark = null;   // Mørkt (E9's evening dimming); null when it can't be read
   try {
     const variables = await Homey.logic.getVariables();
+    const darkEntry = Object.values(variables).find(v => v.name === DARK_VAR);
+    if (darkEntry && typeof darkEntry.value === 'boolean') dark = darkEntry.value;
     const varEntry = Object.values(variables).find(v => v.name === ROOM.inactivityVar);
     if (varEntry) {
       inactivitySeconds = Number(varEntry.value);
@@ -491,6 +508,27 @@ try {
   const again = turnOnInfo(ROOM.primaryLight);
   if (again.busy || again.at > onAt) {
     return `${PREFIX}: turned on just now — decide next minute`;
+  }
+
+  // ====== 5b. EVENING: DIM INSTEAD OF OFF (E9, 2.21) ======
+  // Inside the idleWindow while Mørkt the flow dims an empty hall (AdaptiveLighting
+  // "idle") instead of switching it off. When that dimming never came (19 Nov
+  // 2026: on at 20:32:57, last motion 20:33:11, no dimming, faded off at 20:38),
+  // the watchdog asks for it: the light AL then holds idle is left on as in 4b,
+  // until 22:00. "watchdog" tells AL to skip its zone check — nobody has been
+  // seen here for the room's whole threshold, also when the zone still reads
+  // active. AL can't be reached or doesn't take it → the fade below, as before
+  if (ROOM.idleWindow && inIdleWindow(ROOM.idleWindow) && dark === true) {
+    const ids = [ROOM.primaryLight, ...(ROOM.extraLights || [])];
+    let failed = null;
+    for (const id of ids) {
+      try { await runAdaptiveLighting(`${id} idle watchdog`); } catch (e) { failed = failed || e; }
+    }
+    if (alHoldsIdle(ROOM.primaryLight)) {
+      diagLog(`WATCHDOG-IDLE | ${ROOM.name} | idle=${Math.round(idleDuration)}s threshold=${watchdogThreshold}s | no dimming came — AdaptiveLighting idle on ${ids.length} light(s) instead of off${failed ? ` (one failed: ${failed.message})` : ''}`);
+      return `${PREFIX}: dimmed by AdaptiveLighting (idle) instead of off`;
+    }
+    diagLogErrorLimited(`WATCHDOG-ERROR | ${ROOM.name} | AdaptiveLighting idle ${failed ? `failed: ${failed.message}` : 'did not take'} — fading off`, 'idle');
   }
 
   // ====== 6. TRIGGER FADE ======

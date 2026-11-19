@@ -70,6 +70,25 @@ function reportsPartWay(env, loft = [0.56, 0.74], garderobe = [0.53, 0.76]) {
     env.dev(id).light_temperature.value = temp;
   }
 }
+// 19 Nov 20:32:57: someone came in, AL switched E9 on at Evening 70 %; last motion
+// 20:33:11. The flow's dimming never came, and at 20:38:05 Room_watchdog faded the
+// hall off. HomeyScript's "run a script" card is mocked to run the script here;
+// env.alRuns lists what the watchdog asked AL for
+async function hallOnAt2032({ dark, onAt = '20:32:57', motionAt = '20:33:11', alFails = false } = {}) {
+  const env = await house({ onAt, motionAt, doorAt: '20:29:56', day: NOV19 });
+  env.vars.v2 = { id: 'v2', name: 'Mørkt', type: 'boolean', value: dark };
+  env.alRuns = [];
+  const run = env.Homey.flow.runFlowCardAction;
+  env.Homey.flow.runFlowCardAction = async (a) => {
+    if (a.id === 'homey:app:com.athom.homeyscript:runWithArg') {
+      if (alFails) throw new Error('Script not found');
+      env.alRuns.push(a.args.argument);
+      return env.run(a.args.script.name === 'AdaptiveLighting' ? AL : '?', a.args.argument);
+    }
+    return run(a);
+  };
+  return env;
+}
 const overrides = (env) => String(env.global.get('AL_OverrideLog') || '').split('\n').filter((l) => l.includes('E9 '));
 
 export const scenarios = {
@@ -163,6 +182,50 @@ export const scenarios = {
     for (const id of [E9, GARDEROBE]) await env.run(AL, `${id} clear`);
     t.equal([env.state(E9).idle, env.state(GARDEROBE).idle], [null, null], 'idle ended');
     t.equal([vals(env, E9), vals(env, GARDEROBE)], [[70, 60], [70, 60]], 'Evening 70/0.6');
+  },
+
+  async '19 Nov 20:38 replay: no dimming came from the flow → the watchdog asks AL for it instead of switching the hall off'(t) {
+    for (const zoneActive of [false, true]) {   // true: the zone never went inactive (a door left open?)
+      const env = await hallOnAt2032({ dark: true });
+      env.zoneActive = zoneActive;
+      at('20:38:05', NOV19);
+      const r = String(await env.run(WD, ['E9']));
+      const tag = zoneActive ? ' (zone still active)' : '';
+      t.check(r.includes('dimmed by AdaptiveLighting (idle) instead of off'), `20:38:05: dimmed, not faded${tag}`, r);
+      t.equal(env.alRuns, [`${E9} idle watchdog`, `${GARDEROBE} idle watchdog`], `AL idle asked for both lights${tag}`);
+      t.equal([vals(env, E9), vals(env, GARDEROBE)], [[35, 90], [35, 90]], `the idle level, as the kitchen${tag}`);
+      t.equal([env.dev(E9).onoff.value, env.dev(GARDEROBE).onoff.value, env.notifications.length], [true, true, 0], `on, no notification${tag}`);
+      t.equal([lines(env, 'WATCHDOG-IDLE | Entre 9').length, lines(env, 'WATCHDOG-FADE').length], [1, 0], `WATCHDOG-IDLE, no WATCHDOG-FADE${tag}`);
+      at('20:39:00', NOV19);
+      const r2 = String(await env.run(WD, ['E9']));
+      t.check(r2.includes('dimmed by AdaptiveLighting (idle) until 22:00'), `20:39: held as any idle light${tag}`, r2);
+      at('20:45:00', NOV19);
+      for (const id of [E9, GARDEROBE]) await env.run(AL, `${id} wake`);
+      t.equal(vals(env, E9), [70, 60], `a wake brings Evening back${tag}`);
+    }
+  },
+
+  async 'the watchdog still switches off when it is light, after 22:00, or when AL cannot be reached'(t) {
+    // Mørkt false (a light afternoon inside 12-22): off, as before
+    let env = await hallOnAt2032({ dark: false });
+    at('20:38:05', NOV19);
+    let r = String(await env.run(WD, ['E9']));
+    t.check(r.includes('fade + off'), 'not dark: faded off', r);
+    t.equal([env.alRuns, env.notifications.length], [[], 1], 'no AL idle, the usual notification');
+
+    // After 22:00: off, as before
+    env = await hallOnAt2032({ dark: true, onAt: '22:05:00', motionAt: '22:05:10' });
+    at('22:10:05', NOV19);
+    r = String(await env.run(WD, ['E9']));
+    t.check(r.includes('fade + off'), 'after 22:00: faded off', r);
+    t.equal(env.alRuns, [], 'no AL idle after 22:00');
+
+    // The HomeyScript card fails: off, as before, and the reason logged
+    env = await hallOnAt2032({ dark: true, alFails: true });
+    at('20:38:05', NOV19);
+    r = String(await env.run(WD, ['E9']));
+    t.check(r.includes('fade + off'), 'AL unreachable: faded off', r);
+    t.equal(lines(env, 'WATCHDOG-ERROR | Entre 9 | AdaptiveLighting idle failed').length, 1, 'WATCHDOG-ERROR names it');
   },
 
   async 'a real change by hand is still caught: off the fade\'s path, or read after the 60 s'(t) {
