@@ -16,6 +16,77 @@ With every change: bump the version in the script and add an entry here.
 
 `adaptivelighting.js`
 
+### 2.33.1 — 2026-11-19 — A wake right after idle's fade is a wake, not manual; a reset in an empty room stays dimmed
+
+- 19 Nov, Entre 9: idle dimmed E9 Loft and E9 Garderobe from
+  Daytime 80 % to 35 %/0.9 at 18:37:42 (30 s fade, AL's fade
+  end 18:38:17). The door woke them at 18:38:29, but the bulbs
+  still reported 56 %/0.74 and 53 %/0.76 from part-way down —
+  Hue reports its state late. The wake took that for a change by
+  hand: manual (OVERRIDE src=wake "while idle"), so motion never
+  brought the hall back up and Evening never came at 20:00
+- New SETTINGS.fadeReportSeconds (60): for that long after AL's
+  own fade has ended, values on the fade's way (between where
+  the idle fade began and the values AL sent, within tolerance)
+  are AL's fade still being reported. A wake then wakes as
+  usual (its AL-WAKE line adds "read 56%/74 on AL's fade"); a
+  check poll while idle skips (AL-SKIP-FADE "on AL's fade") and
+  the next poll is a full run
+- Idle records where its fade began (`idle.from`). For an idle
+  run from before 2.33.1 the brightness may lie anywhere from
+  AL's values up to full
+- Clear (the dashboard's Manuelt button, "<code> - Light reset")
+  on a light that is dimmed for an empty room, while the room is
+  still empty (zone not active), keeps it idle: manual is
+  cleared and the light gets the idle level, not its own
+  profile (AL-CLEAR "room empty — idle kept"). Room_watchdog
+  then keeps holding it until 22:00. 19 Nov 2026, 20:30: the
+  reset of E9 ended idle in the empty hall, applied Evening 70 %,
+  and Room_watchdog faded the hall off a minute later. A clear
+  while the room is in use, or when the zone can't be read,
+  ends idle as before
+- A change by hand is still caught: values off the fade's way
+  (brighter than where it began, another colour), or read more
+  than 60 s after the fade ended
+- AL_VERSION in the published status says 2.33.1 (2.33.0 still
+  published 2.32.4)
+- Tests: entrance_idle.mjs replays 19 Nov (wake and a full check
+  poll at 18:38, the reset at 20:30), an idle run from before
+  2.33.1, a reset with someone in the hall, and a real change by
+  hand still caught; idle_wake.mjs D8's clear now has someone at
+  the light
+
+### 2.33.0 — 2026-11-18 — Entre 9 dims as the kitchen in the evening; kitchen sun colour
+
+- E9 Loft and E9 Garderobe get an idle block: ENTRANCE9_IDLE
+  = KITCHEN_IDLE (the living room's level, min 20 %), so the
+  hall and the kitchen next door show the same level and
+  colour while empty: 35 %/0.9 in the evening, 20 %/0.9
+  from 21:00
+- Entrance profiles (weekdays and weekends): Daytime until
+  20:00 (was 18:00) at 80 %, Evening 20-23 at 70 % (was
+  18-23 at 40 %) — the kitchen's Evening brightness, so the
+  two rooms match when someone is there too. Daytime and
+  Evening also take the kitchen's colours: 0.4 (was 0.5) and
+  0.6 (was 0.7), so with the same sun curve both rooms show
+  the same colour all day and evening. Morning and Night
+  unchanged
+- K Loft and K Bord get sunTemperature (STUE_SUN_TEMPERATURE),
+  as the entrance has: Daytime slides from its own 0.4 with
+  the sun high to Evening's 0.6 at the horizon (0.48 at noon
+  in late October, ~0.54 in December, 0.6 after sunset).
+  Morning, Evening and Night keep fixed colours
+- E9 - Light flow: when the E9 countdown (3 min) runs out
+  while Mørkt and before 22:00 it runs "idle" on both lights
+  instead of GradualFadeOut; zone active runs "wake" next to
+  RestoreSavedSettings. A check every 5 min in the same
+  window lets idle follow the living room to 20 % at 21:00.
+  Outside the window (day, after 22:00, the dark morning)
+  the lights fade off as before
+- After 22:00 Room_watchdog 2.20 fades an idle E9 off
+  (ROOMS.E9.idleWindow); no change in this script for that
+- K - Light flow: idle after 3 min instead of 5
+
 ### 2.32.4 — 2026-11-03 — Four fixes
 
 Idle floor never lifts the light above AL's own ramp:
@@ -1003,6 +1074,15 @@ Kids' rooms: Daytime at full, cool white:
 
 `gradualfadeout.js`
 
+### 6.21 — 2026-11-18 — Shared ROOMS/TURN-ON blocks for Entre 9's evening idle
+
+- Same ROOMS and TURN-ON blocks as Room_watchdog 2.20:
+  ROOMS.E9.idleWindow (read by the watchdog only) and AL's
+  wake counted as a turn-on. In practice no change here: a
+  wake comes from zone active (motion or the E9 door), so it
+  is always "seen" and an armed countdown still fades. The
+  flow runs GradualFadeOut only outside E9's evening window
+
 ### 6.20 — 2026-11-03 — No fade for a light switched on while nobody is seen
 
 - The countdown armed when the room empties keeps running
@@ -1391,6 +1471,27 @@ Kids' rooms: Daytime at full, cool white:
 ## Room_watchdog
 
 `room_watchdog.js`
+
+### 2.20 — 2026-11-18 — Entre 9's evening idle (AdaptiveLighting 2.33.0)
+
+- ROOMS.E9.idleWindow { from: "12:00", until: "22:00" }:
+  while AdaptiveLighting holds E9 Loft idle (dimmed for an
+  empty hall, the flow's evening branch) and the Copenhagen
+  time is inside the window, the watchdog leaves the light
+  on ("dimmed by AdaptiveLighting (idle) until 22:00").
+  `from` only keeps the dark morning out (Mørkt starts no
+  earlier than ~14:40 and ends no later than ~09:40)
+- After the window (and for a stale flag outside it) the
+  usual threshold fades it off: WATCHDOG-FADE "(evening idle
+  ended 22:00)", and no notification — it is the planned end
+  of the evening, not a light stuck on
+- TURN-ON block: AL's wake (lastApplied via 'wake') counts
+  as a turn-on like a normal run. Before, a wake left
+  turnOnInfo at 0: a hall woken by the door while E9 Motion
+  missed the person was faded at once (idle counted from the
+  last motion, minutes before), now 240 s from the wake
+- Shared ROOMS/TURN-ON blocks changed in GradualFadeOut 6.21
+  too
 
 ### 2.19 — 2026-11-03 — ROOMS and the turn-on reading shared with GradualFadeOut 6.20
 

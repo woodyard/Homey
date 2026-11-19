@@ -26,6 +26,9 @@ const temps = (env, id) => BULB[id].map((b) => env.dev(b).light_temperature.valu
 const ons = (env, id) => BULB[id].map((b) => env.dev(b).onoff.value);
 const cardsTo = (env, ids, card) => env.cards.filter((c) => ids.includes(c.id) && (!card || c.card === card));
 const r2 = (v) => Math.round(v * 100) / 100;
+// The kitchen's Daytime colour around 16:10 on 2 Nov: 0.4 slid towards
+// Evening's 0.6 by the low sun (sun colour, AL 2.33.0)
+const DAY_TEMP_1610 = 0.59;
 
 // A Homey virtual group: on when any bulb is on, dim/temperature the mean of
 // the bulbs that are on; a value written to the group goes to every bulb (as
@@ -183,7 +186,7 @@ export const scenarios = {
       return { env: e };
     })();
     at('16:20:00');
-    const noBlock = [['idle: KITCHEN_IDLE          // Dims', '// idle removed           // Dims']];
+    const noBlock = [['idle: KITCHEN_IDLE                   // Dims', '// idle removed                   // Dims']];
     const r2c = await env2.run(AL, `${KL} check`, { patch: noBlock });
     t.equal([r2c.profile, lines(env2, 'AL-ERROR').length], ['Daytime', 0], 'block removed: check runs as without idle');
     at('16:25:00');
@@ -369,17 +372,17 @@ export const scenarios = {
     t.equal([next.reason, env.state(KB).manual, overrides(env).length], ['already_correct', false, 0], 'the owed full run finds it correct: no false manual');
   },
 
-  async 'D5: wake at 16:10 → Daytime 100/0.4 with a 1 s fade; C7: run time logged; C5: next poll is a full run'(t) {
+  async 'D5: wake at 16:10 → Daytime 100/0.59 (sun colour) with a 1 s fade; C7: run time logged; C5: next poll is a full run'(t) {
     const { env } = await idleKitchen();
     at('16:10:00');
     env.cards.length = 0;
     const w = await env.run(AL, `${KB} wake`);
-    t.equal([w.woke, w.profile, w.brightness, w.temperature], [true, 'Daytime', 1, 0.4], 'wake applies the kitchen Daytime, uncapped');
-    t.equal([dims(env, KB), temps(env, KB)], [[1, 1, 1], [0.4, 0.4, 0.4]], 'bulbs back at 100/0.4');
+    t.equal([w.woke, w.profile, w.brightness, w.temperature], [true, 'Daytime', 1, DAY_TEMP_1610], 'wake applies the kitchen Daytime, uncapped, with its sun colour');
+    t.equal([dims(env, KB), temps(env, KB)], [[1, 1, 1], [DAY_TEMP_1610, DAY_TEMP_1610, DAY_TEMP_1610]], 'bulbs back at 100/0.59');
     t.check(env.cards.length === 6 && env.cards.every((c) => c.duration === 1), '1 s cards', JSON.stringify(env.cards));
     const s = env.state(KB);
     t.equal([s.idle, s.lastApplied.via, s.fadeEndTime, s.manual, s.busy], [null, 'wake', ms('16:10:06'), false, {}], 'idle cleared, via wake, fade end +6 s, lease released');
-    const line = lines(env, 'AL-WAKE | K Bord | Daytime | dim=100% temp=40% | fade 1s | idle 10m')[0];
+    const line = lines(env, 'AL-WAKE | K Bord | Daytime | dim=100% temp=59% | fade 1s | idle 10m')[0];
     t.check(line && /\| took \d+\.\ds$/.test(line), 'AL-WAKE line with idle age and run time', line);
     t.check(!env.status().lights[KB].idle, 'status: no idle');
     t.equal(s.fullRunDue, true, 'wake leaves a full run owed');
@@ -763,7 +766,7 @@ export const scenarios = {
   async 'D7: check sees the light back at its own profile by hand → a wake: auto, profile recorded, no OVERRIDE'(t) {
     const { env } = await idleKitchen();
     at('16:10:00');
-    setBulbs(env, KB, [1, 1, 1], 0.4);
+    setBulbs(env, KB, [1, 1, 1], DAY_TEMP_1610);
     at('16:20:00');
     const r = await env.run(AL, `${KB} check`);
     const s = env.state(KB);
@@ -786,7 +789,7 @@ export const scenarios = {
   async 'D7: wake finds it already back at its own profile by hand → treated as a wake, no OVERRIDE'(t) {
     const { env } = await idleKitchen();
     at('16:03:00');
-    setBulbs(env, KB, [1, 1, 1], 0.4);
+    setBulbs(env, KB, [1, 1, 1], DAY_TEMP_1610);
     const w = await env.run(AL, `${KB} wake`);
     t.equal([w.woke, env.state(KB).manual, env.state(KB).lastApplied.via, overrides(env)], [true, false, 'wake', []], 'auto, recorded via wake, no OVERRIDE');
   },
@@ -813,6 +816,9 @@ export const scenarios = {
     for (const mode of ['', 'clear', 'force', 'cycle-profile']) {
       const { env } = await idleKitchen();
       at('16:10:00');
+      // Someone at the light: the zone is in use (a clear while the room is
+      // still empty keeps idle since 2.33.1, see entrance_idle.mjs)
+      env.zoneActive = true;
       await env.run(AL, `${KB} ${mode}`.trim());
       t.equal([env.state(KB).idle, !!env.status().lights[KB].idle], [null, false], `"${mode || '(turn-on)'}" clears idle`);
     }

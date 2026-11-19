@@ -9,6 +9,9 @@
 //              coming back on with nobody seen is faded at most 30 minutes
 //              after the first such turn-on; one back on right after an
 //              automatic off (a flip-back) gets the room's normal timeout.
+//              A room with an idleWindow (E9): a light AdaptiveLighting holds
+//              idle (dimmed for an empty room) is left on inside the window
+//              and faded off after it, without a notification.
 //
 // Usage: Pass room name as argument (e.g. "B9" or "E9")
 //        Each room's config (devices, sensors, variables) is defined below.
@@ -18,7 +21,7 @@
 //        Condition: zone "all lights are off" (inverted) — some light is on
 //        Action:    Run HomeyScript "Room_Watchdog" with argument "B9"
 //
-// Version: 2.19 (2026-11-03) — history in CHANGELOG.md
+// Version: 2.20 (2026-11-18) — history in CHANGELOG.md
 
 // ====== ROOMS — same block in room_watchdog.js and gradualfadeout.js;
 // change both together ======
@@ -60,7 +63,14 @@ const ROOMS = {
     doorSensors: [
       "68ef424e-3ab9-4573-8a89-bdce2b4ffe65"  // E9 Dør
     ],
-    inactivityVar: "E9_InactivitySeconds"
+    inactivityVar: "E9_InactivitySeconds",
+    // Evening idle (AdaptiveLighting 2.33.0): from Mørkt (sunset-60, as the
+    // kitchen) until 22:00 the flow dims both lights (AL "idle") instead of
+    // fading them off. The watchdog leaves a primary light AL holds idle alone
+    // inside this window (Copenhagen time, from ≤ t < until) and fades it off
+    // after it. `from` only keeps the dark morning out: Mørkt is also true
+    // until sunrise+60 (latest ~09:40), and never starts before ~14:40
+    idleWindow: { from: "12:00", until: "22:00" }
   }
 };
 // ====== end of shared ROOMS block ======
@@ -235,11 +245,13 @@ const AUTO_OFF_WINDOW = 180; // On this soon after GradualFadeOut's or the watch
                              // off: a flip-back, not a fresh unseen turn-on
 
 // Turn-on time, from AdaptiveLighting's state for a light (both scripts read
-// the room's primary light). B7/B9/E9 run AL only from the light's "turned
-// on" flow (mode normal), so lastApplied {at, via: 'normal'} is the last
-// turn-on AL handled. Not Homey's onoff.lastChanged (probably not in
-// HomeyScript's capabilitiesObj) nor lastUpdated (moves on every same-value
-// report)
+// the room's primary light). B7/B9/E9 run AL from the light's "turned on"
+// flow (mode normal), so lastApplied {at, via: 'normal'} is the last turn-on
+// AL handled. E9's evening wake (AL 2.33.0) counts as a turn-on too: someone
+// came in (motion or the door) and the light went up from its idle level;
+// an idle or check run is none (at 0, as before). Not Homey's
+// onoff.lastChanged (probably not in HomeyScript's capabilitiesObj) nor
+// lastUpdated (moves on every same-value report)
 // at:   epoch ms; 0 = unknown (no record, another mode, or more than a minute
 //       ahead — a bad value must not hold the light for good)
 // busy: AL's turn-on run still holds its lease (it hasn't recorded the turn-on
@@ -254,7 +266,7 @@ function turnOnInfo(lightId) {
     const raw = global.get(`AL_Device_${lightId.substring(0, 8)}.State`);
     const state = raw ? JSON.parse(raw) : null;
     const applied = state?.lastApplied;
-    if (applied?.via === 'normal' && typeof applied.at === 'number' && applied.at > 0 && applied.at <= now + 60000) {
+    if ((applied?.via === 'normal' || applied?.via === 'wake') && typeof applied.at === 'number' && applied.at > 0 && applied.at <= now + 60000) {
       at = applied.at;
     }
     busy = Object.values(state?.busy || {}).some(until => typeof until === 'number' && until > now && until <= now + 65000);
@@ -266,6 +278,29 @@ function turnOnInfo(lightId) {
 // Latest change of the room's door contacts, epoch ms (0 = none readable). A
 // contact that can't be read, or has no change time, counts as not seen;
 // WATCHDOG-ERROR names it
+// ====== EVENING IDLE (ROOMS[..].idleWindow, AL 2.33.0) ======
+// Copenhagen minutes since midnight, as AdaptiveLighting's getCurrentTimeInMinutes
+function copenhagenMinutes() {
+  const [h, m] = new Date().toLocaleString('en-US', {
+    timeZone: 'Europe/Copenhagen', hour12: false, hour: '2-digit', minute: '2-digit'
+  }).split(':').map(Number);
+  return (h % 24) * 60 + m;
+}
+const hhmmToMinutes = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+function inIdleWindow(win) {
+  const now = copenhagenMinutes();
+  return now >= hhmmToMinutes(win.from) && now < hhmmToMinutes(win.until);
+}
+// AdaptiveLighting holds the light idle (its "idle" run dimmed it for an
+// empty room; a wake, turn-on or clear ends it). Corrupt state → not idle
+function alHoldsIdle(lightId) {
+  try {
+    const raw = global.get(`AL_Device_${lightId.substring(0, 8)}.State`);
+    const idle = raw ? JSON.parse(raw)?.idle : null;
+    return !!idle && typeof idle === 'object';
+  } catch (e) { return false; }
+}
+
 async function lastDoorChange() {
   let latest = 0;
   for (const id of ROOM.doorSensors || []) {
@@ -336,6 +371,16 @@ try {
     }
   } catch (e) {
     log(`${PREFIX}: couldn't read Logic variable: ${e.message}`);
+  }
+
+  // ====== 4b. EVENING IDLE (E9) ======
+  // Inside the room's idleWindow a light AL holds idle is dimmed on purpose
+  // (the flow ran "idle" instead of GradualFadeOut): leave it on. After the
+  // window the usual threshold below fades it off — the planned end of the
+  // evening, so no notification for it (idleEnd). Read after the last await
+  const idleEnd = !!ROOM.idleWindow && alHoldsIdle(ROOM.primaryLight);
+  if (idleEnd && inIdleWindow(ROOM.idleWindow)) {
+    return `${PREFIX}: dimmed by AdaptiveLighting (idle) until ${ROOM.idleWindow.until}`;
   }
 
   // AdaptiveLighting's record of the turn-on — read after the last await
@@ -450,11 +495,13 @@ try {
 
   // ====== 6. TRIGGER FADE ======
   log(`${PREFIX}: triggering fade (idle ${Math.round(idleDuration)}s > ${watchdogThreshold}s)`);
-  await Homey.flow.runFlowCardAction({
-    uri: 'homey:flowcardaction:homey:manager:notifications:create_notification',
-    id: 'homey:manager:notifications:create_notification',
-    args: { text: `${PREFIX}: lights stuck on, fading after ${Math.round(idleDuration)}s idle` }
-  });
+  if (!idleEnd) {
+    await Homey.flow.runFlowCardAction({
+      uri: 'homey:flowcardaction:homey:manager:notifications:create_notification',
+      id: 'homey:manager:notifications:create_notification',
+      args: { text: `${PREFIX}: lights stuck on, fading after ${Math.round(idleDuration)}s idle` }
+    });
+  }
 
   // Save current state (same as GradualFadeOut)
   const currentBrightness = device.capabilitiesObj?.dim?.value || 0;
@@ -480,7 +527,7 @@ try {
 
   checkOverride(ROOM.primaryLight, device.name, currentBrightness, currentTemp, 'watchdog');
 
-  const why = unseen ? ' (nobody seen since on)' : flipBack ? ' (flip-back after auto-off)' : '';
+  const why = idleEnd ? ` (evening idle ended ${ROOM.idleWindow.until})` : unseen ? ' (nobody seen since on)' : flipBack ? ' (flip-back after auto-off)' : '';
   const capInfo = capped && idleDuration < watchdogThreshold ? ` first-on=${Math.round((now - stretch.firstOnAt) / 1000)}s cap=${UNSEEN_MAX_HOLD}s` : '';
   diagLog(`WATCHDOG-FADE | ${ROOM.name} | idle=${Math.round(idleDuration)}s threshold=${watchdogThreshold}s${why}${capInfo} | dim=${Math.round(currentBrightness * 100)}% manual=${wasManualMode}`);
 

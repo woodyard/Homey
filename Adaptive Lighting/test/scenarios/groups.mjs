@@ -42,10 +42,11 @@ export const scenarios = {
   },
 
   async 'Hue from button.migrate_v3 even when the driver text is short'(t) {
-    // Kitchen bulbs report driverId "bulb" but still carry button.migrate_v3
+    // Kitchen bulbs report driverId "bulb" but still carry button.migrate_v3.
+    // At Daytime's colour at 19:56: the sun is down, so 0.6 (sun colour, 2.33.0)
     const env = createEnv([
-      light(ID.K_BORD, 'K Bord', { hue: false, driver: GROUP_DRIVER, dim: 1.0, temp: 0.4 }),
-      ...['K Bord 1', 'K Bord 2', 'K Bord 3'].map((n, i) => light(`kb-${i}`, n, { hue: true, driver: 'bulb', dim: 1.0, temp: 0.4 })),
+      light(ID.K_BORD, 'K Bord', { hue: false, driver: GROUP_DRIVER, dim: 1.0, temp: 0.6 }),
+      ...['K Bord 1', 'K Bord 2', 'K Bord 3'].map((n, i) => light(`kb-${i}`, n, { hue: true, driver: 'bulb', dim: 1.0, temp: 0.6 })),
     ]);
     setClock('2026-10-27T19:56:00+01:00');
     const r = await env.run('adaptivelighting.js', `${ID.K_BORD} check`);
@@ -86,8 +87,9 @@ export const scenarios = {
   },
 
   async 'AdaptiveLighting: Hue detected from the driver (early start at a profile change)'(t) {
-    // Kitchen Daytime 100%/0.4 → Evening at 20:00; Hue bulbs without button.migrate_v3
-    const env = createEnv(group(ID.K_BORD, 'K Bord', ['K Bord 1', 'K Bord 2', 'K Bord 3'], { dim: 1.0, temp: 0.4 }));
+    // Kitchen Daytime 100% (colour 0.6 with the sun down, sun colour 2.33.0) →
+    // Evening at 20:00; Hue bulbs without button.migrate_v3
+    const env = createEnv(group(ID.K_BORD, 'K Bord', ['K Bord 1', 'K Bord 2', 'K Bord 3'], { dim: 1.0, temp: 0.6 }));
     setClock('2026-10-27T19:56:00+01:00');
     const r = await env.run('adaptivelighting.js', `${ID.K_BORD} check`);
     t.check(r && r.early === true && r.profile === 'Evening', 'Evening started early with a long fade', JSON.stringify(r));

@@ -130,21 +130,40 @@ export const scenarios = {
     }
   },
 
-  async "sun colour for the entrance; kitchen unchanged"(t) {
+  async "sun colour for the entrance and the kitchen (2.33.0): the same sun curve and the same colours (0.4 → 0.6)"(t) {
     const lights = [[ID.E9_LOFT, 'E9 Loft'], [ID.E9_GARDEROBE, 'E9 Garderobe']];
     const cases = [
-      ['27 Oct 12:00', '2026-10-27T12:00:00+01:00', 0.58],
-      ['27 Oct 15:30', '2026-10-27T15:30:00+01:00', 0.65],
-      ['21 Dec 12:00', '2026-12-21T12:00:00+01:00', 0.64],
-      ['22 Jun 12:00', '2026-06-22T12:00:00+02:00', 0.5],
+      // both Daytime 0.4 → Evening 0.6
+      ['27 Oct 12:00', '2026-10-27T12:00:00+01:00', 0.48, 0.48],
+      ['27 Oct 15:30', '2026-10-27T15:30:00+01:00', 0.55, 0.55],
+      ['21 Dec 12:00', '2026-12-21T12:00:00+01:00', 0.54, 0.54],
+      ['22 Jun 12:00', '2026-06-22T12:00:00+02:00', 0.4, 0.4],
     ];
-    for (const [label, iso, temp] of cases) {
+    for (const [label, iso, temp, kitchenTemp] of cases) {
       const got = [];
       for (const [id, name] of lights) got.push((await turnOn(id, name, iso)).temperature);
       t.equal(got, lights.map(() => temp), `${label}: Daytime colour ${temp}`);
       const k = await turnOn(ID.K_LOFT, 'K Loft', iso);
-      t.equal(k.temperature, 0.4, `${label}: kitchen stays 0.4`);
+      t.equal(k.temperature, kitchenTemp, `${label}: kitchen Daytime colour ${kitchenTemp}`);
     }
+  },
+
+  async 'entrance (2.33.0): Daytime 80 % until 20:00, Evening 20-23 at the kitchen\'s 70 %, weekdays and weekends'(t) {
+    const cases = [
+      ['Mon 19:30', '2026-11-02T19:30:00+01:00', ['Daytime', 0.8]],
+      ['Mon 20:30', '2026-11-02T20:30:00+01:00', ['Evening', 0.7]],
+      ['Sat 19:30', '2026-10-31T19:30:00+01:00', ['Daytime', 0.8]],
+      ['Sat 22:30', '2026-10-31T22:30:00+01:00', ['Evening', 0.7]],
+      ['Mon 23:30', '2026-11-02T23:30:00+01:00', ['Night', 0.1]],
+    ];
+    for (const [label, iso, expected] of cases) {
+      for (const [id, name] of [[ID.E9_LOFT, 'E9 Loft'], [ID.E9_GARDEROBE, 'E9 Garderobe']]) {
+        const r = await turnOn(id, name, iso);
+        t.equal([r.profile, r.brightness], expected, `${label}: ${name} ${expected[0]} ${expected[1] * 100} %`);
+      }
+    }
+    const k = await turnOn(ID.K_LOFT, 'K Loft', '2026-11-02T20:30:00+01:00');
+    t.equal([k.profile, k.brightness], ['Evening', 0.7], 'Mon 20:30: kitchen Evening 70 %, as the entrance');
   },
 
   async 'entrance: Daytime from 07:00 on weekdays, weekends unchanged'(t) {

@@ -14,7 +14,8 @@ export const scenarios = {
     setClock('2026-10-27T12:00:00+01:00');
     await env.run(AL, ID.K_BORD);
     t.equal(env.logicCalls, ['get', 'create'], 'first publish looks the variable up, then creates it');
-    t.equal(entry(env, ID.K_BORD), ['auto', 'Daytime', 1, 0.4, 'normal'], 'K Bord entry');
+    // Daytime 0.4 slid towards Evening's 0.6 by the sun colour (2.33.0): 0.48 on 27 Oct at noon
+    t.equal(entry(env, ID.K_BORD), ['auto', 'Daytime', 1, 0.48, 'normal'], 'K Bord entry');
 
     env.logicCalls.length = 0;
     await env.run(AL, ID.K_BORD);
@@ -40,7 +41,7 @@ export const scenarios = {
     t.equal(env.logicCalls, ['update'], 'one update with the cached variable id');
 
     await env.run(AL, `${ID.K_BORD} clear`);
-    t.equal(entry(env, ID.K_BORD), ['auto', 'Daytime', 1, 0.4, 'clear'], 'clear → auto');
+    t.equal(entry(env, ID.K_BORD), ['auto', 'Daytime', 1, 0.48, 'clear'], 'clear → auto');
 
     await env.run(AL, `${ID.O_LOFT} cycle-profile`);
     const o = env.status().lights[ID.O_LOFT];

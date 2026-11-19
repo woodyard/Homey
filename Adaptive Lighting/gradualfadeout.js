@@ -10,7 +10,7 @@
 //               in parallel, which increases the odds of them stepping on
 //               each other's hardware fade commands)
 //
-// Version: 6.20 (2026-11-03) — history in CHANGELOG.md
+// Version: 6.21 (2026-11-18) — history in CHANGELOG.md
 
 const fadeDuration = 20;     // seconds
 const restoreBuffer = 15;    // seconds the restore window stays open after the
@@ -179,7 +179,14 @@ const ROOMS = {
     doorSensors: [
       "68ef424e-3ab9-4573-8a89-bdce2b4ffe65"  // E9 Dør
     ],
-    inactivityVar: "E9_InactivitySeconds"
+    inactivityVar: "E9_InactivitySeconds",
+    // Evening idle (AdaptiveLighting 2.33.0): from Mørkt (sunset-60, as the
+    // kitchen) until 22:00 the flow dims both lights (AL "idle") instead of
+    // fading them off. The watchdog leaves a primary light AL holds idle alone
+    // inside this window (Copenhagen time, from ≤ t < until) and fades it off
+    // after it. `from` only keeps the dark morning out: Mørkt is also true
+    // until sunrise+60 (latest ~09:40), and never starts before ~14:40
+    idleWindow: { from: "12:00", until: "22:00" }
   }
 };
 // ====== end of shared ROOMS block ======
@@ -198,11 +205,13 @@ const AUTO_OFF_WINDOW = 180; // On this soon after GradualFadeOut's or the watch
                              // off: a flip-back, not a fresh unseen turn-on
 
 // Turn-on time, from AdaptiveLighting's state for a light (both scripts read
-// the room's primary light). B7/B9/E9 run AL only from the light's "turned
-// on" flow (mode normal), so lastApplied {at, via: 'normal'} is the last
-// turn-on AL handled. Not Homey's onoff.lastChanged (probably not in
-// HomeyScript's capabilitiesObj) nor lastUpdated (moves on every same-value
-// report)
+// the room's primary light). B7/B9/E9 run AL from the light's "turned on"
+// flow (mode normal), so lastApplied {at, via: 'normal'} is the last turn-on
+// AL handled. E9's evening wake (AL 2.33.0) counts as a turn-on too: someone
+// came in (motion or the door) and the light went up from its idle level;
+// an idle or check run is none (at 0, as before). Not Homey's
+// onoff.lastChanged (probably not in HomeyScript's capabilitiesObj) nor
+// lastUpdated (moves on every same-value report)
 // at:   epoch ms; 0 = unknown (no record, another mode, or more than a minute
 //       ahead — a bad value must not hold the light for good)
 // busy: AL's turn-on run still holds its lease (it hasn't recorded the turn-on
@@ -217,7 +226,7 @@ function turnOnInfo(lightId) {
     const raw = global.get(`AL_Device_${lightId.substring(0, 8)}.State`);
     const state = raw ? JSON.parse(raw) : null;
     const applied = state?.lastApplied;
-    if (applied?.via === 'normal' && typeof applied.at === 'number' && applied.at > 0 && applied.at <= now + 60000) {
+    if ((applied?.via === 'normal' || applied?.via === 'wake') && typeof applied.at === 'number' && applied.at > 0 && applied.at <= now + 60000) {
       at = applied.at;
     }
     busy = Object.values(state?.busy || {}).some(until => typeof until === 'number' && until > now && until <= now + 65000);

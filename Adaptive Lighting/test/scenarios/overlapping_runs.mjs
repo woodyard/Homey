@@ -272,8 +272,9 @@ export const scenarios = {
 
   async 'saves still reach every field: AL\'s own fade end, the group\'s bulbs'(t) {
     const bulbs = ['K Bord 1', 'K Bord 2', 'K Bord 3'].map((n, i) => light(`bulb000${i + 1}-k`, n, { driver: HUE_DRIVER }));
-    // The mock's group device doesn't follow its bulbs: start it at Daytime's values
-    const env = createEnv([light(K, 'K Bord', { hue: false, driver: GROUP_DRIVER, dim: 1, temp: 0.4 }), ...bulbs]);
+    // The mock's group device doesn't follow its bulbs: start it at Daytime's
+    // values at 19:00 (the sun is down: colour 0.6, sun colour 2.33.0)
+    const env = createEnv([light(K, 'K Bord', { hue: false, driver: GROUP_DRIVER, dim: 1, temp: 0.6 }), ...bulbs]);
     for (const b of bulbs) env.store.set(`AL_Device_${b.id.slice(0, 8)}.State`, JSON.stringify({ manual: true }));
     setClock('2026-10-27T19:00:00+01:00');
     await env.run(AL, K);

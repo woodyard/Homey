@@ -2,8 +2,8 @@
 // Universal script for all rooms with per-room profiles and schedules
 //
 // Script Name: AdaptiveLighting
-// Version:     2.32.4
-// Date:        2026-11-03
+// Version:     2.33.1
+// Date:        2026-11-19
 // Author:      Henrik Skovgaard
 //
 // Version history: CHANGELOG.md
@@ -50,7 +50,7 @@
 //
 // IDLE / WAKE (dim a room while it is empty after dark):
 // 1. Add an `idle` block to the light's ROOM_CONFIG entry (see IDLE_DEFAULTS)
-// 2. Trigger: zone inactive for 5 min (and the room's "dark" condition)
+// 2. Trigger: zone inactive for 3 min (and the room's "dark" condition)
 //    → Argument: "device-id idle"
 // 3. Trigger: zone became active → Argument: "device-id wake" (no "is on"
 //    condition: a wake on an off light only clears the idle flag)
@@ -179,11 +179,13 @@ const PROFILES = {
     { name: "Night",    startTime: "23:00", endTime: "06:00", brightness: 0.15, temperature: 0.9 }
   ],
   
-  // Entrance/hallway - motion-triggered, functional
+  // Entrance/hallway - motion-triggered, functional. Evening 20-23 at the
+  // kitchen's 70 %, Daytime and Evening in the kitchen's colours (2.33.0:
+  // the rooms are side by side; Daytime until 20:00)
   entrance: [
     { name: "Morning",  startTime: "06:00", endTime: "07:00", brightness: 0.40, temperature: 0.7 },
-    { name: "Daytime",  startTime: "07:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
-    { name: "Evening",  startTime: "18:00", endTime: "23:00", brightness: 0.4,  temperature: 0.7 },
+    { name: "Daytime",  startTime: "07:00", endTime: "20:00", brightness: 0.8,  temperature: 0.4 },
+    { name: "Evening",  startTime: "20:00", endTime: "23:00", brightness: 0.7,  temperature: 0.6 },
     { name: "Night",    startTime: "23:00", endTime: "06:00", brightness: 0.10, temperature: 1.0 }
   ],
   
@@ -230,11 +232,11 @@ const PROFILES = {
     { name: "Night",    startTime: "00:00", endTime: "07:30", brightness: 0.08, temperature: 1.0 }
   ],
 
-  // Entrance weekend - softer morning light, later start
+  // Entrance weekend - softer morning light, later start; evening as weekdays
   entranceWeekend: [
     { name: "Morning",  startTime: "07:30", endTime: "10:00", brightness: 0.35, temperature: 0.8 },
-    { name: "Daytime",  startTime: "10:00", endTime: "18:00", brightness: 0.8,  temperature: 0.5 },
-    { name: "Evening",  startTime: "18:00", endTime: "23:00", brightness: 0.4,  temperature: 0.7 },
+    { name: "Daytime",  startTime: "10:00", endTime: "20:00", brightness: 0.8,  temperature: 0.4 },
+    { name: "Evening",  startTime: "20:00", endTime: "23:00", brightness: 0.7,  temperature: 0.6 },
     { name: "Night",    startTime: "23:00", endTime: "07:30", brightness: 0.10, temperature: 1.0 }
   ]
 };
@@ -346,6 +348,12 @@ const KITCHEN_IDLE = {
   minBrightness: 0.2
 };
 
+// Entre 9: the same as the kitchen next door (2.33.0), so the two rooms show
+// the same level and colour while empty. E9 - Light flow runs idle instead of
+// GradualFadeOut only from Mørkt until 22:00; after that Room_watchdog fades
+// the idle lights off (its ROOMS.E9.idleWindow)
+const ENTRANCE9_IDLE = KITCHEN_IDLE;
+
 // ====== ROOM CONFIGURATION ======
 // Only groups and standalone devices - individual bulbs in groups are excluded.
 // A group's bulbs are found by name prefix: group "ST Loft" → "ST Loft 1",
@@ -402,13 +410,15 @@ const ROOM_CONFIG = {
   // =====================================================================
   "f097b38c-cfb0-4b83-8124-59e35f82cd0f": {
     name: "K Loft",
-    profiles: PROFILES.kitchen, // Gruppe med 3 pærer
-    idle: KITCHEN_IDLE          // Dims to the living room's level while the kitchen is empty
+    profiles: PROFILES.kitchen,          // Gruppe med 3 pærer
+    sunTemperature: STUE_SUN_TEMPERATURE, // Daytime colour follows sun elevation (2.33.0, as Entre 9)
+    idle: KITCHEN_IDLE                   // Dims to the living room's level while the kitchen is empty
   },
   "0e5d845d-d8ea-4db6-8096-663b0a311e07": {
     name: "K Bord",
-    profiles: PROFILES.kitchen, // Gruppe med 3 pærer
-    idle: KITCHEN_IDLE          // Dims to the living room's level while the kitchen is empty
+    profiles: PROFILES.kitchen,          // Gruppe med 3 pærer
+    sunTemperature: STUE_SUN_TEMPERATURE, // Daytime colour follows sun elevation (2.33.0, as Entre 9)
+    idle: KITCHEN_IDLE                   // Dims to the living room's level while the kitchen is empty
   },
 
   // =====================================================================
@@ -435,13 +445,15 @@ const ROOM_CONFIG = {
     name: "E9 Loft",
     profiles: PROFILES.entrance,               // Weekdays
     weekendProfiles: PROFILES.entranceWeekend, // Weekends - softer morning light
-    sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
+    sunTemperature: STUE_SUN_TEMPERATURE,      // Daytime colour follows sun elevation
+    idle: ENTRANCE9_IDLE                       // Evening: dims as the kitchen instead of off
   },
   "e339c184-ea11-4413-bd90-dac726861fd0": {
     name: "E9 Garderobe",
     profiles: PROFILES.entrance,               // Weekdays
     weekendProfiles: PROFILES.entranceWeekend, // Weekends - softer morning light
-    sunTemperature: STUE_SUN_TEMPERATURE       // Daytime colour follows sun elevation
+    sunTemperature: STUE_SUN_TEMPERATURE,      // Daytime colour follows sun elevation
+    idle: ENTRANCE9_IDLE                       // Evening: dims as the kitchen instead of off
   },
 
   // =====================================================================
@@ -528,6 +540,12 @@ const SETTINGS = {
                                  // watchdog): the "turned on" trigger can arrive
                                  // several seconds late, and the restore's commands
                                  // can still be on their way
+  fadeReportSeconds: 60,         // After AL's own fade has ended, a bulb can still
+                                 // report values from part-way through it for this
+                                 // long: Hue reports its state late (E9, 19 Nov 2026:
+                                 // 56 % 12 s after a 30 s fade to 35 % had ended).
+                                 // A wake or check while idle in that time does not
+                                 // take such values for a change by hand
   checkPollMinutes: 5,           // How often the flows run "check" (every_nth minute)
                                  // Must match the flow trigger — used for the
                                  // boundary look-ahead and the cheap gate
@@ -1178,7 +1196,7 @@ function setLastProfile(deviceId, profileName, brightness = null, temperature = 
 // into the old value), so parallel runs for different lights can't erase each
 // other's entries. Written only when a visible field changed, plus once an hour
 // as a heartbeat — runs that save no state make no API call at all.
-const AL_VERSION = '2.32.4';
+const AL_VERSION = '2.33.1';
 const AL_STATUS_VAR = 'AdaptiveLightingStatus';
 
 function buildALStatus() {
@@ -1488,6 +1506,33 @@ function matchesValues(dim, temp, ref, tolerance = SETTINGS.tolerance) {
 function changedByHand(dim, temp, lastApplied, target) {
   if (!lastApplied || typeof lastApplied.brightness !== 'number') return false;
   return !matchesValues(dim, temp, lastApplied) && !matchesValues(dim, temp, target);
+}
+
+/**
+ * The light is still reporting AL's own fade, not a change by hand: the fade
+ * (fadeEndTime) ended less than SETTINGS.fadeReportSeconds ago, and each value
+ * lies on the fade's way — between where it began (`from`) and the values AL
+ * sent (`ends`: the idle level, AL's last values), within tolerance. Hue bulbs
+ * report late: on 19 Nov 2026 E9 Loft read 56 %/0.74 12 s after its 30 s fade
+ * from 80 %/0.6 to 35 %/0.9 had ended, and the wake took that for a change by
+ * hand (manual all evening). Without a known start (idle from before 2.33.1)
+ * the brightness may lie anywhere from AL's values up to full, the colour anywhere
+ */
+function stillReportingFade(fadeEndTime, dim, temp, from, ends, now = Date.now()) {
+  const end = fadeEndTime || 0;
+  if (!end || now < end || now - end > SETTINGS.fadeReportSeconds * 1000) return false;
+  const known = (ends || []).filter(p => p && typeof p.brightness === 'number');
+  if (typeof dim !== 'number' || known.length === 0) return false;
+  const tol = SETTINGS.tolerance;
+  const within = (v, values) => {
+    const nums = values.filter(x => typeof x === 'number');
+    if (typeof v !== 'number' || nums.length === 0) return true;
+    return v >= Math.min(...nums) - tol && v <= Math.max(...nums) + tol;
+  };
+  const start = from && typeof from.brightness === 'number' ? from : null;
+  if (!start) return within(dim, [...known.map(p => p.brightness), 1]);
+  return within(dim, [start.brightness, ...known.map(p => p.brightness)])
+    && within(temp, [start.temperature, ...known.map(p => p.temperature)]);
 }
 
 /**
@@ -2392,7 +2437,10 @@ async function runIdle(ctx) {
     && matchesValues(dim, temp, level);
   // Level saved before the commands: a wake during them must not take the
   // "no change" shortcut
-  if (!saveWhileIdle(token, s => ({ idle: { ...s.idle, level } }))) return woken();
+  // ... and where the light was, so a wake or check reading it on the way down
+  // right after the fade knows it is AL's fade (stillReportingFade)
+  const from = typeof dim === 'number' ? { brightness: dim, temperature: temp } : null;
+  if (!saveWhileIdle(token, s => ({ idle: { ...s.idle, level, from } }))) return woken();
   const bPct = pctOf(level.brightness);
   const tPct = pctOf(level.temperature);
   if (alreadyThere) {
@@ -2498,8 +2546,11 @@ async function runWake(ctx) {
   // (back at the profile is no change by hand — that is applied as a wake).
   // The idle level is AL's own too: an idle run that died after its commands,
   // before it recorded lastApplied, left the light there
+  // Read on the way down right after idle's fade: AL's fade reported late, not a
+  // change by hand — woken as usual (19 Nov 2026, E9: manual all evening)
+  const reporting = stillReportingFade(state.fadeEndTime, dim, temp, woke.from, [woke.level, state.lastApplied], now);
   if (!flattened && now >= (state.fadeEndTime || 0) && changedByHand(dim, temp, state.lastApplied, target)
-      && !matchesValues(dim, temp, woke.level)) {
+      && !matchesValues(dim, temp, woke.level) && !reporting) {
     patchDeviceState(DEVICE_ID, { manual: true, manualSince: now });
     overrideLog(DEVICE_ID, roomName, state.lastProfile, state.lastApplied, dim, temp, 'wake', ' | while idle');
     diagLog(`AL-WAKE | ${roomName} | changed while idle (${pctOf(dim)}%) — manual | ${age} | ${took()}`);
@@ -2518,7 +2569,9 @@ async function runWake(ctx) {
   // Mid-fade every bulb, also one that reads off (see fading above)
   await applyLighting(device, target.brightness, target.temperature, true, fade, { onlyOn: !fading });
   setLastProfile(DEVICE_ID, target.name, target.brightness, target.temperature, target);
-  diagLog(`AL-WAKE | ${roomName} | ${target.name} | dim=${pctOf(target.brightness)}% temp=${pctOf(target.temperature)}% | fade ${fade}s | ${age}${tags} | ${took()}`);
+  const lag = reporting && !matchesValues(dim, temp, state.lastApplied)
+    ? ` | read ${pctOf(dim)}%/${pctOf(temp)} on AL's fade` : '';
+  diagLog(`AL-WAKE | ${roomName} | ${target.name} | dim=${pctOf(target.brightness)}% temp=${pctOf(target.temperature)}% | fade ${fade}s | ${age}${tags}${lag} | ${took()}`);
   return { room: roomName, woke: true, profile: target.name, brightness: target.brightness, temperature: target.temperature, changed: true };
 }
 
@@ -2953,10 +3006,25 @@ try {
   if (CLEAR_MANUAL) {
     const wasManual = isManualMode(DEVICE_ID);
 
+    // A clear on a light dimmed for an empty room, the room still empty (the
+    // dashboard's reset from elsewhere): back to what AL itself shows there now —
+    // the idle level, still idle, so Room_watchdog keeps holding it (2.33.1).
+    // 19 Nov 2026: the reset of E9 at 20:30 ended idle in the empty hall, applied
+    // Evening 70 %, and Room_watchdog faded the hall off a minute later
+    const idleBefore = getDeviceState(DEVICE_ID).idle;
+    const clearIdleCfg = idleBefore ? idleConfigFor(DEVICE_ID) : null;
+    let keepIdle = false;
+    if (clearIdleCfg && (device.capabilitiesObj?.onoff?.value ?? false)) {
+      try {
+        const zone = await Homey.zones.getZone({ id: device.zone });
+        keepIdle = zone?.active === false;
+      } catch (e) { keepIdle = false; } // can't tell: a person at the light, as before
+    }
+
     // Clear manual mode for group and all members
     await clearManualModeForGroup(DEVICE_ID, device);
-    // … and idle: a clear is a person at the light
-    if (getDeviceState(DEVICE_ID).idle) patchDeviceState(DEVICE_ID, { idle: null });
+    // … and idle: a clear is a person at the light — unless the room is empty
+    if (!keepIdle && getDeviceState(DEVICE_ID).idle) patchDeviceState(DEVICE_ID, { idle: null });
 
     // Clear forced profile (reset to auto mode) and pre-calculate all profiles
     if (FORCED_PROFILE_DEVICES.has(DEVICE_ID)) {
@@ -2999,15 +3067,37 @@ try {
       };
     }
     
-    // Light is on - apply profile WITH VERIFICATION AND RETRY
+    // Light is on - apply profile (or, idle kept, the idle level) WITH VERIFICATION AND RETRY
+    const clearTarget = keepIdle ? idleTarget(activeProfile, clearIdleCfg, null, currentMinutes) : activeProfile;
     const result = await applyLightingWithRetry(
       device,
-      activeProfile.brightness,
-      activeProfile.temperature,
+      clearTarget.brightness,
+      clearTarget.temperature,
       activeProfile.name,
       false  // instant, no fade
     );
     
+    if (result.success && keepIdle) {
+      // Auto now, still idle at this level: a wake brings the own profile back.
+      // No bulb snapshot (that was the manual scene) and no fade start to remember
+      const level = { brightness: clearTarget.brightness, temperature: clearTarget.temperature };
+      patchDeviceState(DEVICE_ID, s => ({ idle: { ...(s.idle || idleBefore), level, from: null, bulbs: null } }));
+      setLastProfile(DEVICE_ID, activeProfile.name, level.brightness, level.temperature, null);
+      diagLog(`AL-CLEAR | ${roomName} | room empty — idle kept: ${activeProfile.name} → ${idleSourceTag(clearTarget)} | dim=${pctOf(level.brightness)}% temp=${pctOf(level.temperature)}%${wasManual ? ' | manual cleared' : ''}`);
+      const message = `[${roomName}] Room empty - stays dimmed at ${pctOf(level.brightness)}%`;
+      if (SETTINGS.enableLogging) log(message);
+      return {
+        room: roomName,
+        profile: activeProfile.name,
+        brightness: level.brightness,
+        temperature: level.temperature,
+        idle: true,
+        verified: true,
+        attempts: result.attempts,
+        message
+      };
+    }
+
     if (result.success) {
       // Verification passed - safe to set lastProfile
       setLastProfile(DEVICE_ID, activeProfile.name, activeProfile.brightness, activeProfile.temperature, activeProfile);
@@ -3364,6 +3454,13 @@ try {
         reason: 'idle_ended_by_hand',
         profile: baseProfile.name
       };
+    } else if (idleState && stillReportingFade(getDeviceState(DEVICE_ID).fadeEndTime, currentBrightness, currentTemperature,
+                 idleState.from, [idleState.level, lastApplied])) {
+      // Idle, read on the way down right after AL's own fade: the bulb reports
+      // late, not a change by hand. The next poll looks again (a full run)
+      patchDeviceState(DEVICE_ID, { fullRunDue: true }, { evenIfStale: true, bookkeeping: true });
+      diagLog(`AL-SKIP-FADE | ${roomName} | read ${pctOf(currentBrightness)}%/${pctOf(currentTemperature)} on AL's fade (ended ${Math.round((Date.now() - getDeviceState(DEVICE_ID).fadeEndTime) / 1000)}s ago) | mode=check`);
+      return { room: roomName, skipped: true, reason: 'fade_reporting' };
     } else {
       // Values don't match last profile - this is manual adjustment. While idle
       // it is the user's choice too: manual, and idle ends with it (one save)
