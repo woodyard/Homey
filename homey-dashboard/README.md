@@ -125,6 +125,8 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.0.2** (2026-11-19) — Simpler header. On a phone it is the page title alone; the date and time
+  under it are gone. Wide screens show the date and time once, on the right, in plain weight.
 - **2.0.1** (2026-11-19) — Boost, Pause and Reset find their flows by themselves. The flows are
   named "<room code> - Heating <action>" in Homey ("ST - Heating Boost"), and that name now decides.
   Before, the dashboard guessed from the room's name, which never matched the codes, so every

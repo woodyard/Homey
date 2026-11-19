@@ -19,14 +19,14 @@
   display: none; width: 34px; height: 34px; border-radius: 11px; flex-shrink: 0;
   place-items: center; color: #fff; background: var(--heat-gradient);
 }
-.titles { min-width: 0; }
-.title { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.035em; line-height: 1.1; color: var(--text); }
-.titleBrand { display: none; }
-.sub {
-  font-size: 13px; color: var(--muted); line-height: 1.3; min-height: 17px; margin-top: 2px;
+.title {
+  margin: 0; min-width: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.035em; line-height: 1.15; color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.sub b { color: var(--text-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.titleBrand { display: none; }
+
+/* Date and time: wide screens only, where the dashboard may be a wall display. */
+.clock { display: none; font-size: 13.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
@@ -135,7 +135,7 @@
   .title { font-size: 17px; letter-spacing: -0.02em; }
   .titlePage { display: none; }
   .titleBrand { display: inline; }
-  .sub { font-size: 12.5px; margin-top: 1px; }
+  .clock { display: inline; }
 
   .tabs {
     display: flex; gap: 2px; flex: 1; justify-content: center; min-width: 0;

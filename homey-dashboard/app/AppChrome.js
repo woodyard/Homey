@@ -62,13 +62,10 @@ export default function AppChrome({
         <div className={styles.topRow}>
           <div className={styles.brand}>
             <span className={styles.mark} aria-hidden="true"><House size={17} strokeWidth={2.3} /></span>
-            <div className={styles.titles}>
-              <h1 className={styles.title}>
-                <span className={styles.titlePage}>{active ? active[1] : '\u00a0'}</span>
-                <span className={styles.titleBrand}>Skovgaard</span>
-              </h1>
-              <div className={styles.sub}>{dateLabel ? <>{dateLabel} · <b>{timeLabel}</b></> : ' '}</div>
-            </div>
+            <h1 className={styles.title}>
+              <span className={styles.titlePage}>{active ? active[1] : '\u00a0'}</span>
+              <span className={styles.titleBrand}>Skovgaard</span>
+            </h1>
           </div>
 
           <nav className={styles.tabs} aria-label="Sections">
@@ -85,6 +82,7 @@ export default function AppChrome({
           </nav>
 
           <div className={styles.right}>
+            {dateLabel && <span className={styles.clock}>{dateLabel} · {timeLabel}</span>}
             {liveDot}
             <button
               type="button" className={cx('hd-icon-btn', styles.menuBtn)} onClick={() => setOpen((v) => !v)}
