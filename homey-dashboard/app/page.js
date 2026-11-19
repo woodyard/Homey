@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, CloudSun, Flame, Lightbulb, LoaderCircle, Plug, Thermometer,
+  Activity, CloudSun, Flame, LayoutGrid, Lightbulb, LoaderCircle, Plug, Thermometer,
 } from 'lucide-react';
 import AppChrome from './AppChrome';
 import HeatingTab from './HeatingTab';
@@ -13,6 +13,7 @@ import LightingTab from './LightingTab';
 import WeatherTab from './WeatherTab';
 import TemperatureTab from './TemperatureTab';
 import ActivityTab from './ActivityTab';
+import OtherTab from './OtherTab';
 import { cx, ErrorBox, roomNameFromPath, SPIN } from './ui';
 import styles from './page.module.css';
 
@@ -26,7 +27,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '2.2.1';
+const APP_VERSION = '2.3.0';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).
@@ -43,10 +44,11 @@ const TABS = [
   ['heating', 'Varme', Flame],
   ['lighting', 'Lys', Lightbulb],
   ['weather', 'Vejr', CloudSun],
+  ['other', 'Andet', LayoutGrid],
   ['temperatures', 'Temperaturer', Thermometer, 'Temp.'],
   ['activity', 'Aktivitet', Activity],
 ];
-const NAV_TABS = ['heating', 'lighting', 'weather', 'temperatures']; // in the bar; the rest live in the menu
+const NAV_TABS = ['heating', 'lighting', 'weather', 'other']; // in the bar; the rest live in the menu
 const TAB_KEYS = TABS.map((t) => t[0]);
 
 function mergeDevices(prev, changed) {
@@ -371,6 +373,7 @@ export default function Page() {
             {tab === 'heating' && <HeatingTab devices={devices} zones={zones} flows={flows} onControl={controlDevice} onReload={reload} />}
             {tab === 'lighting' && <LightingTab devices={devices} flows={flows} alStatus={alStatus} onControl={controlDevice} onReload={reload} />}
             {tab === 'temperatures' && <TemperatureTab />}
+            {tab === 'other' && <OtherTab devices={devices} />}
             {tab === 'activity' && <ActivityTab feed={feed} />}
           </>
         )}

@@ -115,7 +115,7 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 - `app/page.js` — the shell: sign-in state, the shared Homey data (polls every 20s, or the live
   stream) and the open tab
 - `app/AppChrome.js` — top bar, navigation (bottom bar on phones, tabs on wide screens) and the menu
-- `app/HeatingTab.js`, `LightingTab.js`, `WeatherTab.js`, `TemperatureTab.js`, `ActivityTab.js` —
+- `app/HeatingTab.js`, `LightingTab.js`, `WeatherTab.js`, `OtherTab.js`, `TemperatureTab.js`, `ActivityTab.js` —
   one file per tab; `app/ui.js` and `app/LightTile.js` hold the controls they share
 - `app/globals.css` — design tokens (light/dark theme) and shared classes; `app/*.module.css` hold each view's own styles
 - `app/api/auth/*` — OAuth login/callback/logout/status routes
@@ -125,6 +125,12 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.3.0** (2026-11-19) — New tab, Andet, for devices without a tab of their own. First on it: the
+  washing machine in the kitchen. While a wash runs it shows the time left as a ring that fills, when
+  it will be done, the program and its phase, and below that the time gone, spin speed, and energy and
+  water used so far. Finished, waiting to start, a message or a failure each get one line. The machine's
+  English texts (Cottons, Main wash, In use) are shown in Danish. Read-only. Andet takes Temperaturer's
+  place in the navigation bar; Temperaturer is in the menu again.
 - **2.2.1** (2026-11-19) — A bulb set to a colour shows as Manual, so its room gets the button back
   to Auto. Before, only brightness and white balance were compared with what the script had set,
   and a colour changes neither. A light adjusted on the dashboard itself shows Manual at once,
