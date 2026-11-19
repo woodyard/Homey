@@ -11,14 +11,14 @@ import {
 } from 'lucide-react';
 import { copenhagenMinutesNow, fmtMinutes, isWeekendNow } from '../lib/adaptiveLighting';
 import {
-  HEATING_ROOMS, HEATING_ACTIONS, TARGET_MIN, TARGET_MAX, heatingDaySlots, heatingSlot, guessHeatFlow,
+  HEATING_ROOMS, HEATING_ACTIONS, TARGET_MIN, TARGET_MAX, heatingDaySlots, heatingSlot, heatFlowFor,
 } from '../lib/heating';
 import {
   explainHeating, heatingRoomSensor, liveWindowClosedAt, liveWindowOpen, optimisticMode, SCRIPT_INTERVAL_MIN, SETTLE_ACTIONS,
 } from '../lib/heatingState';
 import { HEAT_ICONS, useNow } from './HeatingReason';
 import {
-  BigTemp, clamp, cx, ErrorBox, fmtDuration, fmtLongDuration, INACTIVE_COUNTER_LIMIT, roomNameFromPath, SPIN, Toggle,
+  BigTemp, clamp, cx, DayStrip, ErrorBox, fmtDuration, fmtLongDuration, INACTIVE_COUNTER_LIMIT, roomNameFromPath, SPIN, Toggle,
 } from './ui';
 import styles from './HeatingTab.module.css';
 
@@ -78,40 +78,20 @@ function resolveMode(sc, opt) {
 
 const OVERRIDE_STATES = new Set(['boost', 'pause', 'manual']);
 
-// Today's schedule as one bar: a segment per slot, warmer targets drawn warmer, and a marker
-// for now.
+// Today's schedule as a strip: a segment per slot, warmer targets drawn warmer.
 function DayTimeline({ slots, nowMin }) {
-  if (!slots.length) return null;
   const targets = slots.map((s) => s.target);
   const lo = Math.min(...targets);
   const span = Math.max(...targets) - lo;
-  return (
-    <div className={styles.timeline}>
-      <div className={styles.tlTemps} aria-hidden="true">
-        {slots.map((s) => (
-          <span key={s.start} style={{ flexGrow: s.end - s.start }} className={nowMin >= s.start && nowMin < s.end ? styles.tlTempNow : undefined}>
-            {s.end - s.start >= 150 ? `${s.target}°` : ''}
-          </span>
-        ))}
-      </div>
-      <div className={styles.tlBar}>
-        {slots.map((s) => {
-          const warmth = span > 0 ? (s.target - lo) / span : 0.5;
-          return (
-            <div
-              key={s.start} className={styles.tlSeg}
-              style={{ flexGrow: s.end - s.start, '--warmth': `${Math.round(14 + warmth * 66)}%` }}
-              title={`${s.name}: ${fmtMinutes(s.start)}–${fmtMinutes(s.end === 1440 ? 0 : s.end)} · ${s.target}°`}
-            />
-          );
-        })}
-        <span className={styles.tlNow} style={{ left: `${clamp((nowMin / 1440) * 100, 0, 100)}%` }} />
-      </div>
-      <div className={styles.tlAxis} aria-hidden="true">
-        {['00', '06', '12', '18', '24'].map((h) => <span key={h}>{h}</span>)}
-      </div>
-    </div>
-  );
+  const segments = slots.map((s) => {
+    const warmth = span > 0 ? (s.target - lo) / span : 0.5;
+    return {
+      start: s.start, end: s.end, label: `${s.target}°`,
+      color: `color-mix(in srgb, var(--heat) ${Math.round(14 + warmth * 66)}%, var(--surface-3))`,
+      title: `${s.name}: ${fmtMinutes(s.start)}–${fmtMinutes(s.end === 1440 ? 0 : s.end)} · ${s.target}°`,
+    };
+  });
+  return <div className={styles.timeline}><DayStrip segments={segments} nowMin={nowMin} /></div>;
 }
 
 // One heating room. `d` is roomData(room) (null when the thermostat is missing), `why` the
@@ -303,13 +283,10 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
   }, []);
 
   const byId = useMemo(() => new Map((devices || []).map((d) => [d.id, d.capabilities || {}])), [devices]);
-  const flowById = useMemo(() => new Map((flows || []).map((f) => [f.id, f])), [flows]);
   const flowOptions = useMemo(() => (flows || []).slice().sort((a, b) => a.name.localeCompare(b.name)), [flows]);
 
   const flowFor = (room, action) => {
-    const m = mapping[`${room.key}:${action.key}`];
-    if (m) return flowById.get(m) || null;
-    return guessHeatFlow(room, action, flows || []);
+    return heatFlowFor(room, action, flows || [], mapping);
   };
   const setFlowFor = (roomKey, actionKey, flowId) => {
     setMapping((prev) => {
@@ -473,7 +450,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
 
   async function runAction(room, action) {
     const flow = flowFor(room, action);
-    if (!flow) { setErr(`No flow mapped for ${room.label} · ${action.key}. Pick one under Flow mapping.`); return; }
+    if (!flow) { setErr(`No flow named "${room.code} - Heating ${action.flow}" in Homey.`); return; }
     const bk = `${room.key}:${action.key}`;
     setErr('');
     setBusy((prev) => new Set(prev).add(bk));
@@ -513,6 +490,10 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
     try { localStorage.setItem('heating_open', JSON.stringify(next)); } catch { /* ignore */ }
     return next;
   });
+
+  // The flows are found by name. Only a flow that is missing needs picking by hand.
+  const flowMissing = (flows || []).length > 0
+    && HEATING_ROOMS.some((room) => HEATING_ACTIONS.some((a) => !flowFor(room, a)));
 
   const rooms = HEATING_ROOMS.map((room) => ({ room, d: roomData(room) }));
   const found = rooms.filter(({ d }) => d);
@@ -566,7 +547,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
               key: a.key, label: actionLabel(a), Icon: ui.Icon, cls: ui.cls, busy: isBusy,
               active: !!d && !masterOff && d.mode === a.key, // Boost or Pause is running
               disabled: isBusy || !flow || masterOff,
-              title: masterOff ? 'Heating system is off' : flow ? `Runs flow: ${flow.name}` : 'No flow mapped — see Flow mapping below',
+              title: masterOff ? 'Heating system is off' : flow ? `Runs flow: ${flow.name}` : `No flow named "${room.code} - Heating ${a.flow}"`,
               onClick: () => runAction(room, a),
             };
           });
@@ -581,6 +562,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
         })}
       </div>
 
+      {(flowMissing || showConfig) && (
       <div className={styles.setup}>
         <button type="button" className="hd-btn hd-btn-ghost hd-btn-sm" onClick={() => setShowConfig((s) => !s)} aria-expanded={showConfig}>
           <Settings2 size={15} /> Flow mapping
@@ -611,6 +593,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

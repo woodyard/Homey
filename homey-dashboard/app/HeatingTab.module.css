@@ -131,28 +131,7 @@
 .schedHead { display: flex; align-items: flex-start; gap: 7px; font-size: 13.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .schedHead svg { flex-shrink: 0; margin-top: 2px; color: var(--muted); }
 
-.timeline { margin-top: 10px; }
-.tlTemps, .tlBar { display: flex; gap: 2px; }
-.tlTemps > span {
-  flex-basis: 0; min-width: 0; text-align: center; white-space: nowrap;
-  font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums;
-}
-.tlTemps > .tlTempNow { color: var(--text); font-weight: 700; }
-.tlBar { position: relative; height: 12px; margin-top: 5px; }
-.tlSeg {
-  flex-basis: 0; min-width: 0; border-radius: 4px;
-  background: color-mix(in srgb, var(--heat) var(--warmth, 30%), var(--surface-3));
-}
-.tlSeg:first-child { border-radius: 6px 4px 4px 6px; }
-.tlSeg:nth-last-child(2) { border-radius: 4px 6px 6px 4px; }
-.tlNow {
-  position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px; border-radius: 2px;
-  background: var(--text); box-shadow: 0 0 0 2px var(--surface-2);
-}
-.tlAxis {
-  display: flex; justify-content: space-between; margin-top: 6px;
-  font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums;
-}
+.timeline { margin-top: 10px; --strip-bg: var(--surface-2); }
 
 .info { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13.5px; color: var(--muted); transition: filter 0.2s, opacity 0.2s; }
 .infoItem { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; }

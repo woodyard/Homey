@@ -125,6 +125,14 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.0.1** (2026-11-19) — Boost, Pause and Reset find their flows by themselves. The flows are
+  named "<room code> - Heating <action>" in Homey ("ST - Heating Boost"), and that name now decides.
+  Before, the dashboard guessed from the room's name, which never matched the codes, so every
+  browser had to map the twelve flows by hand once. "Flow mapping" only shows when a flow with the
+  expected name is missing. Calmer graphs: the Rooms chart shows the temperature today, its
+  forecast as the same line dotted, and the heating target, and no longer the light level, the
+  schedule bands or extra sensors. Lighting draws each room's day as the same strip Heating uses
+  for its schedule (colour = white balance, label = brightness) in place of the dark bar chart.
 - **2.0.0** (2026-11-19) — Redesign, mobile first. The dashboard opens on **Heating**: one card
   per room with the temperature, the target (− / +) and the one reason the room is or is not
   heating. Four rooms fit on a phone screen; a card opens to today's schedule as a timeline and

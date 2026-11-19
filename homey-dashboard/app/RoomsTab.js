@@ -17,7 +17,7 @@ import {
   fmtMinutes, copenhagenMinutesNow, isWeekendNow, isWeekendScheduleNow, isIdle,
 } from '../lib/adaptiveLighting';
 import {
-  HEATING_ROOMS, HEATING_ACTIONS, heatingDaySlots, heatingSlot, guessHeatFlow,
+  HEATING_ROOMS, HEATING_ACTIONS, heatingDaySlots, heatingSlot, heatFlowFor,
 } from '../lib/heating';
 import { estimateRoomModel, ROOM_MODEL_DEFAULTS, predictRoom } from '../lib/thermal';
 import { explainHeating, heatingRoomSensor, liveWindowClosedAt, liveWindowOpen, optimisticMode } from '../lib/heatingState';
@@ -63,32 +63,6 @@ function todayMidnightMs() {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d.getTime();
-}
-
-// ---------------------------------------------------------------- lights ----
-
-// Smoothed 24h brightness model for a profile set: samples every STEP minutes plus a
-// cool→warm gradient stop per phase. Used by the combined chart’s lighting overlay.
-function brightnessModel(profiles, sun) {
-  const STEP = 10;
-  const n = 1440 / STEP + 1;
-  const phases = phaseList(profiles, sun);
-  const phaseAt = (m) => phases.find((p) => isActive(p, m)) || phases[0];
-  let samples = Array.from({ length: n }, (_, i) => phaseAt(Math.min(1439, i * STEP)).brightness);
-  for (let pass = 0; pass < 3; pass++) {
-    samples = samples.map((v, i) => {
-      const a = samples[(i - 1 + n) % n];
-      const b = samples[(i + 1) % n];
-      return (a + v * 2 + b) / 4;
-    });
-  }
-  const stops = [];
-  phases.forEach((p) => {
-    const segs = p.end <= 1440 ? [[p.start, p.end]] : [[p.start, 1440], [0, p.end - 1440]];
-    segs.forEach(([s, e]) => stops.push({ at: (s + e) / 2 / 1440, color: tempColor(p.temperature) }));
-  });
-  stops.sort((a, b) => a.at - b.at);
-  return { STEP, samples, stops };
 }
 
 // ---------------------------------------------------------------- status ----
@@ -539,39 +513,15 @@ function smoothPoints(points, window = 9) {
   });
 }
 
-// Data colours — picked to read on both the light and the dark theme.
-const SERIES_COLORS = ['#5b7cff', '#22b8cf', '#14b8a6', '#ec4899'];
-const TARGET_COLOR = '#a855f7'; // scheduled heating target — distinct from the orange light curve
-const FORECAST_COLOR = '#5b7cff';
-const LIGHT_LEVEL_COLOR = '#f59e0b';
-const SUN_MARK_COLOR = '#f3c96b';
-
-function LegendItem({ color, dashed, width = 2, opacity = 1, children }) {
-  return (
-    <span className={styles.legendItem}>
-      <svg width="18" height="4" aria-hidden="true" style={{ opacity, flex: 'none' }}>
-        <line x1="1" x2="17" y1="2" y2="2" stroke={color} strokeWidth={width} strokeLinecap="round" strokeDasharray={dashed ? '3.5 3' : undefined} />
-      </svg>
-      {children}
-    </span>
-  );
-}
-
-function ClimateChart({ series, slots, prediction, nowMin, lighting, uid }) {
+// Today's temperature on one quiet chart: measured since midnight (solid), the forecast for
+// the rest of the day (dotted, same line continued), and the heating target as a stepped line.
+function ClimateChart({ points, slots, prediction, nowMin, uid }) {
   const wrapRef = useRef(null);
-  const [W, setW] = useState(920);
+  const [W, setW] = useState(600);
   const [hover, setHover] = useState(null);
 
-  // Optional adaptive-lighting overlay: brightness on a 0–100% right-hand axis.
-  const light = lighting ? brightnessModel(lighting.profiles, lighting.sun) : null;
-
-  const allVals = [
-    ...series.flatMap((s) => s.points.map((p) => p.v)),
-    ...prediction.map((p) => p.v),
-    ...slots.map((s) => s.target),
-  ];
-  const hasTemp = allVals.length > 0;
-  const empty = !hasTemp && !light;
+  const allVals = [...points.map((p) => p.v), ...prediction.map((p) => p.v), ...slots.map((s) => s.target)];
+  const empty = !allVals.length;
 
   // Draw at the container's real pixel width so the labels stay legible on a phone.
   useEffect(() => {
@@ -579,37 +529,33 @@ function ClimateChart({ series, slots, prediction, nowMin, lighting, uid }) {
     if (!el || typeof ResizeObserver === 'undefined') return undefined;
     const ro = new ResizeObserver((entries) => {
       const w = Math.round(entries[0].contentRect.width);
-      if (w > 0) setW(Math.max(280, w));
+      if (w > 0) setW(Math.max(240, w));
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, [empty]);
 
-  const narrow = W < 560;
-  const H = narrow ? 220 : 260;
-  const M = { l: narrow ? 34 : 40, r: lighting ? (narrow ? 32 : 34) : 14, t: 26, b: 22 };
-
-  const x = (m) => M.l + (m / 1440) * (W - M.l - M.r);
-  const yb = (b) => H - M.b - b * (H - M.t - M.b);
-
   if (empty) return <div ref={wrapRef} className={`hd-empty ${styles.chartEmpty}`}>No temperature data yet today.</div>;
-  const yMin = hasTemp ? Math.floor(Math.min(...allVals) - 1) : 0;
-  const yMax = hasTemp ? Math.ceil(Math.max(...allVals) + 1) : 1;
-  const y = (v) => M.t + (1 - (v - yMin) / Math.max(1, yMax - yMin)) * (H - M.t - M.b);
+
+  const H = W < 480 ? 150 : 190;
+  const M = { l: 30, r: 8, t: 10, b: 22 };
+  const yMin = Math.floor(Math.min(...allVals) - 0.5);
+  const yMax = Math.ceil(Math.max(...allVals) + 0.5);
+  const ySpan = Math.max(1, yMax - yMin);
+  const x = (m) => M.l + (Math.max(0, Math.min(1440, m)) / 1440) * (W - M.l - M.r);
+  const y = (v) => M.t + (1 - (v - yMin) / ySpan) * (H - M.t - M.b);
+  const bottom = H - M.b;
+
+  const step = ySpan > 8 ? 4 : ySpan > 4 ? 2 : 1;
+  const yTicks = [];
+  for (let v = Math.ceil(yMin / step) * step; v <= yMax; v += step) yTicks.push(v);
 
   const linePath = (pts) => pts.map((p, i) => `${i ? 'L' : 'M'} ${x(p.m).toFixed(1)} ${y(p.v).toFixed(1)}`).join(' ');
-
-  // Target step line across the day.
   const targetPath = slots.map((s, i) => (
     `${i ? 'L' : 'M'} ${x(s.start).toFixed(1)} ${y(s.target).toFixed(1)} L ${x(s.end).toFixed(1)} ${y(s.target).toFixed(1)}`
   )).join(' ');
-
-  const yTicks = [];
-  if (hasTemp) for (let v = yMin; v <= yMax; v += (yMax - yMin) > 8 ? 2 : 1) yTicks.push(v);
-
-  const mainPts = series[0] && series[0].points.length > 1 ? series[0].points : null;
-  const top = M.t - 16;
-  const bottom = H - M.b;
+  const measured = points.length > 1 ? points : null;
+  const last = points.length ? points[points.length - 1] : null;
 
   function onMove(e) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -621,164 +567,66 @@ function ClimateChart({ series, slots, prediction, nowMin, lighting, uid }) {
       for (const p of pts) if (Math.abs(p.m - m) < Math.abs(best.m - m)) best = p;
       return Math.abs(best.m - m) <= 45 ? best : null;
     };
-    const slot = slots.find((s) => m >= s.start && m < s.end) || null;
-    setHover({
-      m,
-      px: Math.max(M.l, Math.min(W - M.r, px)),
-      actual: closest(series[0] && series[0].points),
-      pred: m > nowMin ? closest(prediction) : null,
-      slot,
-      light: light ? light.samples[Math.round(m / light.STEP)] : null,
-    });
+    const point = (last && m > last.m ? closest(prediction) : closest(points)) || closest(prediction);
+    setHover({ m, point, forecast: !!(last && point && point.m > last.m), slot: slots.find((s) => m >= s.start && m < s.end) || null });
   }
 
   return (
     <div ref={wrapRef} className={styles.chart}>
-      <svg viewBox={`0 0 ${W} ${H}`} className={styles.chartSvg}
-        onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
-        {mainPts && (
-          <defs>
-            <linearGradient id={`area-${uid}`} x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor={SERIES_COLORS[0]} stopOpacity="0.24" />
-              <stop offset="100%" stopColor={SERIES_COLORS[0]} stopOpacity="0" />
-            </linearGradient>
-          </defs>
-        )}
-        {/* schedule slot bands + labels */}
-        {slots.map((s, i) => {
-          // Clamp to the drawn day, and keep the label inside the plot at the edges.
-          const x0 = x(Math.max(0, s.start));
-          const x1 = x(Math.min(1440, s.end));
-          if (x1 <= x0) return null;
-          const label = `${s.name} ${s.target}°${s.offset > 0 ? ` (−${s.offset}° idle)` : ''}`;
-          const half = label.length * 2.9;
-          const mid = (x0 + x1) / 2;
-          const lx = mid + half > W - M.r ? W - M.r - 2 : mid - half < M.l ? M.l + 2 : mid;
-          const anchor = lx === mid ? 'middle' : lx > mid ? 'end' : 'start';
-          return (
-            <g key={`${s.name}-${s.start}`}>
-              <rect x={x0} y={top} width={x1 - x0} height={bottom - top}
-                style={{ fill: 'var(--heat)', fillOpacity: i % 2 ? 0.075 : 0.035 }} />
-              {(x1 - x0) > 52 && (
-                <text x={lx} y={M.t - 5} textAnchor={anchor} fontSize="10"
-                  style={{ fill: 'var(--muted)', fontWeight: 500 }}>
-                  {label}
-                </text>
-              )}
-            </g>
-          );
-        })}
+      <svg
+        viewBox={`0 0 ${W} ${H}`} className={styles.chartSvg} role="img" aria-label="Temperature today"
+        onPointerMove={onMove} onPointerDown={onMove} onPointerLeave={() => setHover(null)}
+      >
+        <defs>
+          <linearGradient id={`area-${uid}`} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" style={{ stopColor: 'var(--text)', stopOpacity: 0.1 }} />
+            <stop offset="100%" style={{ stopColor: 'var(--text)', stopOpacity: 0 }} />
+          </linearGradient>
+        </defs>
         {yTicks.map((v) => (
           <g key={v}>
             <line x1={M.l} x2={W - M.r} y1={y(v)} y2={y(v)} style={{ stroke: 'var(--chart-grid)' }} />
-            <text x={M.l - 7} y={y(v) + 3.5} textAnchor="end" fontSize="10.5" style={{ fill: 'var(--chart-axis)' }}>{v}°</text>
+            <text x={M.l - 7} y={y(v) + 4} textAnchor="end" fontSize="11" style={{ fill: 'var(--chart-axis)' }}>{v}°</text>
           </g>
         ))}
-        {/* adaptive-lighting overlay: brightness area (right axis) behind the temp curves */}
-        {light && (() => {
-          const curve = light.samples
-            .map((b, i) => `${i ? 'L' : 'M'} ${x(i * light.STEP).toFixed(1)} ${yb(b).toFixed(1)}`).join(' ');
-          const area = `${curve} L ${x(1440).toFixed(1)} ${bottom} L ${M.l} ${bottom} Z`;
-          const sunrise = lighting.sun.sunriseMinutes;
-          const sunset = lighting.sun.sunsetMinutes;
-          return (
-            <g>
-              <defs>
-                <linearGradient id={`cmb-${uid}`} x1="0" x2="1" y1="0" y2="0">
-                  {light.stops.map((s, i) => <stop key={i} offset={`${(s.at * 100).toFixed(1)}%`} stopColor={s.color} />)}
-                </linearGradient>
-              </defs>
-              <path d={area} fill={`url(#cmb-${uid})`} opacity="0.22" />
-              <path d={curve} fill="none" stroke={`url(#cmb-${uid})`} strokeWidth="1.8" opacity="0.85" />
-              {/* dim the night hours */}
-              <rect x={M.l} y={top} width={x(sunrise) - M.l} height={bottom - top} style={{ fill: 'var(--neutral-soft)' }} />
-              <rect x={x(sunset)} y={top} width={W - M.r - x(sunset)} height={bottom - top} style={{ fill: 'var(--neutral-soft)' }} />
-              {/* sun / moon markers */}
-              {[[sunrise, '☀️'], [sunset, '🌙']].map(([m, icon]) => (
-                <g key={icon}>
-                  <line x1={x(m)} x2={x(m)} y1={M.t - 6} y2={bottom} stroke={SUN_MARK_COLOR} strokeDasharray="2 3" opacity="0.9" />
-                  <text x={x(m)} y={bottom - 5} textAnchor="middle" fontSize="10">{icon}</text>
-                </g>
-              ))}
-              {/* right-hand brightness axis */}
-              {[0, 0.5, 1].map((b) => (
-                <text key={b} x={W - M.r + 4} y={yb(b) + 3.5} fontSize="9.5" style={{ fill: 'var(--faint)' }}>{Math.round(b * 100)}%</text>
-              ))}
-            </g>
-          );
-        })()}
         {[0, 6, 12, 18, 24].map((h) => (
-          <text key={h} x={x(h * 60)} y={H - 6} fontSize="10.5" style={{ fill: 'var(--chart-axis)' }}
-            textAnchor={h === 0 ? 'start' : h === 24 ? 'end' : 'middle'}>
+          <text
+            key={h} x={x(h * 60)} y={H - 5} fontSize="11" style={{ fill: 'var(--chart-axis)' }}
+            textAnchor={h === 0 ? 'start' : h === 24 ? 'end' : 'middle'}
+          >
             {String(h).padStart(2, '0')}
           </text>
         ))}
-        {/* scheduled target step line */}
         {slots.length > 0 && (
-          <path d={targetPath} fill="none" stroke={TARGET_COLOR} strokeWidth="2" opacity="0.9"
-            strokeLinejoin="round" strokeLinecap="round" />
+          <path d={targetPath} fill="none" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" style={{ stroke: 'var(--heat)' }} />
         )}
-        {/* soft area under the primary measured line */}
-        {mainPts && (
-          <path
-            d={`${linePath(mainPts)} L ${x(mainPts[mainPts.length - 1].m).toFixed(1)} ${bottom} L ${x(mainPts[0].m).toFixed(1)} ${bottom} Z`}
-            fill={`url(#area-${uid})`}
-          />
+        {measured && (
+          <path d={`${linePath(measured)} L ${x(last.m).toFixed(1)} ${bottom} L ${x(measured[0].m).toFixed(1)} ${bottom} Z`} fill={`url(#area-${uid})`} />
         )}
-        {/* measured lines since midnight */}
-        {series.map((s, i) => s.points.length > 1 && (
-          <path key={s.key} d={linePath(s.points)} fill="none"
-            stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
-            strokeWidth={i === 0 ? 2.6 : 1.5} opacity={i === 0 ? 1 : 0.6}
-            strokeLinejoin="round" strokeLinecap="round" />
-        ))}
-        {/* prediction */}
+        {measured && (
+          <path d={linePath(measured)} fill="none" strokeWidth="2.25" strokeLinejoin="round" strokeLinecap="round" style={{ stroke: 'var(--text)' }} />
+        )}
         {prediction.length > 1 && (
-          <path d={linePath(prediction)} fill="none" stroke={FORECAST_COLOR} strokeWidth="2"
-            strokeDasharray="5 5" opacity="0.7" strokeLinecap="round" />
+          <path d={linePath(prediction)} fill="none" strokeWidth="2.25" strokeDasharray="0.5 6" strokeLinecap="round" style={{ stroke: 'var(--text)', opacity: 0.5 }} />
         )}
-        {/* now marker */}
-        <line x1={x(nowMin)} x2={x(nowMin)} y1={top} y2={bottom} strokeWidth="1.6"
-          style={{ stroke: 'var(--bad)', filter: 'drop-shadow(0 0 3px var(--bad))' }} />
-        <circle cx={x(nowMin)} cy={top} r="6" style={{ fill: 'var(--bad)', fillOpacity: 0.18 }} />
-        <circle cx={x(nowMin)} cy={top} r="3" style={{ fill: 'var(--bad)' }} />
-        {hover && (
+        {last ? (
+          <circle cx={x(last.m)} cy={y(last.v)} r="4.5" strokeWidth="2.5" style={{ fill: 'var(--text)', stroke: 'var(--surface-2)' }} />
+        ) : (
+          <line x1={x(nowMin)} x2={x(nowMin)} y1={M.t} y2={bottom} strokeWidth="1.5" style={{ stroke: 'var(--border-strong)' }} />
+        )}
+        {hover && hover.point && (
           <g>
-            <line x1={hover.px} x2={hover.px} y1={top} y2={bottom} strokeWidth="1" strokeDasharray="4 4"
-              style={{ stroke: 'var(--muted)' }} />
-            {hover.actual && (
-              <circle cx={x(hover.actual.m)} cy={y(hover.actual.v)} r="4" fill={SERIES_COLORS[0]} strokeWidth="2"
-                style={{ stroke: 'var(--surface-solid)' }} />
-            )}
-            {hover.pred && (
-              <circle cx={x(hover.pred.m)} cy={y(hover.pred.v)} r="3.5" fill={FORECAST_COLOR} strokeWidth="2"
-                style={{ stroke: 'var(--surface-solid)' }} />
-            )}
+            <line x1={x(hover.point.m)} x2={x(hover.point.m)} y1={M.t} y2={bottom} strokeWidth="1" style={{ stroke: 'var(--border-strong)' }} />
+            <circle cx={x(hover.point.m)} cy={y(hover.point.v)} r="4" strokeWidth="2" style={{ fill: 'var(--surface-2)', stroke: 'var(--text)' }} />
           </g>
         )}
       </svg>
-      {hover && (
-        <div
-          className={`${styles.tooltip}${narrow ? ` ${styles.tooltipNarrow}` : ''}`}
-          style={narrow ? undefined : { left: `${Math.max(8, Math.min(84, (hover.px / W) * 100))}%` }}
-        >
-          <b className="hd-num">{fmtMinutes(hover.m)}</b>
-          {hover.slot && <span className={styles.tipItem} style={{ color: TARGET_COLOR }}>{hover.slot.name} → {hover.slot.target}°</span>}
-          {hover.actual && (
-            <span className={styles.tipItem}>
-              <i className={styles.tipDot} style={{ background: SERIES_COLORS[0] }} />measured <b>{hover.actual.v.toFixed(1)}°</b>
-            </span>
-          )}
-          {hover.pred && (
-            <span className={styles.tipItem}>
-              <i className={styles.tipDot} style={{ background: FORECAST_COLOR, opacity: 0.6 }} />forecast {hover.pred.v.toFixed(1)}°
-            </span>
-          )}
-          {hover.light != null && (
-            <span className={styles.tipItem} style={{ color: 'var(--warn)' }}>
-              <Lightbulb size={12} strokeWidth={2.2} />{Math.round(hover.light * 100)}%
-            </span>
-          )}
+      {hover && hover.point && (
+        <div className={styles.tooltip} style={{ left: `${Math.max(14, Math.min(86, (x(hover.point.m) / W) * 100))}%` }}>
+          <span className={styles.tipTime}>{fmtMinutes(hover.point.m)}</span>
+          <b>{hover.point.v.toFixed(1)}°</b>
+          {hover.forecast && <span className={styles.tipItem}>forecast</span>}
+          {hover.slot && <span className={styles.tipItem} style={{ color: 'var(--heat-ink)' }}>target {hover.slot.target}°</span>}
         </div>
       )}
     </div>
@@ -953,7 +801,6 @@ export default function RoomsTab({ devices, zones, flows, alStatus, onControl, o
   }, []);
 
   const deviceById = useMemo(() => new Map((devices || []).map((d) => [d.id, d])), [devices]);
-  const flowById = useMemo(() => new Map((flows || []).map((f) => [f.id, f])), [flows]);
 
   // AL lights grouped by the zonePath their device actually lives in.
   const alByZonePath = useMemo(() => {
@@ -1113,9 +960,8 @@ export default function RoomsTab({ devices, zones, flows, alStatus, onControl, o
   async function runHeatAction(room, action) {
     const hr = room.heating;
     if (!hr) return;
-    const mapped = heatMapping[`${hr.key}:${action.key}`];
-    const flow = (mapped && flowById.get(mapped)) || guessHeatFlow(hr, action, flows || []);
-    if (!flow) { setErr(`No flow mapped for ${hr.label} · ${action.key} — map it on the Heating tab.`); return; }
+    const flow = heatFlowFor(hr, action, flows || [], heatMapping);
+    if (!flow) { setErr(`No flow named "${hr.code} - Heating ${action.flow}" in Homey.`); return; }
     const bk = `${hr.key}:${action.key}`;
     setErr('');
     setBusy((prev) => new Set(prev).add(bk));
@@ -1273,7 +1119,6 @@ export default function RoomsTab({ devices, zones, flows, alStatus, onControl, o
           const openContacts = room.devices.filter((d) => (d.capabilities || {}).alarm_contact === true).length;
           const anyTemp = room.devices.map((d) => (d.capabilities || {}).measure_temperature).find((v) => typeof v === 'number');
           const headTemp = curTemp != null ? curTemp : anyTemp != null ? anyTemp : null;
-          const showToday = hasClimate || !!profiles;
           const heatingIds = new Set(room.heating ? [room.heating.thermostatId, ...(room.heating.plugIds || [])].filter(Boolean) : []);
 
           return (
@@ -1366,35 +1211,20 @@ export default function RoomsTab({ devices, zones, flows, alStatus, onControl, o
                       </div>
                     )}
 
-                    {/* Today: temperature + schedule + forecast + light level on one chart. */}
-                    {showToday && (
+                    {/* Today: temperature, forecast and the heating target on one chart. */}
+                    {hasClimate && (
                     <div className={cx('hd-inset', styles.panel, styles.stack)}>
                       <div className={styles.panelHead}>
-                        {/* One identical title on every room card; the legend tells the rest. */}
                         <Eyebrow icon={ChartSpline}>Today</Eyebrow>
                         <div className={styles.legend}>
-                          {hasClimate && <LegendItem color={SERIES_COLORS[0]} width={2.5}>measured</LegendItem>}
-                          {room.heating && <LegendItem color={TARGET_COLOR}>scheduled target</LegendItem>}
-                          {prediction.length > 1 && <LegendItem color={FORECAST_COLOR} dashed>forecast</LegendItem>}
-                          {profiles && <LegendItem color={LIGHT_LEVEL_COLOR} opacity={0.7}>light level</LegendItem>}
+                          <span className={styles.legendItem}><i className={styles.keyLine} />Temperature</span>
+                          {room.heating && <span className={styles.legendItem}><i className={cx(styles.keyLine, styles.keyTarget)} />Target</span>}
                         </div>
                       </div>
 
                       <ClimateChart
-                        series={hasClimate ? series : []} slots={hasClimate ? slots : []}
-                        prediction={hasClimate ? prediction : []} nowMin={nowMin}
-                        lighting={profiles ? { profiles, sun } : null} uid={uid}
+                        points={primary ? primary.points : []} slots={slots} prediction={prediction} nowMin={nowMin} uid={uid}
                       />
-
-                      {series.length > 1 && (
-                        <div className={`${styles.legend} ${styles.legendLeft}`}>
-                          {series.map((s, i) => (
-                            <LegendItem key={s.key} color={SERIES_COLORS[i % SERIES_COLORS.length]} opacity={i === 0 ? 1 : 0.6}>
-                              {s.name}
-                            </LegendItem>
-                          ))}
-                        </div>
-                      )}
 
                       {notes.length > 0 && (
                         <div className={`${styles.note} ${styles.noteWarn}`}>

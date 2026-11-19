@@ -180,12 +180,10 @@
 
 /* ---------- climate ---------- */
 
-.legend {
-  display: flex; flex-wrap: wrap; gap: 4px 12px; margin-left: auto;
-  font-size: 12px; color: var(--muted);
-}
-.legendLeft { margin-left: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-left: auto; font-size: 12.5px; color: var(--muted); }
 .legendItem { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.keyLine { display: inline-block; width: 14px; height: 2.5px; border-radius: 2px; background: var(--text); }
+.keyTarget { height: 1.5px; background: var(--heat); }
 
 .note {
   display: flex; align-items: flex-start; gap: 7px;
@@ -217,16 +215,15 @@
 /* ---------- chart ---------- */
 
 .chart { position: relative; width: 100%; min-width: 0; }
-.chartSvg { display: block; width: 100%; height: auto; font-variant-numeric: tabular-nums; }
-.chartEmpty { padding: 28px 16px; font-size: 12.5px; }
+.chartSvg { display: block; width: 100%; height: auto; font-variant-numeric: tabular-nums; touch-action: pan-y; }
+.chartEmpty { padding: 28px 16px; font-size: 13.5px; }
 
 .tooltip {
-  position: absolute; top: 4px; transform: translateX(-50%); z-index: 2;
-  display: flex; flex-wrap: wrap; align-items: center; gap: 3px 10px;
-  padding: 8px 12px; border-radius: 12px;
-  background: var(--surface-solid); border: 1px solid var(--border-strong); box-shadow: var(--shadow-lg);
-  color: var(--text); font-size: 11.5px; white-space: nowrap; pointer-events: none;
+  position: absolute; top: -6px; transform: translateX(-50%); z-index: 2;
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 6px 11px; border-radius: 11px;
+  background: var(--ink); color: var(--ink-contrast); box-shadow: var(--shadow);
+  font-size: 13px; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums;
 }
-.tooltipNarrow { left: 6px; right: 6px; transform: none; white-space: normal; }
-.tipItem { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); }
-.tipDot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.tipTime { opacity: 0.7; }
+.tipItem { opacity: 0.85; }

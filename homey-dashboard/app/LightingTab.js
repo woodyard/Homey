@@ -12,7 +12,7 @@ import {
   AL_ROOMS, getSunTimes, phaseList, isActive, activePhase, tempColor, fmtMinutes,
   copenhagenMinutesNow, isWeekendScheduleNow, resolveLightMode, describeLightStatus, isIdle,
 } from '../lib/adaptiveLighting';
-import { cx, cmpZonePath, ErrorBox, Pill, SPIN } from './ui';
+import { cx, cmpZonePath, DayStrip, ErrorBox, Pill, SPIN } from './ui';
 import styles from './LightingTab.module.css';
 
 function warmthLabel(t) {
@@ -352,57 +352,27 @@ function ModeBadge({ mode, guess = false, st = null }) {
 
 function ScheduleChart({ profiles, sun, nowMin, onApplyPhase, applying }) {
   const phases = phaseList(profiles, sun);
-  const pct = (m) => `${(m / 1440) * 100}%`;
 
-  // Split any phase that wraps past midnight into two drawable bars.
-  const bars = [];
+  // One strip segment per phase: its white balance as the colour, fainter when dimmer.
+  // A phase that wraps past midnight becomes two segments.
+  const segments = [];
   phases.forEach((p) => {
-    if (p.end <= 1440) bars.push({ ...p, s: p.start, e: p.end });
+    const seg = {
+      label: `${Math.round(p.brightness * 100)}%`,
+      color: `color-mix(in srgb, ${tempColor(p.temperature)} ${Math.round(35 + p.brightness * 65)}%, var(--surface-3))`,
+      title: `${p.name}: ${fmtMinutes(p.start)}–${fmtMinutes(p.end)} · ${Math.round(p.brightness * 100)}% · ${warmthLabel(p.temperature)}`,
+    };
+    if (p.end <= 1440) segments.push({ ...seg, start: p.start, end: p.end });
     else {
-      bars.push({ ...p, s: p.start, e: 1440 });
-      bars.push({ ...p, s: 0, e: p.end - 1440 });
+      segments.push({ ...seg, start: p.start, end: 1440 });
+      segments.push({ ...seg, start: 0, end: p.end - 1440 });
     }
   });
+  segments.sort((a, b) => a.start - b.start);
 
   return (
     <div>
-      <div className={styles.chart}>
-        {[3, 6, 9, 12, 15, 18, 21].map((h) => (
-          <div key={h} className={cx(styles.grid, h % 6 === 0 && styles.gridMajor)} style={{ left: pct(h * 60) }} />
-        ))}
-        {bars.map((b, k) => {
-          const c = tempColor(b.temperature);
-          return (
-            <div
-              key={k}
-              className={styles.bar}
-              title={`${b.name}: ${fmtMinutes(b.start)}–${fmtMinutes(b.end)} · ${Math.round(b.brightness * 100)}% · ${warmthLabel(b.temperature)}`}
-              style={{
-                left: `calc(${pct(b.s)} + 1px)`, width: `calc(${pct(b.e - b.s)} - 2px)`,
-                height: `${Math.max(3, b.brightness * 100)}%`,
-                background: `linear-gradient(180deg, rgba(255, 255, 255, 0.4) 0, rgba(255, 255, 255, 0) 5px), ${c}`,
-                boxShadow: `0 0 16px -3px ${c}`,
-              }}
-            />
-          );
-        })}
-        {[[Sunrise, sun.sunriseMinutes, 'Sunrise'], [Sunset, sun.sunsetMinutes, 'Sunset']].map(([SunIcon, m, label]) => (
-          <div key={label} className={styles.sunMark} style={{ left: pct(m) }} title={`${label} ${fmtMinutes(m)}`}>
-            <span className={styles.sunIcon}><SunIcon size={12} strokeWidth={2.2} /></span>
-          </div>
-        ))}
-        <div className={styles.nowLine} style={{ left: pct(nowMin) }} title={`Now ${fmtMinutes(nowMin)}`}>
-          <span className={styles.nowDot} />
-        </div>
-      </div>
-
-      <div className={styles.axis}>
-        {[0, 6, 12, 18, 24].map((h) => (
-          <span key={h} style={{ left: pct(h * 60), transform: h === 0 ? 'none' : h === 24 ? 'translateX(-100%)' : 'translateX(-50%)' }}>
-            {String(h).padStart(2, '0')}
-          </span>
-        ))}
-      </div>
+      <DayStrip segments={segments} nowMin={nowMin} />
 
       <div className={styles.phases}>
         {phases.map((p, i) => {

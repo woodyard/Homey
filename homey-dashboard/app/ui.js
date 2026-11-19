@@ -125,3 +125,29 @@ export function BigTemp({ value, className }) {
     </span>
   );
 }
+
+// A day as one strip: a segment per period with its label above, and a marker for now.
+// segments: [{ start, end, label, color, title }], minutes from midnight, in order.
+export function DayStrip({ segments, nowMin }) {
+  if (!segments.length) return null;
+  return (
+    <div>
+      <div className={styles.stripLabels} aria-hidden="true">
+        {segments.map((s) => (
+          <span key={s.start} style={{ flexGrow: s.end - s.start }} className={nowMin >= s.start && nowMin < s.end ? styles.stripLabelNow : undefined}>
+            {s.end - s.start >= 150 ? s.label : ''}
+          </span>
+        ))}
+      </div>
+      <div className={styles.stripBar}>
+        {segments.map((s) => (
+          <div key={s.start} className={styles.stripSeg} style={{ flexGrow: s.end - s.start, background: s.color }} title={s.title} />
+        ))}
+        <span className={styles.stripNow} style={{ left: `${clamp((nowMin / 1440) * 100, 0, 100)}%` }} />
+      </div>
+      <div className={styles.stripAxis} aria-hidden="true">
+        {['00', '06', '12', '18', '24'].map((h) => <span key={h}>{h}</span>)}
+      </div>
+    </div>
+  );
+}

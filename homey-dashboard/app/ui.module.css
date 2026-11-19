@@ -47,3 +47,25 @@
   font-variant-numeric: tabular-nums; color: var(--text);
 }
 .bigTempDec { font-size: 0.5em; font-weight: 500; letter-spacing: -0.02em; margin-left: 0.04em; }
+
+/* ---------- day strip ---------- */
+
+/* --strip-bg: the surface the strip sits on (the now-marker's halo). */
+.stripLabels, .stripBar { display: flex; gap: 2px; }
+.stripLabels > span {
+  flex-basis: 0; min-width: 0; text-align: center; white-space: nowrap;
+  font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.stripLabels > .stripLabelNow { color: var(--text); font-weight: 700; }
+.stripBar { position: relative; height: 12px; margin-top: 5px; }
+.stripSeg { flex-basis: 0; min-width: 0; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--border); }
+.stripSeg:first-child { border-radius: 6px 4px 4px 6px; }
+.stripSeg:nth-last-child(2) { border-radius: 4px 6px 6px 4px; }
+.stripNow {
+  position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px; border-radius: 2px;
+  background: var(--text); box-shadow: 0 0 0 2px var(--strip-bg, var(--surface));
+}
+.stripAxis {
+  display: flex; justify-content: space-between; margin-top: 6px;
+  font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums;
+}
