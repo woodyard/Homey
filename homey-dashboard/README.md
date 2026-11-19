@@ -125,6 +125,19 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.6.0** (2026-11-19) — The robot vacuum: choose how it cleans and where before a start. While
+  it is idle the card lists its clean modes (Støvsug, Mop, Støvsug + mop, … — whatever Homey lists
+  for the robot; picking one sets it on the robot) and its rooms: "Alle rum", or any number of rooms.
+  Start then cleans the picked rooms in the picked mode. A robot's rooms can only be set with its
+  flow cards, which an OAuth client cannot run, so `/api/homey/vacuum` writes the picked room codes
+  to the Logic variable `VacuumRooms` (",K,SS,", or ",all,") and starts the flow "Vacuum - Rooms",
+  which clears the robot's rooms, enables each room the variable names and starts the cleaning.
+  Without that flow the card has no rooms and Start sets the job to Cleaning as before. The idle
+  card no longer says "Opgave: Ledig".
+  Lys: a colour picked for a group of bulbs reaches every bulb. `/api/homey/set` sent a light's
+  mode, hue and saturation one after another, each becoming its own command to every bulb of the
+  group, and in Soveværelse only one of three bulbs took the colour. They now go out together (as
+  Homey's own colour picker sends them), and a light that is already on is not told to turn on again.
 - **2.5.1** (2026-11-19) — Varme: the two everyday states have no line under the room any more.
   "Varmt nok — 21.2°" repeated the temperature shown right above it, and "Varmer til 22°" repeated
   the target, with the flame and the valve's power already in the card's heading. A room gets a line

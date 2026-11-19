@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { readSession, persistSession } from '../../../../lib/sessionCookie';
 import { homeyFetch } from '../../../../lib/homey';
 import { buildZonePaths, buildZoneOrders } from '../../../../lib/zones';
-import { capLabels } from '../../../../lib/capLabels';
+import { capChoices, capLabels } from '../../../../lib/capLabels';
 
 export async function GET() {
   const session = readSession();
@@ -45,6 +45,7 @@ export async function GET() {
         alwaysOn: !!(d.settings && d.settings.energy_alwayson),
         capabilities,
         capLabels: capLabels(d.capabilitiesObj), // Homey's own title for each enum value
+        capChoices: capChoices(d.capabilitiesObj), // the values a picker can offer
         capTimes,
       };
     });

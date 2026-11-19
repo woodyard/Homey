@@ -73,6 +73,21 @@
 .fact dt svg { flex-shrink: 0; }
 .fact dd { margin: 4px 0 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 
+/* ---------- choices before a start: how to clean, and where ---------- */
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  min-height: 40px; padding: 6px 15px; border-radius: 999px;
+  border: 1px solid transparent; background: var(--surface-2); color: var(--text-2);
+  font: inherit; font-size: 14.5px; font-weight: 600; white-space: nowrap;
+  cursor: pointer; transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+.chip:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+.chip:active:not(:disabled) { transform: scale(0.96); }
+.chip[aria-pressed='true'] { background: var(--ink); color: var(--ink-contrast); }
+.chip:disabled { cursor: default; }
+.chip:disabled:not([aria-pressed='true']) { opacity: 0.5; }
+
 /* ---------- actions ---------- */
 
 .actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }

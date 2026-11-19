@@ -54,7 +54,7 @@ export default function LightTile({ device, al, onToggle, onSet }) {
   const canWarm = !!onSet && !unavailable && 'light_temperature' in c;
   const canColour = !!onSet && !unavailable && 'light_hue' in c;
   const canAdjust = canDim || canWarm || canColour;
-  const turnOn = 'onoff' in c ? { onoff: true } : {};
+  const turnOn = 'onoff' in c && !on ? { onoff: true } : {}; // a light that is on is not told to turn on again
   return (
     <div
       title={unavailable
