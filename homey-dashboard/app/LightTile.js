@@ -5,7 +5,7 @@
 // off; the rest of the tile opens brightness, warmth and (for colour bulbs) colour.
 
 import { useState } from 'react';
-import { ChevronDown, Lightbulb, Palette, SunMedium, Thermometer, TriangleAlert } from 'lucide-react';
+import { ChevronDown, Hand, Lightbulb, Palette, SunMedium, Thermometer, TriangleAlert } from 'lucide-react';
 import { describeLightStatus, isIdle, tempColor } from '../lib/adaptiveLighting';
 import { cx, SliderRow } from './ui';
 import styles from './LightTile.module.css';
@@ -16,7 +16,6 @@ const WARMTH_TRACK = `linear-gradient(90deg, ${tempColor(0)}, ${tempColor(1)})`;
 // A single bulb as a glowing tile with live state. `al` is resolveLightMode's
 // { mode, guess, st } for lights AdaptiveLighting manages, else null.
 const LIGHT_MODE_LABEL = { auto: 'Auto', manual: 'Manual', drift: 'Manual?', forced: 'Forced', off: 'Off', unknown: '—' };
-const LIGHT_MODE_TAG = { auto: 'hd-tag-good', manual: 'hd-tag-warn', drift: 'hd-tag-warn', forced: 'hd-tag-accent' };
 export default function LightTile({ device, al, onToggle, onSet }) {
   const [open, setOpen] = useState(false);
   const mode = al ? al.mode : null;
@@ -81,12 +80,17 @@ export default function LightTile({ device, al, onToggle, onSet }) {
             <span className={styles.tileMeta}>
               {unavailable && <span className={styles.warnIcon} title="Unavailable"><TriangleAlert size={12} /></span>}
               <span>{on ? (dim != null ? `${Math.round(dim * 100)}%` : 'On') : 'Off'}</span>
-              {/* Auto is the normal state and gets no tag: only what differs from it is shown. */}
-              {mode && !['off', 'unknown', 'auto'].includes(mode) && (
-                <span className={cx('hd-tag', LIGHT_MODE_TAG[mode], mode === 'drift' && styles.drift)} style={al.guess ? { opacity: 0.6 } : undefined}>
-                  {mode === 'forced' ? (al.st?.profile || 'Forced') : LIGHT_MODE_LABEL[mode] || mode}
+              {/* Auto is the normal state and gets no tag: only what differs from it is shown.
+                  Manual is the hand Heating uses for a manual target, without the word. */}
+              {(mode === 'manual' || mode === 'drift') && (
+                <span
+                  className={cx('hd-tag', 'hd-tag-warn', styles.hand, mode === 'drift' && styles.drift)} role="img"
+                  aria-label={LIGHT_MODE_LABEL[mode]} style={al.guess ? { opacity: 0.6 } : undefined}
+                >
+                  <Hand size={13} strokeWidth={2.4} />
                 </span>
               )}
+              {mode === 'forced' && <span className="hd-tag hd-tag-accent">{al.st?.profile || 'Forced'}</span>}
               {idle && <span className="hd-tag">Idle</span>}
             </span>
           </span>

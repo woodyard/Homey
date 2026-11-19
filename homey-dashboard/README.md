@@ -125,6 +125,8 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.1.1** (2026-11-19) — A light in Manual shows the hand Heating uses for a manual target, in
+  place of the word.
 - **2.1.0** (2026-11-19) — The Rooms tab is gone; Lighting takes over its lights. Heating and
   Lighting already showed what Rooms did, room by room. Lighting: every light is a tile; its
   bulb switches it on and off, and the tile opens to brightness, warmth and (colour bulbs) colour. The phase buttons (Morning / Daytime / …) and the

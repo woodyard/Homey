@@ -39,3 +39,4 @@
 .tileSliders { display: flex; flex-direction: column; gap: 2px; padding: 0 14px 10px 20px; }
 .warnIcon { display: inline-flex; color: var(--warn); flex: none; }
 .drift { outline: 1px dashed var(--warn); outline-offset: -1px; }
+.hand { padding: 4px 6px; }
