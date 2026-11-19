@@ -94,3 +94,22 @@
   display: flex; justify-content: space-between; margin-top: 6px;
   font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums;
 }
+
+/* Someone in the room (Varme and Lys) */
+.presence {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13.5px; color: var(--good-ink);
+}
+.presence svg { flex-shrink: 0; }
+
+/* Nobody seen for a while (Varme and Lys) */
+.noMotion { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-size: 13.5px; color: var(--muted); }
+.noMotion svg { flex-shrink: 0; }
+
+/* Time gone of a countdown */
+.progress {
+  height: 4px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, var(--tone, var(--accent)) 16%, var(--surface-3));
+}
+.progress > span { display: block; height: 100%; border-radius: inherit; background: var(--tone, var(--accent)); transition: width 0.6s ease; }
+@media (prefers-reduced-motion: reduce) { .progress > span { transition: none; } }

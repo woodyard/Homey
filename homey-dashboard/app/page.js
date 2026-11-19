@@ -27,7 +27,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.6.1';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).
@@ -71,6 +71,7 @@ export default function Page() {
   const [refreshing, setRefreshing] = useState(false);
   const [live, setLive] = useState(false);
   const [alStatus, setAlStatus] = useState(null); // AdaptiveLightingStatus (script-published)
+  const [alVars, setAlVars] = useState(null); // Mørkt and the rooms' countdown lengths (Lys)
   const [clock, setClock] = useState(null); // header date/time — set after mount (no hydration mismatch)
   const [themePref, setThemePref] = useState('system'); // system | light | dark
   const snapshotRef = useRef({});
@@ -260,7 +261,7 @@ export default function Page() {
         const r = await fetch('/api/homey/lighting');
         if (!r.ok) return;
         const data = await r.json();
-        if (!cancelled) setAlStatus(data.status || null);
+        if (!cancelled) { setAlStatus(data.status || null); if (data.vars) setAlVars(data.vars); }
       } catch { /* keep the last status; badges fall back to the guess once it ages out */ }
     }
     loadAlStatus();
@@ -371,7 +372,7 @@ export default function Page() {
           <>
             {errBox}
             {tab === 'heating' && <HeatingTab devices={devices} zones={zones} flows={flows} onControl={controlDevice} onReload={reload} />}
-            {tab === 'lighting' && <LightingTab devices={devices} flows={flows} alStatus={alStatus} onControl={controlDevice} onReload={reload} />}
+            {tab === 'lighting' && <LightingTab devices={devices} zones={zones} flows={flows} alStatus={alStatus} alVars={alVars} onControl={controlDevice} onReload={reload} />}
             {tab === 'temperatures' && <TemperatureTab />}
             {tab === 'other' && <OtherTab devices={devices} flows={flows} onControl={controlDevice} onReload={reload} />}
             {tab === 'activity' && <ActivityTab feed={feed} />}

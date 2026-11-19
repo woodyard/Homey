@@ -14,7 +14,15 @@ export async function GET() {
     const v = Object.values(vars || {}).find((x) => x.name === 'AdaptiveLightingStatus');
     let status = null;
     if (v && v.value) { try { status = JSON.parse(v.value); } catch { status = null; } }
-    const res = NextResponse.json({ status });
+    // For the empty-room countdown (lib/emptyRoom.js): Mørkt and the rooms' countdown lengths
+    const list = Object.values(vars || {});
+    const darkVar = list.find((x) => x.name === 'Mørkt');
+    const inactivity = {};
+    for (const x of list) if (/_InactivitySeconds$/.test(x.name) && typeof x.value === 'number') inactivity[x.name] = x.value;
+    const res = NextResponse.json({
+      status,
+      vars: { dark: darkVar && typeof darkVar.value === 'boolean' ? darkVar.value : null, inactivity },
+    });
     persistSession(res, session);
     return res;
   } catch (e) {

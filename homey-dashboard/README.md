@@ -125,6 +125,13 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.6.1** (2026-11-19) — Lys: under a room's name, the same lines as on Varme (now shared
+  components): "Der er nogen i rummet" while a motion sensor in the lights' zone sees movement,
+  else "Ingen bevægelse i 1:15". While the lights are on and the flows' timing is known, the line
+  adds "· dæmpes om 1:45" / "· slukker om 2:04" with Varme's progress bar (lib/emptyRoom.js):
+  E9, B9 and B7 from their `<code>_InactivitySeconds` variables (E9 dims while Mørkt 12-22, else
+  off; B9/B7 off), the kitchen dims after 3 min while Mørkt. `/api/homey/lighting` also returns
+  Mørkt and the `*_InactivitySeconds` variables. Other rooms get the no-motion line only.
 - **2.6.0** (2026-11-19) — The robot vacuum: choose how it cleans and where before a start. While
   it is idle the card lists its clean modes (Støvsug, Mop, Støvsug + mop, … — whatever Homey lists
   for the robot; picking one sets it on the robot) and its rooms: "Alle rum", or any number of rooms.

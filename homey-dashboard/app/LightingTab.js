@@ -5,7 +5,9 @@
 // Rooms whose Daytime colour follows the sun show that curve on the strip. Lights the script
 // does not manage are shown too, in their room: other bulbs, and plugs whose type is set to
 // Light in Homey. Each light can be switched and adjusted; on a room with a light in Manual, the Manual badge is a button that
-// runs the room's light-reset flow and so returns it to Auto.
+// runs the room's light-reset flow and so returns it to Auto. Under the room's name: someone is
+// there, or how long it has been empty and — where the flows' timing is known — a countdown with a
+// bar to when the lights dim or switch off (lib/emptyRoom.js).
 
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -16,7 +18,10 @@ import {
   isWeekendScheduleNow, resolveLightMode, describeLightStatus, isIdle, sunColourSamples, SUN_PROFILE,
   noteManualChange,
 } from '../lib/adaptiveLighting';
-import { cx, cmpZonePath, DayStrip, ErrorBox, Pill, roomNameFromPath, SPIN } from './ui';
+import {
+  cx, cmpZonePath, DayStrip, ErrorBox, fmtDuration, NoMotion, Pill, Presence, ProgressBar, roomNameFromPath, SPIN,
+} from './ui';
+import { emptyRoomPlan, emptySince } from '../lib/emptyRoom';
 import { slotName } from '../lib/heatingState';
 import LightTile from './LightTile';
 import styles from './LightingTab.module.css';
@@ -47,7 +52,7 @@ function guessResetFlow(tokens, resetFlows) {
   return bestScore > 0 ? best : null;
 }
 
-export default function LightingTab({ devices, flows, alStatus, onControl, onReload }) {
+export default function LightingTab({ devices, zones, flows, alStatus, alVars, onControl, onReload }) {
   const sun = useMemo(() => getSunTimes(new Date()), []);
   const [busy, setBusy] = useState(() => new Set());
   const [err, setErr] = useState('');
@@ -209,10 +214,19 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
             />
           ));
           // A room with no adaptive lights: no schedule and no mode, just its lights.
+          const occupancy = (
+            <Occupancy
+              devices={devices} zones={zones} zonePath={zonePath} vars={alVars} nowMin={nowMin}
+              code={members.length ? members[0].name.split(/\s+/)[0] : null}
+              lightsOn={[...members.map((m) => deviceById.get(m.id)), ...extras].some((d) => d && d.capabilities && d.capabilities.onoff === true)}
+              dimmed={members.some((m) => alStatus && alStatus.lights && alStatus.lights[m.id] && alStatus.lights[m.id].idle === true)}
+            />
+          );
           if (plain) {
             return (
               <div key={`plain:${zonePath}`} className="hd-card hd-card-pad">
                 <div className={styles.areaHead}><h3 className="hd-title">{area}</h3></div>
+                {occupancy}
                 <div className={cx(styles.members, styles.membersPlain)}>{extraTiles}</div>
               </div>
             );
@@ -250,6 +264,7 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
                   </select>
                 </label>
               )}
+              {occupancy}
               <ScheduleStrip profiles={chartProfiles} sun={sun} nowMin={nowMin} followsSun={repSun} />
               <div className={styles.members}>
                 {members.map((m, i) => {
@@ -271,6 +286,42 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// Under the room's name: someone is there (as on Varme), or how long it has been empty and,
+// while its lights are on and the flows' timing is known, the time left until they dim or
+// switch off, with a bar. Nothing for a room without a motion sensor.
+function Occupancy({ devices, zones, zonePath, vars, nowMin, code, lightsOn, dimmed }) {
+  // Its own 1 s tick: the counters move between data updates
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(iv);
+  }, []);
+  const motionDevs = (devices || []).filter((d) => d.zonePath === zonePath && d.capabilities && 'alarm_motion' in d.capabilities);
+  if (!motionDevs.length) return null;
+  if (motionDevs.some((d) => d.capabilities.alarm_motion === true)) return <Presence className={styles.presence} />;
+  const zoneId = motionDevs[0].zoneId;
+  const since = emptySince(motionDevs, zones && zoneId ? zones[zoneId] : null);
+  if (since == null) return null;
+  const now = Date.now();
+  const secs = Math.max(0, Math.floor((now - since) / 1000));
+  const plan = lightsOn && !dimmed ? emptyRoomPlan(code, vars, nowMin) : null;
+  const left = plan ? plan.seconds - secs : -1;
+  const counting = plan && left > 0;
+  const tone = plan && plan.action === 'dim' ? 'var(--accent)' : 'var(--warn)';
+  return (
+    <div className={styles.occupancy}>
+      <NoMotion secs={secs} title={`Ingen bevægelse siden ${new Date(since).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })}`}>
+        {counting && (
+          <span className="hd-faint">
+            · {plan.action === 'dim' ? 'dæmpes' : 'slukker'} om <span className="hd-num">{fmtDuration(left)}</span>
+          </span>
+        )}
+      </NoMotion>
+      {counting && <ProgressBar pct={(secs / plan.seconds) * 100} tone={tone} label={plan.action === 'dim' ? 'Til lyset dæmpes' : 'Til lyset slukker'} />}
     </div>
   );
 }

@@ -18,7 +18,7 @@ import {
   slotName,
 } from '../lib/heatingState';
 import {
-  BigTemp, clamp, cx, DayStrip, ErrorBox, fmtDuration, fmtLongDuration, INACTIVE_COUNTER_LIMIT, roomNameFromPath, SPIN, Toggle,
+  BigTemp, clamp, cx, DayStrip, ErrorBox, fmtDuration, NoMotion, Presence, ProgressBar, roomNameFromPath, SPIN, Toggle,
 } from './ui';
 import styles from './HeatingTab.module.css';
 
@@ -54,22 +54,22 @@ function HeatingInactivity({ motionActive, seedTs, timeoutMin, offset }) {
   }, [motionActive, seedTs]);
 
   if (motionActive) {
-    return <span className={styles.infoItem} style={{ color: 'var(--good-ink)' }}><Activity size={14} /> Der er nogen i rummet</span>;
+    return <Presence className={styles.infoItem} />;
   }
 
   const since = sinceRef.current ?? Date.now();
   const secs = Math.max(0, Math.floor((Date.now() - since) / 1000));
-  const label = secs < INACTIVE_COUNTER_LIMIT ? fmtDuration(secs) : fmtLongDuration(secs);
   const timeoutSecs = (timeoutMin || 30) * 60;
   const reached = secs >= timeoutSecs;
   return (
-    <span className={styles.infoItem} title={`Ingen bevægelse siden ${new Date(since).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}>
-      <Moon size={14} />
-      <span>Ingen bevægelse i <span className="hd-num">{label}</span></span>
+    <NoMotion
+      secs={secs} className={styles.infoItem}
+      title={`Ingen bevægelse siden ${new Date(since).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}
+    >
       {offset > 0 && (reached
         ? <span style={{ color: 'var(--warn-ink)' }}>· −{offset}° i brug</span>
         : <span className="hd-faint">· −{offset}° om <span className="hd-num">{fmtDuration(timeoutSecs - secs)}</span></span>)}
-    </span>
+    </NoMotion>
   );
 }
 
@@ -189,14 +189,7 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
           <div className={styles.reasonBody}>
             <div className={styles.reasonHead}>{why.headline}</div>
             {why.detail && <div className={styles.reasonDetail}>{why.detail}</div>}
-            {pct != null && (
-              <div
-                className={styles.progress} role="progressbar" aria-valuemin={0} aria-valuemax={100}
-                aria-valuenow={Math.round(pct)} aria-label="Tid gået"
-              >
-                <span style={{ width: `${pct}%` }} />
-              </div>
-            )}
+            {pct != null && <ProgressBar pct={pct} className={styles.progress} />}
           </div>
           {inOverride && reset && (
             <button

@@ -3,7 +3,7 @@
 // Small shared pieces used by several tabs.
 
 import { useEffect, useRef, useState } from 'react';
-import { TriangleAlert } from 'lucide-react';
+import { Activity, Moon, TriangleAlert } from 'lucide-react';
 import styles from './ui.module.css';
 
 export const cx = (...a) => a.filter(Boolean).join(' ');
@@ -60,6 +60,36 @@ export function Empty({ children, icon: Icon }) {
     <div className="hd-empty">
       {Icon && <Icon size={22} className={styles.emptyIcon} />}
       {children}
+    </div>
+  );
+}
+
+// Someone is in the room now (a motion sensor in its zone sees movement). Varme and Lys.
+export function Presence({ className }) {
+  return <span className={cx(styles.presence, className)}><Activity size={14} /> Der er nogen i rummet</span>;
+}
+
+// Nobody seen for `secs` (Varme and Lys); `children` adds to the line ("· slukker om 0:40").
+export function NoMotion({ secs, className, title, children }) {
+  const label = secs < INACTIVE_COUNTER_LIMIT ? fmtDuration(secs) : fmtLongDuration(secs);
+  return (
+    <span className={cx(styles.noMotion, className)} title={title}>
+      <Moon size={14} />
+      <span>Ingen bevægelse i <span className="hd-num">{label}</span></span>
+      {children}
+    </span>
+  );
+}
+
+// Thin bar for time gone of a countdown (Boost, Pause, a window, an empty room). Colour from
+// `tone` or the surrounding --tone.
+export function ProgressBar({ pct, tone, label = 'Tid gået', className }) {
+  return (
+    <div
+      className={cx(styles.progress, className)} role="progressbar" aria-valuemin={0} aria-valuemax={100}
+      aria-valuenow={Math.round(pct)} aria-label={label} style={tone ? { '--tone': tone } : undefined}
+    >
+      <span style={{ width: `${clamp(pct, 0, 100)}%` }} />
     </div>
   );
 }
