@@ -2,8 +2,9 @@
 
 // Adaptive lighting: each room's day as a strip (colour = white balance, label = brightness),
 // from the Homey adaptivelighting.js script, with the mode the script reports per light.
-// Rooms whose Daytime colour follows the sun show that curve on the strip. Each light can be
-// switched and adjusted; on a room with a light in Manual, the Manual badge is a button that
+// Rooms whose Daytime colour follows the sun show that curve on the strip. Lights the script
+// does not manage are shown too, in their room: other bulbs, and plugs whose type is set to
+// Light in Homey. Each light can be switched and adjusted; on a room with a light in Manual, the Manual badge is a button that
 // runs the room's light-reset flow and so returns it to Auto.
 
 import { useEffect, useMemo, useState } from 'react';
@@ -15,7 +16,7 @@ import {
   isWeekendScheduleNow, resolveLightMode, describeLightStatus, isIdle, sunColourSamples, SUN_PROFILE,
   noteManualChange,
 } from '../lib/adaptiveLighting';
-import { cx, cmpZonePath, DayStrip, ErrorBox, Pill, SPIN } from './ui';
+import { cx, cmpZonePath, DayStrip, ErrorBox, Pill, roomNameFromPath, SPIN } from './ui';
 import { slotName } from '../lib/heatingState';
 import LightTile from './LightTile';
 import styles from './LightingTab.module.css';
@@ -110,13 +111,27 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
     return m;
   }, [devices]);
   const orderedAreas = useMemo(() => {
-    return areas
-      .map((a) => {
-        const withZone = a.members.find((m) => zonePathById.get(m.id));
-        return { ...a, zonePath: withZone ? zonePathById.get(withZone.id) : a.area };
-      })
-      .sort((x, y) => cmpZonePath(x.zonePath, y.zonePath));
-  }, [areas, zonePathById]);
+    const list = areas.map((a) => {
+      const withZone = a.members.find((m) => zonePathById.get(m.id));
+      return { ...a, zonePath: withZone ? zonePathById.get(withZone.id) : a.area, extras: [] };
+    });
+    // Lights AdaptiveLighting does not manage: bulbs without a schedule, and plugs whose type
+    // is set to Light in Homey (virtualClass). Each joins the card of its zone, or gets a
+    // card of its own when the zone has no adaptive lights.
+    const managed = new Set(AL_ROOMS.map((r) => r.id));
+    (devices || [])
+      .filter((d) => (d.class === 'light' || d.virtualClass === 'light') && !managed.has(d.id))
+      .sort((a, b) => a.name.localeCompare(b.name, 'da'))
+      .forEach((d) => {
+        let card = list.find((a) => a.zonePath === d.zonePath);
+        if (!card) {
+          card = { area: roomNameFromPath(d.zonePath), members: [], extras: [], zonePath: d.zonePath, plain: true };
+          list.push(card);
+        }
+        card.extras.push(d);
+      });
+    return list.sort((x, y) => cmpZonePath(x.zonePath, y.zonePath) || x.area.localeCompare(y.area, 'da'));
+  }, [areas, zonePathById, devices]);
 
   // A room's reset flow. The flows are named "<room code> - Light reset" ("ST - Light reset"),
   // the code being the first word of the lights' names, so the name decides. Only when no flow
@@ -185,7 +200,23 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
       </div>
 
       <div className={styles.areaList}>
-        {orderedAreas.map(({ area, members, repWeekday, repWeekend, repSun }) => {
+        {orderedAreas.map(({ area, members, extras, zonePath, plain, repWeekday, repWeekend, repSun }) => {
+          const extraTiles = extras.map((d) => (
+            <LightTile
+              key={d.id} device={d} al={null}
+              onToggle={onControl ? (v) => onControl(d.id, { onoff: v }) : null}
+              onSet={onControl ? (values) => onControl(d.id, values) : null}
+            />
+          ));
+          // A room with no adaptive lights: no schedule and no mode, just its lights.
+          if (plain) {
+            return (
+              <div key={`plain:${zonePath}`} className="hd-card hd-card-pad">
+                <div className={styles.areaHead}><h3 className="hd-title">{area}</h3></div>
+                <div className={cx(styles.members, styles.membersPlain)}>{extraTiles}</div>
+              </div>
+            );
+          }
           const roomFlow = flowForRoom(area, members);
           const roomBusy = busy.has(area);
           const memberModes = members.map((m) => modeForMember(m));
@@ -234,6 +265,7 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
                     <div key={m.id} className={styles.missing}>{m.name}</div>
                   );
                 })}
+                {extraTiles}
               </div>
             </div>
           );

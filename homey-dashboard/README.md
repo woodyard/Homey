@@ -125,6 +125,9 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.3.1** (2026-11-19) — Lys shows every light, not only the ones the lighting script manages:
+  plugs whose type is set to Light in Homey, and bulbs without a schedule. Each sits in its room's
+  card after the adaptive lights; a room with no adaptive lights gets a card with just its lights.
 - **2.3.0** (2026-11-19) — New tab, Andet, for devices without a tab of their own. First on it: the
   washing machine in the kitchen. While a wash runs it shows the time left as a ring that fills, when
   it will be done, the program and its phase, and below that the time gone, spin speed, and energy and

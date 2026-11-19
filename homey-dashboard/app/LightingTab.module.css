@@ -28,6 +28,7 @@
   margin-top: 16px;
 }
 @media (min-width: 560px) { .members { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.membersPlain { margin-top: 0; }
 .missing { padding: 12px; border-radius: 16px; background: var(--surface-2); font-size: 14px; color: var(--muted); }
 
 .driftDashed { outline: 1px dashed var(--warn); outline-offset: -1px; }
