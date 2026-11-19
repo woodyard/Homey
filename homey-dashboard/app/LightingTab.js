@@ -13,6 +13,7 @@ import {
 import {
   AL_ROOMS, getSunTimes, phaseList, activePhase, tempColor, fmtMinutes, copenhagenMinutesNow,
   isWeekendScheduleNow, resolveLightMode, describeLightStatus, isIdle, sunColourSamples, SUN_PROFILE,
+  noteManualChange,
 } from '../lib/adaptiveLighting';
 import { cx, cmpZonePath, DayStrip, ErrorBox, Pill, SPIN } from './ui';
 import { slotName } from '../lib/heatingState';
@@ -226,7 +227,8 @@ export default function LightingTab({ devices, flows, alStatus, onControl, onRel
                     <LightTile
                       key={m.id} device={device} al={memberModes[i]}
                       onToggle={onControl ? (v) => onControl(m.id, { onoff: v }) : null}
-                      onSet={onControl ? (values) => onControl(m.id, values) : null}
+                      // an adjustment made here is the user's own: show Manual without the usual wait
+                      onSet={onControl ? (values) => { noteManualChange(m.id); onControl(m.id, values); } : null}
                     />
                   ) : (
                     <div key={m.id} className={styles.missing}>{m.name}</div>

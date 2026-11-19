@@ -40,6 +40,25 @@ export const scenarios = {
     t.equal(mode('drift', changed, st, T0 + 45000), 'auto', 'changed again → the 30 s start over');
   },
 
+  async 'a bulb set to a colour is "Manual?": AL only ever leaves temperature mode (2.2.1)'(t) {
+    const st = status('colour');
+    const red = { onoff: true, dim: 0.32, light_temperature: 0.59, light_mode: 'color', light_hue: 0, light_saturation: 1 };
+    t.equal(mode('colour', red, st, T0), 'auto', 't+0 s: dim and temperature still match, so still auto');
+    t.equal(mode('colour', red, st, T0 + 31000), 'drift', 't+31 s: Manual?, though dim and temperature match');
+    t.equal(mode('colour', { ...red, light_mode: 'temperature' }, st, T0 + 40000), 'auto', 'back in temperature mode → auto');
+    t.equal(mode('white', { onoff: true, dim: 0.32, light_temperature: 0.59, light_mode: 'temperature' }, status('white'), T0 + 31000), 'auto', 'temperature mode that matches → auto');
+    t.equal(mode('notemp', { onoff: true, dim: 0.32, light_mode: 'color' }, status('notemp', { temp: null }), T0 + 31000), 'auto', 'AL applied no white balance to this light → colour says nothing');
+  },
+
+  async 'a change made on the dashboard shows as "Manual?" at once (2.2.1)'(t) {
+    const st = status('mine');
+    const changed = { onoff: true, dim: 1.0, light_temperature: 0.59 };
+    lib.noteManualChange('mine', T0);
+    t.equal(mode('mine', changed, st, T0), 'drift', 'no 30 s wait after the user’s own change');
+    lib.noteManualChange('same', T0);
+    t.equal(mode('same', { onoff: true, dim: 0.32, light_temperature: 0.59 }, status('same'), T0), 'auto', 'a change within AL’s tolerance stays auto');
+  },
+
   async 'an idle light (AL 2.32.0) is auto at its dimmed values; tooltip says idle (1.18.0)'(t) {
     const idle = { mode: 'auto', idle: true, bri: 0.35, temp: 0.9, schedBri: 0.35, factor: undefined, lux: undefined, sunEl: undefined };
     const live = { onoff: true, dim: 0.35, light_temperature: 0.9 };

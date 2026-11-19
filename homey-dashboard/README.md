@@ -125,6 +125,10 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.2.1** (2026-11-19) — A bulb set to a colour shows as Manual, so its room gets the button back
+  to Auto. Before, only brightness and white balance were compared with what the script had set,
+  and a colour changes neither. A light adjusted on the dashboard itself shows Manual at once,
+  without the 30-second wait.
 - **2.2.0** (2026-11-19) — The dashboard is in Danish: tabs (Varme, Lys, Vejr, Temperaturer,
   Aktivitet), buttons, the heating explanations, weather, dates and the script's slot names (Evening
   → Aften). The script detail in a light's tooltip stays in English. Fixed: choosing a colour for a

@@ -283,7 +283,8 @@ const driftSince = new Map(); // deviceId → first time the difference was seen
 // Mode for one light: { mode, guess, st }.
 // mode: 'off' | 'auto' | 'manual' | 'forced' | 'drift' | 'unknown'
 //  - off wins: AL keeps a manual flag on an off light until it is next turned on
-//  - drift: AL still says auto, but the live values differ from what it applied
+//  - drift: AL still says auto, but the live values differ from what it applied,
+//    or the bulb shows a colour
 //    (it only notices on its next full check, ≤15 min — never in rooms without
 //    a check poll), shown as "Manual?"
 //  - guess: no usable status for this light → the old schedule comparison
@@ -305,11 +306,20 @@ export function resolveLightMode(caps, alStatus, deviceId, phase, now = Date.now
     const dimOff = caps.dim != null && Math.abs(caps.dim - st.bri) > AL_MATCH_TOLERANCE;
     const tempOff = caps.light_temperature != null && typeof st.temp === 'number'
       && Math.abs(caps.light_temperature - st.temp) > AL_MATCH_TOLERANCE;
-    differs = dimOff || tempOff;
+    // AL switches a bulb to temperature mode whenever it applies a white balance, so a bulb
+    // showing a colour is not showing what AL set (its dim and temperature values stay put)
+    const colourOff = caps.light_mode === 'color' && typeof st.temp === 'number';
+    differs = dimOff || tempOff || colourOff;
   }
   if (!differs) { driftSince.delete(deviceId); return { mode: 'auto', guess: false, st }; }
   if (!driftSince.has(deviceId)) driftSince.set(deviceId, now);
   return { mode: now - driftSince.get(deviceId) >= AL_DRIFT_GRACE_MS ? 'drift' : 'auto', guess: false, st };
+}
+
+// A change the user just made on the dashboard itself: there is nothing to wait for, so a
+// difference from what AL applied shows as "Manual?" at once instead of after the grace period.
+export function noteManualChange(deviceId, now = Date.now()) {
+  driftSince.set(deviceId, now - AL_DRIFT_GRACE_MS);
 }
 
 // AL has dimmed this light because its room is empty (AdaptiveLighting idle).
