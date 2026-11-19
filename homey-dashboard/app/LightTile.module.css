@@ -1,0 +1,41 @@
+/* LightTile — one light with its switch and sliders. */
+
+.tile {
+  min-width: 0; border-radius: 16px;
+  border: 1px solid var(--border); background: var(--surface-solid);
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.tileUnavailable { opacity: 0.55; }
+.tileRow { display: flex; align-items: center; }
+
+/* The bulb is the on/off switch: a 44px target in the light's own colour while on. */
+.bulb {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; margin: 7px 0 7px 8px; padding: 0; border: none; border-radius: 14px;
+  background: var(--surface-2); color: var(--faint); cursor: pointer;
+  transition: background 0.3s ease, color 0.3s ease, box-shadow 0.3s ease, transform 0.1s;
+}
+.bulb:active:not(:disabled) { transform: scale(0.92); }
+.bulb:disabled { cursor: default; }
+
+.tileMain {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  min-height: 58px; padding: 9px 12px 9px 11px; border: none; border-radius: 16px; background: transparent;
+  color: inherit; text-align: left; cursor: pointer;
+}
+.tileMain:disabled { cursor: default; }
+.chev { flex: none; color: var(--faint); transition: transform 0.2s ease; }
+.chevOpen { transform: rotate(180deg); }
+
+.tileBody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tileName {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tileMeta {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.tileSliders { display: flex; flex-direction: column; gap: 2px; padding: 0 14px 10px 20px; }
+.warnIcon { display: inline-flex; color: var(--warn); flex: none; }
+.drift { outline: 1px dashed var(--warn); outline-offset: -1px; }

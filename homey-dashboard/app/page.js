@@ -5,11 +5,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, CloudSun, Flame, Lightbulb, LoaderCircle, Plug, Sofa, Thermometer,
+  Activity, CloudSun, Flame, Lightbulb, LoaderCircle, Plug, Thermometer,
 } from 'lucide-react';
 import AppChrome from './AppChrome';
 import HeatingTab from './HeatingTab';
-import RoomsTab from './RoomsTab';
 import LightingTab from './LightingTab';
 import WeatherTab from './WeatherTab';
 import TemperatureTab from './TemperatureTab';
@@ -27,7 +26,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '2.0.2';
+const APP_VERSION = '2.1.0';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).
@@ -42,15 +41,13 @@ const TZ = 'Europe/Copenhagen';
 // [key, label, Icon, short label for the bottom bar]
 const TABS = [
   ['heating', 'Heating', Flame],
-  ['rooms', 'Rooms', Sofa],
   ['lighting', 'Lighting', Lightbulb, 'Lights'],
   ['weather', 'Weather', CloudSun],
   ['temperatures', 'Temperatures', Thermometer, 'Temps'],
   ['activity', 'Live activity', Activity, 'Activity'],
 ];
-const NAV_TABS = ['heating', 'rooms', 'lighting', 'weather']; // in the bar; the rest live in the menu
+const NAV_TABS = ['heating', 'lighting', 'weather', 'temperatures']; // in the bar; the rest live in the menu
 const TAB_KEYS = TABS.map((t) => t[0]);
-const TAB_ALIASES = { rooms2: 'rooms' }; // links from before 2.0.0
 
 function mergeDevices(prev, changed) {
   const byId = new Map(prev.map((d) => [d.id, d]));
@@ -85,7 +82,7 @@ export default function Page() {
     const params = new URLSearchParams(window.location.search);
     const err = params.get('error');
     if (err) setError(err);
-    const t = TAB_ALIASES[params.get('tab')] || params.get('tab');
+    const t = params.get('tab');
     setTab(TAB_KEYS.includes(t) ? t : 'heating');
   }, []);
 
@@ -254,7 +251,7 @@ export default function Page() {
   // AdaptiveLighting's published per-light status — one shared 15s poll, only while
   // a tab that shows light modes is open (each poll is a Homey API call)
   useEffect(() => {
-    if (authState !== 'signedIn' || (tab !== 'lighting' && tab !== 'rooms')) return undefined;
+    if (authState !== 'signedIn' || (tab !== 'lighting')) return undefined;
     let cancelled = false;
     async function loadAlStatus() {
       try {
@@ -372,8 +369,7 @@ export default function Page() {
           <>
             {errBox}
             {tab === 'heating' && <HeatingTab devices={devices} zones={zones} flows={flows} onControl={controlDevice} onReload={reload} />}
-            {tab === 'rooms' && <RoomsTab devices={devices} zones={zones} flows={flows} alStatus={alStatus} onControl={controlDevice} onReload={reload} />}
-            {tab === 'lighting' && <LightingTab devices={devices} flows={flows} alStatus={alStatus} onReload={reload} />}
+            {tab === 'lighting' && <LightingTab devices={devices} flows={flows} alStatus={alStatus} onControl={controlDevice} onReload={reload} />}
             {tab === 'temperatures' && <TemperatureTab />}
             {tab === 'activity' && <ActivityTab feed={feed} />}
           </>

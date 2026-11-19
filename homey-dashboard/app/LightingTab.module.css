@@ -1,45 +1,33 @@
 /* Adaptive lighting tab. Colours come from the global tokens; only data colours are literal. */
 
 .alBar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; }
-.alBar .segRight { margin-left: auto; }
 .amber { color: var(--warn); }
 
 .areaList { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 900px) { .areaList { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; } }
-.areaHead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 14px; }
-.areaControls { margin-left: auto; display: flex; align-items: center; gap: 6px; }
-.cfgBtn { width: 34px; height: 34px; border-radius: 11px; border-color: transparent; background: transparent; color: var(--muted); }
+.areaHead { display: flex; align-items: center; justify-content: space-between; gap: 6px 10px; min-height: 34px; margin-bottom: 14px; }
+.areaHead > h3 { min-width: 0; overflow-wrap: anywhere; }
+.areaHead > :not(h3) { flex-shrink: 0; }
+/* The Manual badge as a button: tap to go back to Auto. */
+.modeBtn {
+  display: inline-flex; align-items: center; gap: 5px;
+  min-height: 32px; padding: 4px 12px 4px 10px; border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  background: var(--warn-soft); color: var(--warn-ink);
+  font-size: 12.5px; font-weight: 650; cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+}
+.modeBtn:hover:not(:disabled) { background: color-mix(in srgb, var(--warn) 24%, transparent); }
+.modeBtn:active:not(:disabled) { transform: scale(0.96); }
+.modeBtn:disabled { opacity: 0.6; cursor: default; }
 .flowPick { display: flex; align-items: center; gap: 10px; margin: -4px 0 14px; font-size: 13px; color: var(--muted); }
 .flowPick select { flex: 1; min-width: 0; }
 
-.phases { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
-.phaseChip {
-  display: inline-flex; align-items: center; gap: 7px; min-height: 36px;
-  padding: 5px 13px 5px 10px; border-radius: 999px; font-size: 13px;
-  border: 1px solid var(--border); background: var(--surface-solid); color: var(--text-2);
-  cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.phaseChip:hover:not(:disabled) { border-color: var(--accent-border); color: var(--text); }
-.phaseChip:disabled { opacity: 0.6; cursor: default; }
-.phaseChipActive, .phaseChipActive:hover:not(:disabled) { background: var(--ink); border-color: transparent; color: var(--ink-contrast); }
-.phaseChipActive .phaseMeta { color: var(--ink-contrast); opacity: 0.7; }
-.phaseChip b { font-weight: 650; }
-.phaseMeta { color: var(--muted); font-variant-numeric: tabular-nums; }
-.swatch { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12); }
-
 .members {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px;
-  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--divider);
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start;
+  margin-top: 16px;
 }
-@media (max-width: 640px) { .members { grid-template-columns: minmax(0, 1fr); } }
-.memberRow {
-  display: flex; align-items: center; gap: 10px; min-width: 0;
-  min-height: 44px; padding: 6px 10px 6px 7px; border-radius: 13px; background: var(--surface-2);
-}
-.bulb {
-  width: 30px; height: 30px; border-radius: 10px; flex-shrink: 0; display: grid; place-items: center;
-  background: var(--surface-3); color: var(--muted); transition: background 0.3s, box-shadow 0.3s;
-}
-.memberName { flex: 1; min-width: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (min-width: 560px) { .members { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.missing { padding: 12px; border-radius: 16px; background: var(--surface-2); font-size: 14px; color: var(--muted); }
 
 .driftDashed { outline: 1px dashed var(--warn); outline-offset: -1px; }

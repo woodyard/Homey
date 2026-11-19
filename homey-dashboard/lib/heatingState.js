@@ -1,6 +1,6 @@
-// Why is a room heating (or not) right now? One shared explanation for the Heating tab
-// and the Rooms tab, built from the room's HeatingStatus entry (published by
-// room_heating.js on every run) plus the live device state.
+// Why is a room heating (or not) right now? The explanation the Heating tab shows, built
+// from the room's HeatingStatus entry (published by room_heating.js on every run) plus the
+// live device state.
 //
 // Pure and deterministic: the caller passes `now`. Mirrors the order in which the
 // script decides (main run → controlHeating):

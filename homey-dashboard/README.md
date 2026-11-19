@@ -115,8 +115,8 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 - `app/page.js` — the shell: sign-in state, the shared Homey data (polls every 20s, or the live
   stream) and the open tab
 - `app/AppChrome.js` — top bar, navigation (bottom bar on phones, tabs on wide screens) and the menu
-- `app/HeatingTab.js`, `RoomsTab.js`, `LightingTab.js`, `WeatherTab.js`, `TemperatureTab.js`,
-  `ActivityTab.js` — one file per tab; `app/ui.js` holds the controls they share
+- `app/HeatingTab.js`, `LightingTab.js`, `WeatherTab.js`, `TemperatureTab.js`, `ActivityTab.js` —
+  one file per tab; `app/ui.js` and `app/LightTile.js` hold the controls they share
 - `app/globals.css` — design tokens (light/dark theme) and shared classes; `app/*.module.css` hold each view's own styles
 - `app/api/auth/*` — OAuth login/callback/logout/status routes
 - `app/api/homey/*` — proxies that call your Homey via the Athom Cloud API
@@ -125,6 +125,18 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.1.0** (2026-11-19) — The Rooms tab is gone; Lighting takes over its lights. Heating and
+  Lighting already showed what Rooms did, room by room. Lighting: every light is a tile; its
+  bulb switches it on and off, and the tile opens to brightness, warmth and (colour bulbs) colour. The phase buttons (Morning / Daytime / …) and the
+  Weekday / Weekend switch are gone; the strips show the schedule in effect today. Auto is no longer
+  labelled: only Manual (and a forced profile or an idle light) is. On a room with a light in
+  Manual, the Manual badge, at the right edge, is the button back to Auto; it finds the room's reset flow by
+  name ("ST - Light reset") as Heating does. Rooms whose Daytime colour follows the sun (Stue, Soveværelse, Køkken, Entre 9) draw
+  Daytime as today's sun colour curve, with the script's own formula, and mark it with a sun.
+  The profile copy is back in step with adaptivelighting.js: bedroom Daytime colour 0.3, and the
+  entrance's later, brighter evening. Temperatures is back in the navigation bar. No longer on the
+  dashboard: the room temperature chart with its forecast, windows and doors, batteries, devices
+  that are not adaptive lights or heating (TV, speakers, blinds), and applying a lighting phase by hand.
 - **2.0.2** (2026-11-19) — Simpler header. On a phone it is the page title alone; the date and time
   under it are gone. Wide screens show the date and time once, on the right, in plain weight.
 - **2.0.1** (2026-11-19) — Boost, Pause and Reset find their flows by themselves. The flows are

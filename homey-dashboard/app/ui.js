@@ -93,24 +93,27 @@ export function Toggle({ on, onChange, size, title, disabled, label }) {
   );
 }
 
-// A 0–1 slider with an icon and its value; commits on release, not while dragging.
-export function SliderRow({ icon: Icon, value, onCommit, accent, fmt, label }) {
+// A 0–1 slider with an icon; commits on release, not while dragging. `track` is the CSS
+// background of the track (a gradient that shows what the slider changes). The value is shown
+// as a percentage, or as fmt(v); a fmt that returns null shows no value.
+export function SliderRow({ icon: Icon, value, onCommit, track, fmt, label }) {
   const [v, setV] = useState(value);
   useEffect(() => { setV(value); }, [value]);
   const pct = Math.round((v ?? 0) * 100);
   const commit = (e) => onCommit(e.target.valueAsNumber / 100);
+  const text = fmt ? fmt(v) : `${pct}%`;
   return (
     <div className={styles.sliderRow}>
-      <span className={styles.sliderIcon}>{Icon && <Icon size={16} />}</span>
+      <span className={styles.sliderIcon}>{Icon && <Icon size={17} />}</span>
       <input
         type="range" min={0} max={100} value={pct} aria-label={label}
         onChange={(e) => setV(e.target.valueAsNumber / 100)}
         onPointerUp={commit}
         onKeyUp={commit}
         className={styles.slider}
-        style={{ accentColor: accent || 'var(--accent)' }}
+        style={track ? { '--track': track } : undefined}
       />
-      <span className={styles.sliderVal}>{fmt ? fmt(v) : `${pct}%`}</span>
+      {text != null && <span className={styles.sliderVal}>{text}</span>}
     </div>
   );
 }
@@ -127,7 +130,8 @@ export function BigTemp({ value, className }) {
 }
 
 // A day as one strip: a segment per period with its label above, and a marker for now.
-// segments: [{ start, end, label, color, title }], minutes from midnight, in order.
+// segments: [{ start, end, label, icon?, color, title }], minutes from midnight, in order.
+// `icon` (a small element) sits before the label, e.g. a sun on a period that follows the sun.
 export function DayStrip({ segments, nowMin }) {
   if (!segments.length) return null;
   return (
@@ -135,7 +139,7 @@ export function DayStrip({ segments, nowMin }) {
       <div className={styles.stripLabels} aria-hidden="true">
         {segments.map((s) => (
           <span key={s.start} style={{ flexGrow: s.end - s.start }} className={nowMin >= s.start && nowMin < s.end ? styles.stripLabelNow : undefined}>
-            {s.end - s.start >= 150 ? s.label : ''}
+            {s.end - s.start >= 150 && <>{s.icon}{s.label}</>}
           </span>
         ))}
       </div>

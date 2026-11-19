@@ -6,8 +6,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Activity, CalendarClock, ChevronDown, CircleHelp, Droplets, Flame, LoaderCircle, Moon, Pause, RotateCcw,
-  Settings2, Snowflake,
+  Activity, AppWindow, CalendarClock, ChevronDown, CircleCheck, CircleHelp, DoorOpen, Droplets, Flame, Footprints, Hand,
+  Hourglass, LoaderCircle, Moon, Pause, Power, RotateCcw, Settings2, Snowflake, Thermometer, TriangleAlert,
 } from 'lucide-react';
 import { copenhagenMinutesNow, fmtMinutes, isWeekendNow } from '../lib/adaptiveLighting';
 import {
@@ -16,11 +16,27 @@ import {
 import {
   explainHeating, heatingRoomSensor, liveWindowClosedAt, liveWindowOpen, optimisticMode, SCRIPT_INTERVAL_MIN, SETTLE_ACTIONS,
 } from '../lib/heatingState';
-import { HEAT_ICONS, useNow } from './HeatingReason';
 import {
   BigTemp, clamp, cx, DayStrip, ErrorBox, fmtDuration, fmtLongDuration, INACTIVE_COUNTER_LIMIT, roomNameFromPath, SPIN, Toggle,
 } from './ui';
 import styles from './HeatingTab.module.css';
+
+// Icons for the explanation from lib/heatingState.js (its `icon` keys).
+const HEAT_ICONS = {
+  power: Power, help: CircleHelp, pause: Pause, flame: Flame, hand: Hand, alert: TriangleAlert,
+  away: DoorOpen, window: AppWindow, hourglass: Hourglass, footprints: Footprints, moon: Moon,
+  clock: CalendarClock, check: CircleCheck, idle: Thermometer,
+};
+
+/** Current time, re-rendered every `ms` so countdowns move without new data. */
+function useNow(ms = 30000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const iv = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(iv);
+  }, [ms]);
+  return now;
+}
 
 // Live inactivity timer for a heating room, tied to the config's inactivityTimeout: when it is
 // reached, the inactivityOffset applies.

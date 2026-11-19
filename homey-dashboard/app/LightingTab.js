@@ -1,18 +1,21 @@
 'use client';
 
-// Adaptive lighting: each room's circadian schedule (from the Homey adaptivelighting.js
-// script) with the mode the script reports per light. A phase can be applied directly,
-// and a room reset to Auto through its light-reset flow.
+// Adaptive lighting: each room's day as a strip (colour = white balance, label = brightness),
+// from the Homey adaptivelighting.js script, with the mode the script reports per light.
+// Rooms whose Daytime colour follows the sun show that curve on the strip. Each light can be
+// switched and adjusted; on a room with a light in Manual, the Manual badge is a button that
+// runs the room's light-reset flow and so returns it to Auto.
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  CircleCheck, Hand, Lightbulb, LoaderCircle, Pin, RotateCcw, Settings2, Sunrise, Sunset,
+  Hand, LoaderCircle, Pin, RotateCcw, Sun, Sunrise, Sunset,
 } from 'lucide-react';
 import {
-  AL_ROOMS, getSunTimes, phaseList, isActive, activePhase, tempColor, fmtMinutes,
-  copenhagenMinutesNow, isWeekendScheduleNow, resolveLightMode, describeLightStatus, isIdle,
+  AL_ROOMS, getSunTimes, phaseList, activePhase, tempColor, fmtMinutes, copenhagenMinutesNow,
+  isWeekendScheduleNow, resolveLightMode, describeLightStatus, isIdle, sunColourSamples, SUN_PROFILE,
 } from '../lib/adaptiveLighting';
 import { cx, cmpZonePath, DayStrip, ErrorBox, Pill, SPIN } from './ui';
+import LightTile from './LightTile';
 import styles from './LightingTab.module.css';
 
 function warmthLabel(t) {
@@ -41,21 +44,19 @@ function guessResetFlow(tokens, resetFlows) {
   return bestScore > 0 ? best : null;
 }
 
-export default function LightingTab({ devices, flows, alStatus, onReload }) {
+export default function LightingTab({ devices, flows, alStatus, onControl, onReload }) {
   const sun = useMemo(() => getSunTimes(new Date()), []);
-  const [weekend, setWeekend] = useState(isWeekendScheduleNow());
   const [busy, setBusy] = useState(() => new Set());
   const [err, setErr] = useState('');
   const [mapping, setMapping] = useState({});
-  const [applying, setApplying] = useState(null); // key of the group being applied
-  const [picking, setPicking] = useState(null); // area whose reset flow is being chosen
   const nowMin = copenhagenMinutesNow();
-  const todayWeekend = isWeekendScheduleNow();
+  const todayWeekend = isWeekendScheduleNow(); // the strips show the schedule in effect today
 
   useEffect(() => {
     try { setMapping(JSON.parse(localStorage.getItem('al_reset_flows') || '{}')); } catch { /* ignore */ }
   }, []);
 
+  const deviceById = useMemo(() => new Map((devices || []).map((d) => [d.id, d])), [devices]);
   const deviceMap = useMemo(() => {
     const m = new Map();
     (devices || []).forEach((d) => m.set(d.id, d.capabilities || {}));
@@ -84,7 +85,7 @@ export default function LightingTab({ devices, flows, alStatus, onReload }) {
     const byArea = new Map();
     for (const r of AL_ROOMS) {
       if (!byArea.has(r.area)) byArea.set(r.area, []);
-      byArea.get(r.area).push({ name: r.name, id: r.id, weekday: r.weekday, weekend: r.weekend || null });
+      byArea.get(r.area).push({ name: r.name, id: r.id, weekday: r.weekday, weekend: r.weekend || null, sun: !!r.sun });
     }
     return [...byArea.entries()].map(([area, members]) => {
       const counts = new Map();
@@ -96,8 +97,7 @@ export default function LightingTab({ devices, flows, alStatus, onReload }) {
       let repN = -1;
       for (const [k, n] of counts) if (n > repN) { repN = n; repKey = k; }
       const rep = members.find((m) => JSON.stringify(m.weekday) === repKey) || members[0];
-      const mixed = counts.size > 1;
-      return { area, members, repWeekday: rep.weekday, repWeekend: rep.weekend, repName: rep.name, mixed };
+      return { area, members, repWeekday: rep.weekday, repWeekend: rep.weekend, repSun: rep.sun };
     });
   }, []);
 
@@ -116,9 +116,14 @@ export default function LightingTab({ devices, flows, alStatus, onReload }) {
       .sort((x, y) => cmpZonePath(x.zonePath, y.zonePath));
   }, [areas, zonePathById]);
 
-  // The reset flow chosen for a room: explicit mapping (keyed by area), else best guess.
+  // A room's reset flow. The flows are named "<room code> - Light reset" ("ST - Light reset"),
+  // the code being the first word of the lights' names, so the name decides. Only when no flow
+  // has that name does a flow picked by hand (keyed by area) or a guess step in.
   const flowForRoom = (area, members) => {
-    if (mapping[area]) return flowById.get(mapping[area]) || null;
+    const name = `${members[0].name.split(/\s+/)[0]} - Light reset`.toLowerCase();
+    const exact = (flows || []).find((f) => f.name.trim().toLowerCase() === name);
+    if (exact) return exact;
+    if (mapping[area] && flowById.get(mapping[area])) return flowById.get(mapping[area]);
     const tokens = [
       ...area.split(/\s+/),
       ...members.map((m) => m.name.split(/\s+/)[0]), // room codes like "E9", "ST"
@@ -143,42 +148,6 @@ export default function LightingTab({ devices, flows, alStatus, onReload }) {
   // must follow the page's 1 s re-render, not just data changes (~18 lights, cheap)
   let manualCount = 0;
   for (const { members } of areas) for (const m of members) if (isManualish(modeForMember(m))) manualCount += 1;
-
-  // Apply a phase's brightness/temperature to a group's lights right now (direct
-  // capability control — no script needed). Puts the lights into "manual" until reset.
-  async function applyPhase(key, members, phaseName) {
-    setErr('');
-    setApplying(key);
-    try {
-      const items = members
-        .map((m) => {
-          // Each light uses its own template's phase of this name (viewed weekday/weekend).
-          const profiles = weekend && m.weekend ? m.weekend : m.weekday;
-          const phase = phaseList(profiles, sun).find((p) => p.name === phaseName);
-          if (!phase) return null;
-          const caps = deviceMap.get(m.id) || {};
-          const values = {};
-          if ('onoff' in caps) values.onoff = true;
-          if ('light_mode' in caps && 'light_temperature' in caps) values.light_mode = 'temperature';
-          if ('dim' in caps) values.dim = phase.brightness;
-          if ('light_temperature' in caps) values.light_temperature = phase.temperature;
-          return { deviceId: m.id, values };
-        })
-        .filter((it) => it && Object.keys(it.values).length);
-      if (!items.length) throw new Error('No controllable lights in this room.');
-      const r = await fetch('/api/homey/set', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items }),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'failed to apply');
-      setTimeout(() => onReload && onReload(), 1200);
-    } catch (e) {
-      setErr(String(e.message || e));
-    } finally {
-      setApplying(null);
-    }
-  }
 
   async function resetRoom(area, flow) {
     if (!flow) { setErr(`No reset flow selected for ${area}.`); return; }
@@ -208,109 +177,66 @@ export default function LightingTab({ devices, flows, alStatus, onReload }) {
       <div className={styles.alBar}>
         <Pill><Sunrise size={14} className={styles.amber} /> Sunrise <b className="hd-num">{fmtMinutes(sun.sunriseMinutes)}</b></Pill>
         <Pill><Sunset size={14} className={styles.amber} /> Sunset <b className="hd-num">{fmtMinutes(sun.sunsetMinutes)}</b></Pill>
-        {manualCount === 0 ? (
-          <span className="hd-pill" style={tonePill('good')}><CircleCheck size={14} /> all Auto</span>
-        ) : (
+        {manualCount > 0 && (
           <span className="hd-pill" style={tonePill('warn')}><Hand size={14} /> {manualCount} manual</span>
         )}
-        <div className={cx('hd-seg', styles.segRight)} role="group" aria-label="Schedule shown">
-          {[['Weekday', false], ['Weekend', true]].map(([label, val]) => (
-            <button key={label} type="button" aria-pressed={weekend === val} onClick={() => setWeekend(val)}>
-              {label}
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className={styles.areaList}>
-        {orderedAreas.map(({ area, members, repWeekday, repWeekend, repName, mixed }) => {
+        {orderedAreas.map(({ area, members, repWeekday, repWeekend, repSun }) => {
           const roomFlow = flowForRoom(area, members);
           const roomBusy = busy.has(area);
           const memberModes = members.map((m) => modeForMember(m));
-          const roomMode = memberModes.some(isManualish) ? 'manual'
-            : memberModes.some((r) => r.mode === 'forced') ? 'forced' : 'auto';
-          const useWeekend = weekend && repWeekend;
+          const manual = memberModes.some(isManualish);
+          const roomMode = manual ? 'manual' : memberModes.some((r) => r.mode === 'forced') ? 'forced' : 'auto';
+          const useWeekend = todayWeekend && repWeekend;
           const chartProfiles = useWeekend ? repWeekend : repWeekday;
           return (
             <div key={area} className="hd-card hd-card-pad">
               <div className={styles.areaHead}>
                 <h3 className="hd-title">{area}</h3>
-                <ModeBadge mode={roomMode} />
-                <div className={styles.areaControls}>
+                {/* Only what differs from Auto is shown, at the right edge. The Manual badge is
+                    the way back: it runs the room's light-reset flow. */}
+                {manual && roomFlow && (
                   <button
-                    type="button" className="hd-btn hd-btn-soft hd-btn-sm"
-                    onClick={() => resetRoom(area, roomFlow)} disabled={roomBusy || !roomFlow}
+                    type="button" className={styles.modeBtn} onClick={() => resetRoom(area, roomFlow)} disabled={roomBusy}
+                    aria-label={`${area} is in Manual. Back to Auto`} title="Back to Auto"
                   >
-                    {roomBusy ? <LoaderCircle size={14} style={SPIN} /> : <RotateCcw size={14} />}
-                    Reset to Auto
+                    {roomBusy ? <LoaderCircle size={13} style={SPIN} /> : <RotateCcw size={13} strokeWidth={2.4} />}
+                    Manual
                   </button>
-                  <button
-                    type="button" className={cx('hd-icon-btn', styles.cfgBtn)} aria-label={`Reset flow for ${area}`}
-                    aria-expanded={picking === area || !roomFlow} onClick={() => setPicking((p) => (p === area ? null : area))}
-                  >
-                    <Settings2 size={15} />
-                  </button>
-                </div>
+                )}
+                {roomMode !== 'auto' && !(manual && roomFlow) && <ModeBadge mode={roomMode} />}
               </div>
-              {(picking === area || !roomFlow) && (
+              {manual && !roomFlow && (
                 <label className={styles.flowPick}>
                   <span>Reset flow</span>
-                  <select
-                    className="hd-select hd-select-sm"
-                    value={roomFlow ? roomFlow.id : ''}
-                    onChange={(e) => setFlowForRoom(area, e.target.value)}
-                  >
+                  <select className="hd-select hd-select-sm" value="" onChange={(e) => setFlowForRoom(area, e.target.value)}>
                     <option value="">— none —</option>
                     {resetFlows.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
                   </select>
                 </label>
               )}
-              <ScheduleChart
-                profiles={chartProfiles}
-                sun={sun}
-                nowMin={nowMin}
-                onApplyPhase={(phase) => applyPhase(area, members, phase.name)}
-                applying={applying === area}
-              />
+              <ScheduleStrip profiles={chartProfiles} sun={sun} nowMin={nowMin} followsSun={repSun} />
               <div className={styles.members}>
-                {members.map((m, i) => (
-                  <div key={m.id} className={styles.memberRow}>
-                    <BulbTile caps={deviceMap.get(m.id)} />
-                    <span className={styles.memberName} title={m.name}>{m.name}</span>
-                    <ModeBadge {...memberModes[i]} />
-                  </div>
-                ))}
+                {members.map((m, i) => {
+                  const device = deviceById.get(m.id);
+                  return device ? (
+                    <LightTile
+                      key={m.id} device={device} al={memberModes[i]}
+                      onToggle={onControl ? (v) => onControl(m.id, { onoff: v }) : null}
+                      onSet={onControl ? (values) => onControl(m.id, values) : null}
+                    />
+                  ) : (
+                    <div key={m.id} className={styles.missing}>{m.name}</div>
+                  );
+                })}
               </div>
             </div>
           );
         })}
       </div>
     </div>
-  );
-}
-
-// Lightbulb tile tinted with the light's current colour (when on and known).
-function BulbTile({ caps }) {
-  const s = lightSwatch(caps);
-  if (s && s.on) {
-    return (
-      <span
-        className={styles.bulb}
-        title={s.dim != null ? `on · ${Math.round(s.dim * 100)}%` : 'on'}
-        style={{
-          background: s.color, color: '#1f2937',
-          boxShadow: `0 0 14px -3px ${s.color}`,
-          opacity: s.dim != null ? 0.55 + 0.45 * s.dim : 1,
-        }}
-      >
-        <Lightbulb size={14} strokeWidth={2.2} />
-      </span>
-    );
-  }
-  return (
-    <span className={styles.bulb} title={s ? 'off' : undefined} style={s ? { color: 'var(--faint)' } : undefined}>
-      <Lightbulb size={14} />
-    </span>
   );
 }
 
@@ -350,69 +276,28 @@ function ModeBadge({ mode, guess = false, st = null }) {
   );
 }
 
-function ScheduleChart({ profiles, sun, nowMin, onApplyPhase, applying }) {
-  const phases = phaseList(profiles, sun);
-
-  // One strip segment per phase: its white balance as the colour, fainter when dimmer.
-  // A phase that wraps past midnight becomes two segments.
+// A room's day as a strip: one segment per phase, its white balance as the colour (fainter
+// when dimmer) and its brightness as the label. Where the room follows the sun, Daytime is
+// drawn as today's sun colour curve and its label carries a sun. A phase that wraps past midnight becomes two segments.
+function ScheduleStrip({ profiles, sun, nowMin, followsSun }) {
+  const tint = (temperature, brightness) => (
+    `color-mix(in srgb, ${tempColor(temperature)} ${Math.round(35 + brightness * 65)}%, var(--surface-3))`
+  );
   const segments = [];
-  phases.forEach((p) => {
-    const seg = {
-      label: `${Math.round(p.brightness * 100)}%`,
-      color: `color-mix(in srgb, ${tempColor(p.temperature)} ${Math.round(35 + p.brightness * 65)}%, var(--surface-3))`,
-      title: `${p.name}: ${fmtMinutes(p.start)}–${fmtMinutes(p.end)} · ${Math.round(p.brightness * 100)}% · ${warmthLabel(p.temperature)}`,
-    };
-    if (p.end <= 1440) segments.push({ ...seg, start: p.start, end: p.end });
-    else {
-      segments.push({ ...seg, start: p.start, end: 1440 });
-      segments.push({ ...seg, start: 0, end: p.end - 1440 });
-    }
+  phaseList(profiles, sun).forEach((p) => {
+    const pct = `${Math.round(p.brightness * 100)}%`;
+    const parts = p.end <= 1440 ? [[p.start, p.end]] : [[p.start, 1440], [0, p.end - 1440]];
+    parts.forEach(([start, end]) => {
+      const samples = followsSun && p.name === SUN_PROFILE ? sunColourSamples(profiles, start, end) : [];
+      const color = samples.length > 1
+        ? `linear-gradient(90deg, ${samples.map((x) => `${tint(x.temperature, p.brightness)} ${(((x.m - start) / (end - start)) * 100).toFixed(1)}%`).join(', ')})`
+        : tint(p.temperature, p.brightness);
+      segments.push({
+        start, end, label: pct, color, icon: samples.length > 1 ? <Sun size={12} strokeWidth={2.6} aria-label="Colour follows the sun" /> : null,
+        title: `${p.name}: ${fmtMinutes(p.start)}–${fmtMinutes(p.end)} · ${pct} · ${samples.length > 1 ? 'colour follows the sun' : warmthLabel(p.temperature)}`,
+      });
+    });
   });
   segments.sort((a, b) => a.start - b.start);
-
-  return (
-    <div>
-      <DayStrip segments={segments} nowMin={nowMin} />
-
-      <div className={styles.phases}>
-        {phases.map((p, i) => {
-          const active = isActive(p, nowMin);
-          const c = tempColor(p.temperature);
-          return (
-            <button
-              key={i}
-              type="button"
-              onClick={() => onApplyPhase && onApplyPhase(p)}
-              disabled={applying || !onApplyPhase}
-              title={`Set these lights to ${p.name} (${Math.round(p.brightness * 100)}%) now`}
-              className={cx(styles.phaseChip, active && styles.phaseChipActive)}
-            >
-              <span className={styles.swatch} style={{ background: c, boxShadow: `0 0 0 1px rgba(0, 0, 0, 0.12), 0 0 8px ${c}` }} />
-              <b style={{ fontWeight: active ? 700 : 600 }}>{p.name}</b>
-              <span className={styles.phaseMeta}>{fmtMinutes(p.start)} · {Math.round(p.brightness * 100)}%</span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// Current on-tile colour for a light: hue when in colour mode, else warm/cool from
-// light_temperature, else a neutral warm white. Returns null for non-lights.
-function lightSwatch(caps) {
-  if (!caps || !('onoff' in caps)) return null;
-  const on = !!caps.onoff;
-  let color;
-  if (caps.light_mode === 'color' && caps.light_hue != null) {
-    const h = Math.round((caps.light_hue || 0) * 360);
-    const s = Math.round((caps.light_saturation != null ? caps.light_saturation : 1) * 100);
-    color = `hsl(${h} ${s}% 55%)`;
-  } else if (caps.light_temperature != null) {
-    color = tempColor(caps.light_temperature);
-  } else {
-    color = tempColor(0.6);
-  }
-  const dim = caps.dim;
-  return { on, color, dim: dim != null ? dim : null };
+  return <DayStrip segments={segments} nowMin={nowMin} />;
 }

@@ -44,7 +44,7 @@ const P = {
   ],
   bedroom: [
     { name: 'Morning',  startTime: '07:00', endTime: '09:00', brightness: 0.25, temperature: 0.8 },
-    { name: 'Daytime',  startTime: '09:00', endTime: '20:00', brightness: 0.6,  temperature: 0.5 },
+    { name: 'Daytime',  startTime: '09:00', endTime: '20:00', brightness: 0.6,  temperature: 0.3 },
     { name: 'Evening',  startTime: '20:00', endTime: '22:00', brightness: 0.25, temperature: 0.8 },
     { name: 'Night',    startTime: '22:00', endTime: '07:00', brightness: 0.05, temperature: 1.0 },
   ],
@@ -62,8 +62,8 @@ const P = {
   ],
   entrance: [
     { name: 'Morning',  startTime: '06:00', endTime: '07:00', brightness: 0.40, temperature: 0.7 },
-    { name: 'Daytime',  startTime: '07:00', endTime: '18:00', brightness: 0.8,  temperature: 0.5 },
-    { name: 'Evening',  startTime: '18:00', endTime: '23:00', brightness: 0.4,  temperature: 0.7 },
+    { name: 'Daytime',  startTime: '07:00', endTime: '20:00', brightness: 0.8,  temperature: 0.4 },
+    { name: 'Evening',  startTime: '20:00', endTime: '23:00', brightness: 0.7,  temperature: 0.6 },
     { name: 'Night',    startTime: '23:00', endTime: '06:00', brightness: 0.10, temperature: 1.0 },
   ],
   dining: [
@@ -75,7 +75,7 @@ const P = {
   // weekend variants
   bedroomWeekend: [
     { name: 'Morning',  startTime: '09:00', endTime: '11:00', brightness: 0.25, temperature: 0.8 },
-    { name: 'Daytime',  startTime: '11:00', endTime: '20:00', brightness: 0.6,  temperature: 0.5 },
+    { name: 'Daytime',  startTime: '11:00', endTime: '20:00', brightness: 0.6,  temperature: 0.3 },
     { name: 'Evening',  startTime: '20:00', endTime: '23:00', brightness: 0.25, temperature: 0.8 },
     { name: 'Night',    startTime: '23:00', endTime: '09:00', brightness: 0.05, temperature: 1.0 },
   ],
@@ -93,28 +93,29 @@ const P = {
   ],
   entranceWeekend: [
     { name: 'Morning',  startTime: '07:30', endTime: '10:00', brightness: 0.35, temperature: 0.8 },
-    { name: 'Daytime',  startTime: '10:00', endTime: '18:00', brightness: 0.8,  temperature: 0.5 },
-    { name: 'Evening',  startTime: '18:00', endTime: '23:00', brightness: 0.4,  temperature: 0.7 },
+    { name: 'Daytime',  startTime: '10:00', endTime: '20:00', brightness: 0.8,  temperature: 0.4 },
+    { name: 'Evening',  startTime: '20:00', endTime: '23:00', brightness: 0.7,  temperature: 0.6 },
     { name: 'Night',    startTime: '23:00', endTime: '07:30', brightness: 0.10, temperature: 1.0 },
   ],
 };
 
 // ---- configured lights (from ROOM_CONFIG), grouped by physical area ----
 // `id` is the Homey device id — used both to read live state (Auto/Manual) and as
-// the argument when resetting via the AdaptiveLighting script.
+// the argument when resetting via the AdaptiveLighting script. `sun`: the light has a
+// sunTemperature block in the script, so its Daytime colour follows the sun's elevation.
 export const AL_ROOMS = [
-  { area: 'Stue',            name: 'ST Loft',            id: 'fd754abf-4397-45f5-9a68-98d7f079fd7b', weekday: P.filament },
-  { area: 'Stue',            name: 'ST Standerlampe',    id: '3f4e2391-3be6-44ee-b340-fcc3219853b2', weekday: P.stue },
+  { area: 'Stue',            name: 'ST Loft',            id: 'fd754abf-4397-45f5-9a68-98d7f079fd7b', weekday: P.filament, sun: true },
+  { area: 'Stue',            name: 'ST Standerlampe',    id: '3f4e2391-3be6-44ee-b340-fcc3219853b2', weekday: P.stue, sun: true },
   { area: 'Spisestue',       name: 'SS Loft',            id: '18b6f5bf-1666-4bf1-92be-d9cb7e6b74c5', weekday: P.dining },
   { area: 'Spisestue',       name: 'SS Bordlampe',       id: '5ccf5881-f665-40f5-bd89-f61e1f926d4c', weekday: P.dining },
   { area: 'Spisestue',       name: 'SS Light Perler',    id: 'cc30f76b-7634-489c-a721-541fdb49d46f', weekday: P.dining },
-  { area: 'Soveværelse',     name: 'SV Loft',            id: 'cbbd7c60-dc84-43c7-8f0f-790556fc9b14', weekday: P.bedroom,  weekend: P.bedroomWeekend },
-  { area: 'Køkken',          name: 'K Loft',             id: 'f097b38c-cfb0-4b83-8124-59e35f82cd0f', weekday: P.kitchen },
-  { area: 'Køkken',          name: 'K Bord',             id: '0e5d845d-d8ea-4db6-8096-663b0a311e07', weekday: P.kitchen },
+  { area: 'Soveværelse',     name: 'SV Loft',            id: 'cbbd7c60-dc84-43c7-8f0f-790556fc9b14', weekday: P.bedroom,  weekend: P.bedroomWeekend, sun: true },
+  { area: 'Køkken',          name: 'K Loft',             id: 'f097b38c-cfb0-4b83-8124-59e35f82cd0f', weekday: P.kitchen, sun: true },
+  { area: 'Køkken',          name: 'K Bord',             id: '0e5d845d-d8ea-4db6-8096-663b0a311e07', weekday: P.kitchen, sun: true },
   { area: 'Badeværelse 9',   name: 'B9 Lys',             id: 'b8591f4d-a493-4de7-9745-c13cd07e033c', weekday: P.bathroom9, weekend: P.bathroom9Weekend },
   { area: 'Badeværelse 7',   name: 'B7 Lys',             id: '1ab9ca1f-60ca-44f9-8221-a03e10f005bf', weekday: P.bathroom },
-  { area: 'Entre 9',         name: 'E9 Loft',            id: '2656f184-8c87-4434-95a2-fdb3fc36bdd8', weekday: P.entrance, weekend: P.entranceWeekend },
-  { area: 'Entre 9',         name: 'E9 Garderobe',       id: 'e339c184-ea11-4413-bd90-dac726861fd0', weekday: P.entrance, weekend: P.entranceWeekend },
+  { area: 'Entre 9',         name: 'E9 Loft',            id: '2656f184-8c87-4434-95a2-fdb3fc36bdd8', weekday: P.entrance, weekend: P.entranceWeekend, sun: true },
+  { area: 'Entre 9',         name: 'E9 Garderobe',       id: 'e339c184-ea11-4413-bd90-dac726861fd0', weekday: P.entrance, weekend: P.entranceWeekend, sun: true },
   { area: 'Entre 7',         name: 'E7 Lys',             id: 'b135fbd5-dda4-4957-9cce-6184fa5c731a', weekday: P.entrance },
   { area: 'Olivers værelse', name: 'O Loft',             id: '1e87af68-506e-4c86-8bc9-ffc6a05f3ef0', weekday: P.kidsRoom, weekend: P.kidsRoomWeekend },
   { area: 'Claras værelse',  name: 'C Loft',             id: '9b15cb64-bf61-494d-be49-f3dcd9dfd0bf', weekday: P.kidsRoom, weekend: P.kidsRoomWeekend },
@@ -349,6 +350,65 @@ export function tempColor(t) {
   const g = Math.round(cool[1] + (warm[1] - cool[1]) * t);
   const b = Math.round(cool[2] + (warm[2] - cool[2]) * t);
   return `rgb(${r}, ${g}, ${b})`;
+}
+
+// ---- sun colour (the script's SUN-BASED COLOUR TEMPERATURE, STUE_SUN_TEMPERATURE) ----
+// Lights with `sun` slide their Daytime colour with the sun's elevation: Daytime's own
+// (cool) temperature from 35° up, Evening's (warm) at the horizon, linear in between.
+const SUN_HIGH_ELEVATION = 35;
+const SUN_LOW_ELEVATION = 0;
+export const SUN_PROFILE = 'Daytime';
+const SUN_WARM_PROFILE = 'Evening';
+
+// Solar elevation in degrees (copied from the script's solarElevationDeg; NOAA, no refraction).
+export function solarElevationDeg(date, lat = LAT, lon = LON) {
+  const rad = Math.PI / 180;
+  const jd = date.getTime() / 86400000 + 2440587.5;
+  const jc = (jd - 2451545) / 36525;
+  const gml = ((280.46646 + jc * (36000.76983 + jc * 0.0003032)) % 360 + 360) % 360;
+  const gma = 357.52911 + jc * (35999.05029 - 0.0001537 * jc);
+  const ecc = 0.016708634 - jc * (0.000042037 + 0.0000001267 * jc);
+  const seoc = Math.sin(gma * rad) * (1.914602 - jc * (0.004817 + 0.000014 * jc))
+    + Math.sin(2 * gma * rad) * (0.019993 - 0.000101 * jc)
+    + Math.sin(3 * gma * rad) * 0.000289;
+  const stl = gml + seoc;
+  const omega = (125.04 - 1934.136 * jc) * rad;
+  const sal = stl - 0.00569 - 0.00478 * Math.sin(omega);
+  const moe = 23 + (26 + (21.448 - jc * (46.815 + jc * (0.00059 - jc * 0.001813))) / 60) / 60;
+  const oc = moe + 0.00256 * Math.cos(omega);
+  const decl = Math.asin(Math.sin(oc * rad) * Math.sin(sal * rad));
+  const y = Math.tan(oc * rad / 2) ** 2;
+  const eqt = 4 * (y * Math.sin(2 * gml * rad) - 2 * ecc * Math.sin(gma * rad)
+    + 4 * ecc * y * Math.sin(gma * rad) * Math.cos(2 * gml * rad)
+    - 0.5 * y * y * Math.sin(4 * gml * rad) - 1.25 * ecc * ecc * Math.sin(2 * gma * rad)) / rad;
+  const utcMinutes = date.getUTCHours() * 60 + date.getUTCMinutes() + date.getUTCSeconds() / 60;
+  const tst = (((utcMinutes + eqt + 4 * lon) % 1440) + 1440) % 1440;
+  const ha = (tst / 4 < 0 ? tst / 4 + 180 : tst / 4 - 180) * rad;
+  const cosZen = Math.sin(lat * rad) * Math.sin(decl) + Math.cos(lat * rad) * Math.cos(decl) * Math.cos(ha);
+  return 90 - Math.acos(Math.max(-1, Math.min(1, cosZen))) / rad;
+}
+
+// The colour a sun-following light shows at a given sun elevation (the script's sunTemperatureFor).
+export function sunTemperatureFor(elevation, cool, warm) {
+  const span = Math.max(0.1, SUN_HIGH_ELEVATION - SUN_LOW_ELEVATION);
+  const t = Math.max(0, Math.min(1, (elevation - SUN_LOW_ELEVATION) / span));
+  return Math.round((warm + (cool - warm) * t) * 100) / 100;
+}
+
+// Today's Daytime colour of a sun-following profile set, sampled through the phase:
+// [{ m (minutes from local midnight), temperature }], or [] when the set has no Daytime/Evening.
+export function sunColourSamples(profiles, startMin, endMin, day = new Date(), stepMin = 20) {
+  const cool = profiles.find((p) => p.name === SUN_PROFILE);
+  const warm = profiles.find((p) => p.name === SUN_WARM_PROFILE);
+  if (!cool || !warm || endMin <= startMin) return [];
+  const midnight = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+  const out = [];
+  const n = Math.max(1, Math.ceil((endMin - startMin) / stepMin));
+  for (let i = 0; i <= n; i++) {
+    const m = startMin + ((endMin - startMin) * i) / n;
+    out.push({ m, temperature: sunTemperatureFor(solarElevationDeg(new Date(midnight + m * 60000)), cool.temperature, warm.temperature) });
+  }
+  return out;
 }
 
 export function fmtMinutes(m) {

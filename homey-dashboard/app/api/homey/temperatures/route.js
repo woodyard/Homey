@@ -2,13 +2,6 @@ import { NextResponse } from 'next/server';
 import { readSession, persistSession } from '../../../../lib/sessionCookie';
 import { homeyFetch } from '../../../../lib/homey';
 import { buildZonePaths } from '../../../../lib/zones';
-import { HEATING_ROOMS } from '../../../../lib/heating';
-
-// Heating-output logs used by the Rooms tab's forecast model: the tado valve's
-// target + heating power, and the smart plugs' power draw in plug-heated rooms.
-const HEATING_DEVICE_IDS = new Set(HEATING_ROOMS.flatMap((r) => [r.thermostatId, ...(r.plugIds || [])].filter(Boolean)));
-const HEATING_CAPS = new Set(['target_temperature', 'tado_heating_power', 'energy_power']);
-
 const PERIODS = new Set(['last6Hours', 'last24Hours', 'last7Days', 'last14Days', 'last31Days']);
 const MAX_SELECTED_LOGS = 40;
 
@@ -114,23 +107,7 @@ export async function GET(request) {
         return zoneCmp || a.name.localeCompare(b.name, 'da');
       });
 
-    const heating = asList(logsObj)
-      .map((log) => ({ log, norm: normalizeLog(log) }))
-      .filter(({ log, norm }) => log && log.type === 'number' && HEATING_CAPS.has(norm.capId) && HEATING_DEVICE_IDS.has(norm.deviceId))
-      .map(({ log, norm }) => {
-        const device = devices[norm.deviceId] || {};
-        return {
-          key: `${norm.uri}::${norm.capId}`,
-          uri: norm.uri,
-          logId: norm.capId,
-          rawId: norm.rawId,
-          deviceId: norm.deviceId,
-          name: device.name || log.ownerName || log.title || norm.capId,
-          units: log.units,
-        };
-      });
-
-    const byKey = new Map([...sensors, ...heating].map((sensor) => [sensor.key, sensor]));
+    const byKey = new Map(sensors.map((sensor) => [sensor.key, sensor]));
     const selected = requestedKeys.map((key) => byKey.get(key)).filter(Boolean);
 
     // Fetch each log independently — one broken/stale log must not fail the whole
@@ -165,7 +142,7 @@ export async function GET(request) {
       return { key: sensor.key, entries: [] };
     }));
 
-    const res = NextResponse.json({ period, sensors, heating, series });
+    const res = NextResponse.json({ period, sensors, series });
     persistSession(res, session);
     return res;
   } catch (e) {

@@ -35,10 +35,33 @@
 
 /* ---------- slider ---------- */
 
-.sliderRow { display: flex; align-items: center; gap: 10px; }
+.sliderRow { display: flex; align-items: center; gap: 12px; }
 .sliderIcon { color: var(--muted); flex-shrink: 0; width: 18px; display: inline-flex; justify-content: center; }
-.slider { flex: 1; min-width: 0; height: 36px; cursor: pointer; margin: 0; }
-.sliderVal { width: 44px; text-align: right; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sliderVal { width: 40px; text-align: right; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* --track: what the slider changes, drawn on its track (dim to bright, cool to warm, hues). */
+.slider {
+  -webkit-appearance: none; appearance: none;
+  flex: 1; min-width: 0; height: 40px; margin: 0; background: transparent; cursor: pointer;
+}
+.slider::-webkit-slider-runnable-track {
+  height: 12px; border-radius: 999px; background: var(--track, var(--surface-3)); box-shadow: inset 0 0 0 1px var(--border);
+}
+.slider::-moz-range-track {
+  height: 12px; border-radius: 999px; background: var(--track, var(--surface-3)); box-shadow: inset 0 0 0 1px var(--border);
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 26px; height: 26px; margin-top: -7px; border-radius: 50%;
+  background: var(--knob); border: 1px solid var(--border-strong); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+.slider::-moz-range-thumb {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--knob); border: 1px solid var(--border-strong); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+.slider:focus-visible { box-shadow: none; }
+.slider:focus-visible::-webkit-slider-thumb { box-shadow: var(--ring); }
+.slider:focus-visible::-moz-range-thumb { box-shadow: var(--ring); }
 
 /* ---------- big temperature ---------- */
 
@@ -53,9 +76,10 @@
 /* --strip-bg: the surface the strip sits on (the now-marker's halo). */
 .stripLabels, .stripBar { display: flex; gap: 2px; }
 .stripLabels > span {
-  flex-basis: 0; min-width: 0; text-align: center; white-space: nowrap;
-  font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums;
+  flex-basis: 0; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 3px; white-space: nowrap;
+  min-height: 18px; font-size: 12px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums;
 }
+.stripLabels svg { flex-shrink: 0; color: var(--warn); }
 .stripLabels > .stripLabelNow { color: var(--text); font-weight: 700; }
 .stripBar { position: relative; height: 12px; margin-top: 5px; }
 .stripSeg { flex-basis: 0; min-width: 0; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--border); }
