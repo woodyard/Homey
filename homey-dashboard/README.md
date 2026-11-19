@@ -125,6 +125,13 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.5.1** (2026-11-19) — Varme: the two everyday states have no line under the room any more.
+  "Varmt nok — 21.2°" repeated the temperature shown right above it, and "Varmer til 22°" repeated
+  the target, with the flame and the valve's power already in the card's heading. A room gets a line
+  only when something else is going on: a window, Boost, Pause, a manual target, away, or a fault.
+  Those lines no longer repeat what the card already shows (room temperature, valve power, target,
+  time left): Boost, Pause and a manual target say only what follows ("Derefter følges tidsplanen
+  igen"), and an open window says only when the heating stops or returns.
 - **2.5.0** (2026-11-19) — The robot vacuum can be operated from Andet: Start while it is idle or
   docked, Pause while it runs, Fortsæt when it is paused mid-job, and Hjem to send it to its dock.
   Start sets the robot's job mode to Cleaning; the others press the robot's own pause, resume and

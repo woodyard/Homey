@@ -253,16 +253,17 @@ export function explainHeating({
     const dur = mode === 'manual' ? manualMinutes : MODE_MINUTES[mode];
     const progress = running ? { from: exp - dur * MIN, to: exp } : null;
     const until = running ? ` til ${hhmm(exp)}` : '';
-    const leftTxt = running ? `${fmtMins(Math.ceil(left))} tilbage` : 'slutter ved næste tjek';
+    // The headline carries the end time and the bar the time left: the detail says what follows.
+    const after = running ? 'Derefter følges tidsplanen igen' : 'Slutter ved næste tjek';
     if (stale && !running) return scriptSilent(MODE_NAMES[mode] || mode);
     addCommonFactors();
     const failed = action === `${mode}_error`; // the valve refused the command; the next run tries again
-    const failedTxt = `Ventilen svarede ikke — prøver igen · ${leftTxt}`;
+    const failedTxt = 'Ventilen svarede ikke — prøver igen';
     if (mode === 'pause') {
       return out({
         state: 'pause', tone: failed ? 'bad' : 'muted', icon: failed ? 'alert' : 'pause',
         headline: `Pause${until}`,
-        detail: failed ? failedTxt : `${heatingNow ? 'Varmer stadig, stopper om lidt' : 'Varmen er slukket'} · ${leftTxt}, derefter følges tidsplanen igen`,
+        detail: failed ? failedTxt : `${heatingNow ? 'Varmer stadig, stopper om lidt · ' : ''}${heatingNow ? after.toLowerCase() : after}`,
         progress, heatingOff: !heatingNow,
         tag: { tone: failed ? 'bad' : 'muted', icon: 'pause', text: running ? `Pause ${fmtMins(Math.ceil(left))}` : 'Pause' },
       });
@@ -271,7 +272,8 @@ export function explainHeating({
       return out({
         state: 'boost', tone: failed ? 'bad' : 'heat', icon: failed ? 'alert' : 'flame',
         headline: `Boost${until}`,
-        detail: failed ? failedTxt : `${kind === 'plug' ? (heatingNow ? 'Radiatorer tændt' : 'Radiatorer slukket — boost-temperaturen er nået') : 'Ventilen sat til 25°'} · ${leftTxt}`,
+        detail: failed ? failedTxt
+          : kind === 'plug' && !heatingNow ? `Radiatorer slukket — boost-temperaturen er nået · ${after.toLowerCase()}` : after,
         progress,
         tag: { tone: failed ? 'bad' : 'heat', icon: 'flame', text: running ? `Boost ${fmtMins(Math.ceil(left))}` : 'Boost' },
       });
@@ -280,7 +282,7 @@ export function explainHeating({
     return out({
       state: 'manual', tone: 'warn', icon: 'hand',
       headline: `Manuelt ${mt != null ? deg(mt) : ''}${until}`.replace(/\s+/g, ' ').trim(),
-      detail: `${kind === 'plug' ? `Radiatorer ${heatingNow ? 'tændt' : 'slukket'}` : 'Sat i hånden'} · ${running ? `${leftTxt}, derefter tager tidsplanen over` : 'tidsplanen tager over ved næste tjek'}`,
+      detail: running ? 'Derefter tager tidsplanen over' : 'Tidsplanen tager over ved næste tjek',
       progress,
       tag: { tone: 'warn', icon: 'hand', text: running ? `Manuelt ${fmtMins(Math.ceil(left))}` : 'Manuelt' },
     });
@@ -379,9 +381,6 @@ export function explainHeating({
       : null;
     addCommonFactors({ window: true });
     if (heatingNow) {
-      const how = kind === 'tado'
-        ? (num(power) != null ? `Ventil på ${Math.round(power)}%` : 'Ventil åben')
-        : 'Radiatorer tændt';
       let headline = 'Vindue åbent — varmer stadig';
       if (pastStop) headline = 'Vindue åbent — varmen stopper ved næste tjek';
       else if (stopAt != null) headline = `Vindue åbent — varmen stopper ≈${NB}${hhmm(stopAt)}`;
@@ -389,22 +388,19 @@ export function explainHeating({
         state: 'window_grace', tone: 'warn', icon: 'window',
         headline,
         detail: pastStop
-          ? `${how} · varmen ${resumeTxt}`
-          : `${how} · slukker, hvis ${limit || 'det bliver stående åbent'}`,
+          ? `Varmen ${resumeTxt}`
+          : `Slukker, hvis ${limit || 'det bliver stående åbent'}`,
         progress: !pastStop && stopAt != null ? { from: openSince, to: stopAt } : null,
         tag: windowTag,
       });
     }
-    const why = t != null && effTarget != null && t >= effTarget - 0.3
-      ? `Varmt nok, rummet ${deg(t)}`
-      : `${effTarget != null ? `Mål ${deg(effTarget)}` : 'Ventilen hviler'}${t != null ? ` · rummet ${deg(t)}` : ''}`;
-    let then = 'forbliver slukket, hvis det står åbent';
-    if (pastStop) then = 'forbliver slukket, så længe det er åbent';
-    else if (stopAt != null) then = `slukket fra ≈${NB}${hhmm(stopAt)}, hvis det stadig er åbent`;
+    let then = 'Forbliver slukket, hvis det står åbent';
+    if (pastStop) then = 'Forbliver slukket, så længe det er åbent';
+    else if (stopAt != null) then = `Slukket fra ≈${NB}${hhmm(stopAt)}, hvis det stadig er åbent`;
     return out({
       state: 'window_grace', tone: 'warn', icon: 'window',
       headline: 'Vindue åbent — varmer ikke',
-      detail: `${why} · ${then}`,
+      detail: then,
       tag: windowTag,
     });
   }
@@ -460,11 +456,10 @@ export function explainHeating({
   // 8. Away with a minimum temperature: the target is lowered, heating holds it.
   if (away) {
     addCommonFactors({ away: true });
-    const lowered = effTarget != null && schedTarget != null && effTarget < schedTarget - 0.05;
     return out({
       state: 'away', tone: 'accent', icon: 'away',
       headline: heatingNow ? `Ude — varmer til ${deg(effTarget)}` : `Ude — holder ${deg(effTarget)}`,
-      detail: `Ingen hjemme (TADO)${lowered ? ` · tidsplan ${deg(schedTarget)}` : ''}${t != null ? ` · rummet ${deg(t)}` : ''}`,
+      detail: 'Ingen hjemme (TADO)',
       tag: { tone: 'accent', icon: 'away', text: effTarget != null ? `Ude ${deg(effTarget)}` : 'Ude' },
     });
   }
@@ -495,9 +490,7 @@ export function explainHeating({
   // 11. Below target but not heating: the valve/thermostat decides (or the next run will).
   return out({
     state: 'idle', tone: 'muted', icon: 'idle',
-    headline: effTarget != null ? `Varmer ikke — mål ${deg(effTarget)}` : 'Varmer ikke',
-    detail: kind === 'tado'
-      ? `Ventilen kalder ikke på varme lige nu${t != null ? ` · rummet ${deg(t)}` : ''}`
-      : `Radiatorerne tænder ved næste tjek${t != null ? ` · rummet ${deg(t)}` : ''}`,
+    headline: 'Varmer ikke',
+    detail: kind === 'tado' ? 'Ventilen kalder ikke på varme lige nu' : 'Radiatorerne tænder ved næste tjek',
   });
 }

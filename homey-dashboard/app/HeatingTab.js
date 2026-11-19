@@ -130,11 +130,15 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
   const pct = p && p.to > p.from ? clamp(((now - p.from) / (p.to - p.from)) * 100, 0, 100) : null;
   const reset = actions.find((a) => a.key === 'reset');
   const inOverride = OVERRIDE_STATES.has(why.state);
+  // The two everyday states need no explanation. Warm enough: the temperature and the target
+  // say it. Heating: the flame with the valve's power and the orange temperature say it.
+  const quiet = why.state === 'warm' || why.state === 'heating';
   // Master off greys out the controls, but the reason stays readable.
   const dim = systemOff ? styles.dimmed : undefined;
   return (
     <article
       className={styles.card} data-tone={why.tone} data-open={open || undefined} data-heating={heatingNow || undefined}
+      data-quiet={quiet || undefined}
       style={heatingNow ? { '--wash': `${Math.round(9 + power * 13)}%` } : undefined}
     >
       <button type="button" className={styles.head} onClick={onToggle} aria-expanded={open} aria-controls={bodyId}>
@@ -179,30 +183,32 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
         )}
       </div>
 
-      <div className={styles.reason}>
-        <span className={styles.reasonIcon} aria-hidden="true"><WhyIcon size={16} strokeWidth={2.3} /></span>
-        <div className={styles.reasonBody}>
-          <div className={styles.reasonHead}>{why.headline}</div>
-          {why.detail && <div className={styles.reasonDetail}>{why.detail}</div>}
-          {pct != null && (
-            <div
-              className={styles.progress} role="progressbar" aria-valuemin={0} aria-valuemax={100}
-              aria-valuenow={Math.round(pct)} aria-label="Tid gået"
+      {!quiet && (
+        <div className={styles.reason}>
+          <span className={styles.reasonIcon} aria-hidden="true"><WhyIcon size={16} strokeWidth={2.3} /></span>
+          <div className={styles.reasonBody}>
+            <div className={styles.reasonHead}>{why.headline}</div>
+            {why.detail && <div className={styles.reasonDetail}>{why.detail}</div>}
+            {pct != null && (
+              <div
+                className={styles.progress} role="progressbar" aria-valuemin={0} aria-valuemax={100}
+                aria-valuenow={Math.round(pct)} aria-label="Tid gået"
+              >
+                <span style={{ width: `${pct}%` }} />
+              </div>
+            )}
+          </div>
+          {inOverride && reset && (
+            <button
+              type="button" className={cx('hd-btn hd-btn-sm', styles.quickReset)} onClick={reset.onClick}
+              disabled={reset.disabled} title="Annullér og følg tidsplanen igen"
             >
-              <span style={{ width: `${pct}%` }} />
-            </div>
+              {reset.busy ? <LoaderCircle size={14} style={SPIN} /> : <RotateCcw size={14} />}
+              Nulstil
+            </button>
           )}
         </div>
-        {inOverride && reset && (
-          <button
-            type="button" className={cx('hd-btn hd-btn-sm', styles.quickReset)} onClick={reset.onClick}
-            disabled={reset.disabled} title="Annullér og følg tidsplanen igen"
-          >
-            {reset.busy ? <LoaderCircle size={14} style={SPIN} /> : <RotateCcw size={14} />}
-            Nulstil
-          </button>
-        )}
-      </div>
+      )}
 
       <div className={styles.more} id={bodyId}>
         <div className={styles.moreInner}>
