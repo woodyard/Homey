@@ -9,9 +9,9 @@
 // Varme: someone is there, or how long it has been empty and — where the flows' timing is known —
 // a countdown with a bar to when the lights dim or switch off (lib/emptyRoom.js).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Hand, LoaderCircle, Pin, RotateCcw, Sun, Sunrise, Sunset,
+  Clock, Hand, LoaderCircle, Pin, RotateCcw, Sun, Sunrise, Sunset,
 } from 'lucide-react';
 import {
   AL_ROOMS, getSunTimes, phaseList, activePhase, tempColor, fmtMinutes, copenhagenMinutesNow,
@@ -19,9 +19,9 @@ import {
   noteManualChange,
 } from '../lib/adaptiveLighting';
 import {
-  cx, cmpZonePath, DayStrip, ErrorBox, fmtDuration, NoMotion, Pill, Presence, ProgressBar, roomNameFromPath, SPIN,
+  cx, cmpZonePath, DayStrip, ErrorBox, fmtDuration, fmtLongDuration, NoMotion, Pill, Presence, ProgressBar, roomNameFromPath, SPIN,
 } from './ui';
-import { emptyRoomPlan, emptySince } from '../lib/emptyRoom';
+import { emptyRoomPlan, emptySince, OFF_AT, secondsToOffAt } from '../lib/emptyRoom';
 import { slotName } from '../lib/heatingState';
 import LightTile from './LightTile';
 import styles from './LightingTab.module.css';
@@ -217,7 +217,7 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
           const occupancy = (
             <Occupancy
               devices={devices} zones={zones} zonePath={zonePath} vars={alVars} nowMin={nowMin}
-              code={members.length ? members[0].name.split(/\s+/)[0] : null}
+              code={(members[0] || extras[0]) ? (members[0] || extras[0]).name.split(/\s+/)[0] : null}
               lightsOn={[...members.map((m) => deviceById.get(m.id)), ...extras].some((d) => d && d.capabilities && d.capabilities.onoff === true)}
               dimmed={members.some((m) => alStatus && alStatus.lights && alStatus.lights[m.id] && alStatus.lights[m.id].idle === true)}
             />
@@ -292,7 +292,9 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
 
 // At the bottom of the card: someone is there (as on Varme), or how long it has been empty and,
 // while its lights are on and the flows' timing is known, the time left until they dim or
-// switch off, with a bar. Nothing for a room without a motion sensor.
+// switch off, with a bar. A room switched off at a fixed time (Altan) counts down to it instead.
+const fmtLeft = (secs) => (secs < 3600 ? fmtDuration(secs) : fmtLongDuration(secs));
+
 function Occupancy({ devices, zones, zonePath, vars, nowMin, code, lightsOn, dimmed }) {
   // Its own 1 s tick: the counters move between data updates
   const [, setTick] = useState(0);
@@ -301,23 +303,28 @@ function Occupancy({ devices, zones, zonePath, vars, nowMin, code, lightsOn, dim
     return () => clearInterval(iv);
   }, []);
   const motionDevs = (devices || []).filter((d) => d.zonePath === zonePath && d.capabilities && 'alarm_motion' in d.capabilities);
-  const present = motionDevs.some((d) => d.capabilities.alarm_motion === true);
-  // As on Varme: the moment this page saw the motion stop counts too, so the counter starts at
-  // 0:00 even when Homey's times arrive late
-  const stoppedRef = useRef(null);
-  const wasPresentRef = useRef(present);
-  if (present) stoppedRef.current = null;
-  else if (wasPresentRef.current) stoppedRef.current = Date.now();
-  wasPresentRef.current = present;
-  if (!motionDevs.length) return null;
-  if (present) return <Presence className={styles.presence} />;
+  if (!motionDevs.length) {
+    const min = copenhagenMinutesNow();
+    const offIn = lightsOn ? secondsToOffAt(code, min * 60 + new Date().getSeconds()) : null;
+    if (offIn == null) return null;
+    return (
+      <div className={styles.occupancy}>
+        <span className={styles.offAt}>
+          <Clock size={14} /> Slukker kl. {fmtMinutes(OFF_AT[code])}
+          <span className="hd-faint">· om <span className="hd-num">{fmtLeft(offIn)}</span></span>
+        </span>
+      </div>
+    );
+  }
+  if (motionDevs.some((d) => d.capabilities.alarm_motion === true)) return <Presence className={styles.presence} />;
+  // Only Homey's own times (the sensor's change, the zone going empty), so every screen counts alike
   const zoneId = motionDevs[0].zoneId;
   const empty = emptySince(motionDevs, zones && zoneId ? zones[zoneId] : null);
-  if (!empty && stoppedRef.current == null) return null;
-  const since = Math.max(empty ? empty.since : 0, stoppedRef.current || 0);
+  if (!empty) return null;
+  const { since } = empty;
   const now = Date.now();
   const secs = Math.max(0, Math.floor((now - since) / 1000));
-  const plan = lightsOn && !dimmed && (!empty || empty.counting) ? emptyRoomPlan(code, vars, nowMin) : null;
+  const plan = lightsOn && !dimmed && empty.counting ? emptyRoomPlan(code, vars, nowMin, zones) : null;
   const left = plan ? plan.seconds - secs : -1;
   const counting = plan && left > 0;
   const tone = plan && plan.action === 'dim' ? 'var(--accent)' : 'var(--warn)';
@@ -326,7 +333,7 @@ function Occupancy({ devices, zones, zonePath, vars, nowMin, code, lightsOn, dim
       <NoMotion secs={secs} title={`Ingen bevægelse siden ${new Date(since).toLocaleTimeString('da-DK', { hour: '2-digit', minute: '2-digit' })}`}>
         {counting && (
           <span className="hd-faint">
-            · {plan.action === 'dim' ? 'dæmpes' : 'slukker'} om <span className="hd-num">{fmtDuration(left)}</span>
+            · {plan.action === 'dim' ? 'dæmpes' : 'slukker'} om <span className="hd-num">{fmtLeft(left)}</span>
           </span>
         )}
       </NoMotion>

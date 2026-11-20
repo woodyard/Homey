@@ -125,6 +125,14 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.6.5** (2026-11-20) — Lys: every room whose lights switch off by themselves counts down to
+  it, as the flows do it: Stue, Soveværelse, Olivers værelse (30 min) and Claras værelse (20 min)
+  while it is light (not Mørkt); Køkken dims after 3 min in the dark and fades off after 30 min in
+  the light; Entre 7 after 1 min from 20:00 to 06:00, else 5 min, unless Badeværelse 7 is in use;
+  Altan shows "Slukker kl. 22:30". Lys and Varme: "Ingen bevægelse i …" and the countdowns show
+  the same time on every screen. They count only from Homey's own times (the motion sensor's
+  change, the zone going empty), no longer from when each browser saw the motion stop or opened
+  the page.
 - **2.6.4** (2026-11-19) — Lys: when the motion stops, "Ingen bevægelse i" starts at 0:00, as on
   Varme. It counted from the zone's inactive time, which is polled every 20 s and could be minutes
   old ("Der er nogen i rummet" → "Ingen bevægelse i 4 min"). Now the latest of the motion sensor's

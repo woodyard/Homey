@@ -10,6 +10,7 @@ import {
   Hourglass, LoaderCircle, Moon, Pause, Power, RotateCcw, Settings2, Snowflake, Thermometer, TriangleAlert,
 } from 'lucide-react';
 import { copenhagenMinutesNow, fmtMinutes, isWeekendNow } from '../lib/adaptiveLighting';
+import { emptySince } from '../lib/emptyRoom';
 import {
   HEATING_ROOMS, HEATING_ACTIONS, TARGET_MIN, TARGET_MAX, heatingDaySlots, heatingSlot, heatFlowFor,
 } from '../lib/heating';
@@ -40,24 +41,14 @@ function useNow(ms = 30000) {
 }
 
 // Live inactivity timer for a heating room, tied to the config's inactivityTimeout: when it is
-// reached, the inactivityOffset applies.
-function HeatingInactivity({ motionActive, seedTs, timeoutMin, offset }) {
-  const sinceRef = useRef(null);
-  const prevRef = useRef(undefined);
-  useEffect(() => {
-    const prev = prevRef.current;
-    if (motionActive) sinceRef.current = null;
-    else if (prev === true) sinceRef.current = Date.now();
-    else if (sinceRef.current == null) sinceRef.current = seedTs ? new Date(seedTs).getTime() : Date.now();
-    prevRef.current = motionActive;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [motionActive, seedTs]);
-
+// reached, the inactivityOffset applies. `since` comes from Homey's own times (lib/emptyRoom.js),
+// so every screen shows the same count.
+function HeatingInactivity({ motionActive, since, timeoutMin, offset }) {
   if (motionActive) {
     return <Presence className={styles.infoItem} />;
   }
+  if (since == null) return null;
 
-  const since = sinceRef.current ?? Date.now();
   const secs = Math.max(0, Math.floor((Date.now() - since) / 1000));
   const timeoutSecs = (timeoutMin || 30) * 60;
   const reached = secs >= timeoutSecs;
@@ -242,7 +233,7 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
               )}
               {d.hasMotion && d.scheduled && (
                 <HeatingInactivity
-                  motionActive={d.motionActive} seedTs={d.seedTs}
+                  motionActive={d.motionActive} since={d.emptySince}
                   timeoutMin={d.scheduled.timeout} offset={d.scheduled.offset}
                 />
               )}
@@ -325,7 +316,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
     const hasMotion = motionDevs.length > 0;
     const motionNow = motionDevs.some((d) => !!d.capabilities.alarm_motion);
     const zoneId = zoneDevs[0] ? zoneDevs[0].zoneId : null;
-    const seedTs = zoneId && zones && zones[zoneId] ? zones[zoneId].activeLastUpdated : null;
+    const empty = emptySince(motionDevs, zoneId && zones ? zones[zoneId] : null);
     const scheduled = heatingSlot(room.key, weekend, nowMin);
     const sc = status[room.zone] || null; // live status published by room_heating.js
 
@@ -365,7 +356,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
       scheduled,
       hasMotion,
       motionActive: motionNow,
-      seedTs,
+      emptySince: empty ? empty.since : null,
       // Target: the live device setpoint is the truth for tado (updates on +/-); fall back to the
       // script's effectiveTarget for plug rooms (0 during a pause, so the schedule's target then).
       // A recent +/- holds its value for 45s (propagation).
