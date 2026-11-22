@@ -180,7 +180,7 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
           <div className={styles.reasonBody}>
             <div className={styles.reasonHead}>{why.headline}</div>
             {why.detail && <div className={styles.reasonDetail}>{why.detail}</div>}
-            {pct != null && <ProgressBar pct={pct} className={styles.progress} />}
+            {pct != null && <ProgressBar left={100 - pct} className={styles.progress} />}
           </div>
           {inOverride && reset && (
             <button
@@ -269,7 +269,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
   const plugTargetTimers = useRef({}); // room key -> timer of a plug room's target not sent yet
   const [masterBusy, setMasterBusy] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
-  const now = useNow(30000); // countdowns move between status polls
+  const now = useNow(1000); // countdowns tick by the second, as on Lys
 
   function loadStatus() {
     return fetch('/api/homey/heating').then((r) => r.json())

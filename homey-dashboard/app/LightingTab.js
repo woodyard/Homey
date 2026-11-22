@@ -337,7 +337,7 @@ function Occupancy({ devices, zones, zonePath, vars, nowMin, code, lightsOn, dim
           </span>
         )}
       </NoMotion>
-      {counting && <ProgressBar pct={(secs / plan.seconds) * 100} tone={tone} label={plan.action === 'dim' ? 'Til lyset dæmpes' : 'Til lyset slukker'} />}
+      {counting && <ProgressBar left={(left / plan.seconds) * 100} tone={tone} label={plan.action === 'dim' ? 'Til lyset dæmpes' : 'Til lyset slukker'} />}
     </div>
   );
 }
@@ -357,9 +357,9 @@ function ModeBadge({ mode, guess = false, st = null }) {
   // AL dimmed it for an empty room: "Auto · idle" (the mode underneath stays)
   const idle = !guess && mode !== 'off' && isIdle(st);
   const title = guess
-    ? 'Gættet ud fra tidsplanen — scriptet har ikke meldt denne lampe'
+    ? 'Gættet ud fra tidsplanen — lampen har ingen status endnu'
     : mode === 'drift'
-      ? `Afviger fra det, scriptet satte (${describeLightStatus(st)}); skifter til manuelt ved næste tjek`
+      ? `Afviger fra det, automatikken satte (${describeLightStatus(st)}); skifter til manuelt ved næste tjek`
       : describeLightStatus(st) || undefined;
   return (
     <span

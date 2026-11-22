@@ -81,15 +81,16 @@ export function NoMotion({ secs, className, title, children }) {
   );
 }
 
-// Thin bar for time gone of a countdown (Boost, Pause, a window, an empty room). Colour from
-// `tone` or the surrounding --tone.
-export function ProgressBar({ pct, tone, label = 'Tid gået', className }) {
+// Thin bar for the time left of a countdown (Boost, Pause, a window, an empty room): full at the
+// start, it shrinks to the left as the time runs out. Colour from `tone` or the surrounding --tone.
+export function ProgressBar({ left, tone, label = 'Tid tilbage', className }) {
+  const pct = clamp(left, 0, 100);
   return (
     <div
       className={cx(styles.progress, className)} role="progressbar" aria-valuemin={0} aria-valuemax={100}
       aria-valuenow={Math.round(pct)} aria-label={label} style={tone ? { '--tone': tone } : undefined}
     >
-      <span style={{ width: `${clamp(pct, 0, 100)}%` }} />
+      <span style={{ width: `${pct}%` }} />
     </div>
   );
 }

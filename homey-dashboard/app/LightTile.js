@@ -59,7 +59,7 @@ export default function LightTile({ device, al, onToggle, onSet }) {
     <div
       title={unavailable
         ? `${device.name}: utilgængelig (uden strøm eller uden forbindelse)`
-        : `${device.name}: ${on ? (dim != null ? `${Math.round(dim * 100)}%` : 'tændt') : 'slukket'}${modeText ? ` · ${modeText}` : ''}${alText ? `\nScript: ${alText}` : ''}`}
+        : `${device.name}: ${on ? (dim != null ? `${Math.round(dim * 100)}%` : 'tændt') : 'slukket'}${modeText ? ` · ${modeText}` : ''}${alText ? `\nAutomatik: ${alText}` : ''}`}
       className={cx(styles.tile, unavailable && styles.tileUnavailable)}
       style={tileStyle}
     >

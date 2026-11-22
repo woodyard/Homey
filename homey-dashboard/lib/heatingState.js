@@ -54,6 +54,13 @@ function minsBetween(from, to) {
   return (to - from) / MIN;
 }
 
+/** Time left to `to` as a ticking countdown, "6:42" (as on Lys), or "1 t 05 min" from an hour. */
+function fmtLeft(now, to) {
+  const s = Math.max(0, Math.ceil((to - now) / 1000));
+  if (s >= 3600) return fmtMins(Math.ceil(s / 60));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 // The script's slot and mode names, as the dashboard shows them.
 const SLOT_NAMES = { Night: 'Nat', Morning: 'Morgen', Day: 'Dag', Daytime: 'Dag', Evening: 'Aften' };
 const MODE_NAMES = { pause: 'pause', boost: 'boost', manual: 'manuelt' };
@@ -230,7 +237,7 @@ export function explainHeating({
       addFactor({ key: 'next', tone: 'muted', icon: 'clock', text: `Næste ${nc}` });
     }
     if (stale && !skip.stale) {
-      addFactor({ key: 'stale', tone: 'bad', icon: 'alert', text: `Ingen opdatering fra varmescriptet i ${fmtMins(ageMin)}` });
+      addFactor({ key: 'stale', tone: 'bad', icon: 'alert', text: `Ingen opdatering fra varmestyringen i ${fmtMins(ageMin)}` });
     }
   };
 
@@ -240,7 +247,7 @@ export function explainHeating({
     return out({
       state: 'stale', tone: 'bad', icon: 'alert',
       headline: `Ukendt status — ingen opdatering i ${fmtMins(ageMin)}`,
-      detail: `Sidst kendt: ${lastKnown} · ingen ændring, før varmescriptet kører igen`,
+      detail: `Sidst kendt: ${lastKnown} · ingen ændring, før varmestyringen melder sig igen`,
       heatingOff: !heatingNow,
     });
   };
@@ -316,7 +323,8 @@ export function explainHeating({
   // only just started, or its entry has not landed. That run starts the settle delay after an
   // opening past the timeout, so count from the moment the sensor closed.
   const closedUnseen = !!sc.windowOpen && liveWindow === false;
-  const closedAt = closedUnseen ? (num(liveClosedAt) != null ? Math.min(num(liveClosedAt), now) : now) : null;
+  const closedKnown = closedUnseen && num(liveClosedAt) != null; // else no countdown: it would sit still
+  const closedAt = closedUnseen ? (closedKnown ? Math.min(num(liveClosedAt), now) : now) : null;
   const settleExpected = closedUnseen && !(openSince != null && openTimeoutS != null
     && (closedAt - openSince) / 1000 < openTimeoutS);
   if (settleExpected) {
@@ -324,17 +332,18 @@ export function explainHeating({
     const off = !heatingNow;
     const settledAt = delayS != null ? closedAt + delayS * 1000 : null;
     const left = settledAt != null ? minsBetween(now, settledAt) : null;
-    const leftTxt = left != null && left > 0 ? fmtMins(Math.ceil(left)) : null;
+    const leftTxt = closedKnown && left != null && left > 0 ? fmtLeft(now, settledAt) : null;
     addCommonFactors({ window: true, awayThen: off });
     let headline = 'Vindue lukket — varmer stadig';
     if (off) {
       if (leftTxt) headline = `Slukket — starter om ${leftTxt} (≈${NB}${hhmm(settledAt)})`;
-      else headline = settledAt != null ? 'Slukket — starter ved næste tjek' : 'Slukket — vinduet er lige lukket';
+      else headline = closedKnown && settledAt != null ? 'Slukket — starter ved næste tjek' : 'Slukket — vinduet er lige lukket';
     }
-    let detail = 'Vindue lukket · venter på, at luften falder til ro';
+    const closedTxt = closedKnown ? `Vindue lukket kl.${NB}${hhmm(closedAt)}` : 'Vindue lukket';
+    let detail = `${closedTxt} · venter, så luften kan falde til ro`;
     if (delayMin != null) {
       detail = off
-        ? `Vindue lukket · luften falder til ro i ${fmtMins(delayMin)}`
+        ? `${closedTxt} · venter ${fmtMins(delayMin)}, så luften kan falde til ro`
         : `Ventetid på ${fmtMins(delayMin)}${leftTxt ? ` · tidsplanen følges igen om ${leftTxt}` : ''}`;
     }
     return out({
@@ -418,12 +427,12 @@ export function explainHeating({
       const resumeAt = closedSince + delayS * 1000;
       const left = minsBetween(now, resumeAt);
       if (left > 0) {
-        const leftTxt = fmtMins(Math.ceil(left));
+        const leftTxt = fmtLeft(now, resumeAt);
         return out({
           state: 'settle', tone: 'warn', icon: 'hourglass',
           headline: off ? `Slukket — starter om ${leftTxt} (≈${NB}${hhmm(resumeAt)})` : 'Vindue lukket — varmer stadig',
           detail: off
-            ? `Vindue lukket · luften falder til ro i ${fmtMins(delayMin)}`
+            ? `Vindue lukket kl.${NB}${hhmm(closedSince)} · venter ${fmtMins(delayMin)}, så luften kan falde til ro`
             : `Ventetid · tidsplanen følges igen om ${leftTxt} (≈${NB}${hhmm(resumeAt)})`,
           progress: { from: closedSince, to: resumeAt },
           heatingOff: off, resumeAt: off ? resumeAt : null,
@@ -435,7 +444,7 @@ export function explainHeating({
       return out({
         state: 'settle_due', tone: retry ? 'bad' : 'warn', icon: 'hourglass',
         headline,
-        detail: retry ? retryDetail : `Luften faldt til ro ${hhmm(resumeAt)} · scriptet tjekker med ${fmtMins(SCRIPT_INTERVAL_MIN)} mellemrum`,
+        detail: retry ? retryDetail : `Luften faldt til ro kl.${NB}${hhmm(resumeAt)} · varmen starter inden for ${fmtMins(SCRIPT_INTERVAL_MIN)}`,
         progress: { from: closedSince, to: resumeAt },
         heatingOff: off, resumeAt: off ? now : null,
         tag: { tone: retry ? 'bad' : 'warn', icon: 'hourglass', text: retry ? 'Prøver igen' : 'Starter' },

@@ -125,6 +125,15 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.6.6** (2026-11-22) — Varme: after a window closes, "Slukket — starter om 6:42" counts down by
+  the second, as on Lys (it moved per minute). The line below says when the window closed and how
+  long the wait is ("Vindue lukket kl. 21:11 · venter 30 min, så luften kan falde til ro"), so the
+  fixed 30 min no longer reads as a counter that stands still. No countdown while the sensor's
+  close time is unknown.
+  Varme and Lys: the countdown bars show the time left. They start full and shrink to the left
+  (they grew to the right with the time gone).
+  The UI no longer mentions a script: "varmestyringen" where the heating has gone quiet, "varmen
+  starter inden for 5 min" after the wait, "automatikken" on Lys.
 - **2.6.5** (2026-11-20) — Lys: every room whose lights switch off by themselves counts down to
   it, as the flows do it: Stue, Soveværelse, Olivers værelse (30 min) and Claras værelse (20 min)
   while it is light (not Mørkt); Køkken dims after 3 min in the dark and fades off after 30 min in
