@@ -16,6 +16,21 @@ Room Heating was created 2025-12-31 by Henrik Skovgaard, based on Clara Heating 
 
 `room_heating.js`
 
+### 10.32.0 — 2026-11-24 — ⏳ Staging: all radiators join when the primary alone falls short
+
+- New `heating.staging.escalateAfter` (minutes, default 30). When the primary radiator alone has
+  been below the hysteresis range that long, all radiators run until the room reaches the target
+  itself; then the primary runs alone again.
+- Why: on a cold day the primary alone may hold the room only between target -band and the lower
+  edge (e.g. ~21.5°C for 22°C). The second radiator never came on, so the room stayed about 0.5°C
+  under the target.
+- The timer starts below the range and resets only at the target, on a new target or when the
+  radiators were off, so one noisy reading above the lower edge does not restart it. State fields
+  `stagingBelowSince`, `stagingBelowTarget`, `stagingBoosted`.
+- HeatingStatus `radiators` gets `escalateAt` (when all join if still below) and `boosted`.
+- Files modified: room_heating.js (v10.32.0), room_heating_config.js (v1.10.0),
+  room_heating_status.js (v5.2.0), test/harness.mjs (9 time-limit scenarios)
+
 ### 10.31.0 — 2026-11-24 — 🌡️ Smart plug radiators in steps (staging)
 
 - New optional `heating.staging: { primary, band }` for smart plug rooms. Near the target only the
@@ -1199,6 +1214,13 @@ All five fixes ensure smart plugs have fresh baseline after any mode transition
 
 `room_heating_status.js`
 
+### 5.2.0 — 2026-11-24 — ⏳ Show the staging time limit
+
+- Shows the time limit, and from the heating script's live status when all radiators join
+  ("join at 10:10 if still below", "as soon as the room is below ...") or that they run until
+  the target because the primary alone fell short.
+- Files modified: room_heating_status.js (v5.2.0)
+
 ### 5.1.0 — 2026-11-24 — 🌡️ Show radiator staging
 
 - Smart plug rooms with `heating.staging` show the threshold below which all radiators run,
@@ -1411,6 +1433,13 @@ All five fixes ensure smart plugs have fresh baseline after any mode transition
 ## Room Heating Config
 
 `room_heating_config.js`
+
+### 1.10.0 — 2026-11-24 — ⏳ Clara: second radiator after 30 min short of the target
+
+- Clara's staging gets `escalateAfter: 30`: when C Radiator 1 alone has been below the range for
+  30 minutes, both run until the room reaches the target.
+- Validation: `escalateAfter`, when given, must be a number of minutes above 0.
+- Files modified: room_heating_config.js (v1.10.0)
 
 ### 1.9.0 — 2026-11-24 — 🌡️ Clara: radiators in steps
 

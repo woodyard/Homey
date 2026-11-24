@@ -5,7 +5,7 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 5.1.0
+ * Version: 5.2.0
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
@@ -250,6 +250,14 @@ async function showRoomStatus(roomName, roomConfig) {
         const staging = roomConfig.heating.staging;
         if (staging) {
             log(`Staging:       ${staging.primary} alone near the target, all radiators below ${(target - staging.band).toFixed(2)}°C`);
+            log(`               or after ${staging.escalateAfter ?? 30} min with ${staging.primary} alone below ${targetLow.toFixed(2)}°C`);
+            if (hs?.radiators?.boosted) {
+                log(`               → all radiators on until ${target}°C (${staging.primary} alone fell short)`);
+            } else if (hs?.radiators?.escalateAt) {
+                log(hs.radiators.escalateAt > Date.now()
+                    ? `               → all radiators join at ${formatTimestamp(hs.radiators.escalateAt).slice(11)} if still below`
+                    : `               → all radiators join as soon as the room is below ${targetLow.toFixed(2)}°C`);
+            }
         }
     }
     

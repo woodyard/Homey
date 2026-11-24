@@ -219,6 +219,26 @@ const scenarios = {
   clara_stage_boost_near: { args: ['Clara', 'boost'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 24.5; } },
   // A dashboard target of 22 at 21.5 → primary alone
   clara_stage_target_near: { args: ['Clara', 'target'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 21.5; logicVars.v4 = targetRequest(22); setState(CL, {}); } },
+  // Staging time limit (config 1.10.0, escalateAfter 30): Saturday 10:00, target 22, lower edge 21.75.
+  // [name, temp, radiators on, state patch]
+  ...Object.fromEntries([
+    ['clara_esc_timer_starts', 21.5, ['rad1'], {}],                                                        // primary alone below range → timer starts
+    ['clara_esc_timer_running', 21.5, ['rad1'], { stagingBelowSince: -20, stagingBelowTarget: 22 }],      // 20 of 30 min → no change
+    ['clara_esc_fires', 21.5, ['rad1'], { stagingBelowSince: -31, stagingBelowTarget: 22 }],              // 31 min → all radiators
+    ['clara_esc_boosted_holds', 21.9, ['rad1', 'rad2'], { stagingBoosted: true, stagingBelowTarget: 22 }], // in range, below target → both stay
+    ['clara_esc_boosted_reaches_target', 22.05, ['rad1', 'rad2'], { stagingBoosted: true, stagingBelowTarget: 22 }], // at target → primary alone
+    ['clara_esc_timer_kept_in_range', 21.9, ['rad1'], { stagingBelowSince: -40, stagingBelowTarget: 22 }], // above the edge: no escalation, timer kept
+    ['clara_esc_timer_reset_at_target', 22.0, ['rad1'], { stagingBelowSince: -40, stagingBelowTarget: 22 }], // at target → timer reset
+    ['clara_esc_new_target', 21.5, ['rad1'], { stagingBelowSince: -40, stagingBelowTarget: 21 }],         // another target → timer restarts
+    ['clara_esc_after_off', 21.5, [], { stagingBelowSince: -40, stagingBelowTarget: 22 }],                // radiators were off → timer restarts
+  ].map(([name, temp, on, patch]) => [name, { args: ['Clara'], setup: () => {
+    NOW_MS = new RealDate('2026-01-24T09:00:00Z').getTime();
+    devices.cmotion.capabilitiesObj.measure_temperature.value = temp;
+    for (const id of on) devices[id].capabilitiesObj.onoff.value = true;
+    const state = { ...patch };
+    if (typeof state.stagingBelowSince === 'number') state.stagingBelowSince = NOW_MS + state.stagingBelowSince * 60000;
+    setState(CL, state);
+  } }])),
   // Without staging in the config both radiators switch together, as before
   clara_stage_disabled: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-24T09:00:00Z').getTime(); const rooms = JSON.parse(globalApi.get('Config.Rooms')); delete rooms.Clara.heating.staging; globalApi.set('Config.Rooms', JSON.stringify(rooms)); devices.cmotion.capabilitiesObj.measure_temperature.value = 21.5; setState(CL, {}); } },
   // Optional friday schedule (config 1.7.0; Fri 2026-01-23): before 14:00 as a school day, then 22/20 to 21:00, then lateEvening 20

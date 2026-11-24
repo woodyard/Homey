@@ -31,7 +31,7 @@
  * - One run per room at a time (run lock); requests wait, normal runs skip
  *
  * Author: Henrik Skovgaard
- * Version: 10.31.0
+ * Version: 10.32.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
@@ -174,8 +174,9 @@ const STAGING = await (async () => {
     }
     const hysteresis = ROOM.heating.hysteresis || 0.5;
     const band = Math.max(staging.band || 0, hysteresis / 2);
-    log(`🔌 Staging: ${staging.primary} alone near the target, all ${ROOM.heating.devices.length} below target -${band}°C`);
-    return { primaryId, primaryName: staging.primary, band };
+    const escalateAfter = staging.escalateAfter ?? 30;
+    log(`🔌 Staging: ${staging.primary} alone near the target, all ${ROOM.heating.devices.length} below target -${band}°C or after ${escalateAfter} min alone below the range`);
+    return { primaryId, primaryName: staging.primary, band, escalateAfter };
 })();
 
 // Check for boost/pause/cancel request
@@ -324,6 +325,10 @@ const DEFAULT_STATE = {
     },
 
     inactive: false,              // room inactivity mode active
+
+    stagingBelowSince: null,      // staging: when the primary alone was first below the range
+    stagingBelowTarget: null,     // staging: the target that timer runs against (a new target restarts it)
+    stagingBoosted: false,        // staging: all radiators on because the primary alone fell short
 
     heatingSince: null,           // when the runs first saw the heating on (cleared when off)
     sensorStaleSince: null,       // when the room sensor was declared silent (null = reporting)
@@ -1388,6 +1393,57 @@ function plugStage(roomTemp, target, current) {
     return current === 2 ? 1 : current;
 }
 
+/**
+ * Smart plugs: plugStage plus the staging time limit. When the primary radiator alone has
+ * been below the range for escalateAfter minutes, all radiators join and stay on until the
+ * room reaches the target itself; then the primary runs alone again. The timer starts below
+ * the range and only resets at the target (or a new target, or the radiators going off), so
+ * one noisy reading above the lower edge does not restart it.
+ * @returns {number} 0, 1 or 2
+ */
+function decideStage(roomTemp, target, current) {
+    let stage = plugStage(roomTemp, target, current);
+    if (!STAGING) return stage;
+
+    const s = roomState;
+    const before = JSON.stringify([s.stagingBelowSince, s.stagingBelowTarget, s.stagingBoosted]);
+    const now = Date.now();
+    const targetLow = target - ((ROOM.heating.hysteresis || 0.5) / 2);
+
+    if (current === 0 || s.stagingBelowTarget !== target) {
+        s.stagingBelowSince = null;
+        s.stagingBoosted = false;
+    }
+    s.stagingBelowTarget = target;
+
+    if (s.stagingBoosted && current === 2 && stage === 1 && roomTemp < target) {
+        stage = 2;
+        log(`⏳ All radiators stay on until ${target}°C (the primary alone fell short)`);
+    } else if (stage !== 2) {
+        s.stagingBoosted = false;
+    }
+
+    if (stage === 1 && roomTemp < targetLow) {
+        s.stagingBelowSince = s.stagingBelowSince ?? now;
+        const minutes = (now - s.stagingBelowSince) / 60000;
+        if (minutes >= STAGING.escalateAfter) {
+            log(`⏳ ${STAGING.primaryName} alone below ${targetLow}°C for ${Math.round(minutes)} min → all radiators until ${target}°C`);
+            stage = 2;
+            s.stagingBoosted = true;
+            s.stagingBelowSince = null;
+        } else {
+            log(`⏳ ${STAGING.primaryName} alone below ${targetLow}°C for ${Math.round(minutes)} of ${STAGING.escalateAfter} min`);
+        }
+    }
+    if (stage === 0 || roomTemp >= target || (stage === 2 && !s.stagingBoosted)) {
+        s.stagingBelowSince = null;
+    }
+    if (stage === 0) s.stagingBoosted = false;
+
+    if (JSON.stringify([s.stagingBelowSince, s.stagingBelowTarget, s.stagingBoosted]) !== before) saveRoomState(s);
+    return stage;
+}
+
 function stageLabel(stage) {
     if (stage === 0) return 'OFF';
     if (stage === 1) return `${STAGING.primaryName} only`;
@@ -1442,7 +1498,7 @@ async function setRadiators(stage) {
 async function holdPlugTarget(roomTemp, target, label, current = null) {
     const hysteresis = ROOM.heating.hysteresis || 0.5;
     const previous = current ?? (await getRadiatorStage()).stage;
-    const stage = plugStage(roomTemp, target, previous);
+    const stage = decideStage(roomTemp, target, previous);
     const stagingNote = STAGING ? `, all below ${target - STAGING.band}°C` : '';
     log(`Smart plug mode: Room ${roomTemp}°C, ${label} range ${target - hysteresis / 2}-${target + hysteresis / 2}°C${stagingNote} → ${stageLabel(stage)}`);
     const result = await setRadiators(stage);
@@ -2112,7 +2168,7 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
             if (STAGING) log(`Staging: all radiators below ${effectiveTarget - STAGING.band}°C, ${STAGING.primaryName} alone up to ${targetHigh}°C`);
 
             const { stage: current, exact } = await getRadiatorStage();
-            const stage = plugStage(roomTemp, effectiveTarget, current);
+            const stage = decideStage(roomTemp, effectiveTarget, current);
 
             if (stage === current && exact) {
                 log(stage === 0 ? `✓ Heating already off` : `✓ Heating already on (${stageLabel(stage)})`);
@@ -2258,10 +2314,17 @@ async function logDiagnostics(now, roomTemp, slot, action, override = false) {
             effectiveTarget,
             currentTemp: (typeof roomTemp === 'number') ? roomTemp : null,
             heating: !!heatingOn,
-            // Smart plugs: how many radiators are on; primary is set when they run in steps
+            // Smart plugs: how many radiators are on; primary is set when they run in steps.
+            // escalateAt: when all radiators join if the primary alone stays below the range;
+            // boosted: all are on because the primary alone fell short (until the target)
             radiators: ROOM.heating.type === 'smart_plug' ? await (async () => {
                 const { on, total } = await getRadiatorStage();
-                return { on, total, primary: STAGING ? STAGING.primaryName : null };
+                return {
+                    on, total,
+                    primary: STAGING ? STAGING.primaryName : null,
+                    escalateAt: STAGING && roomState.stagingBelowSince ? roomState.stagingBelowSince + STAGING.escalateAfter * 60000 : null,
+                    boosted: !!(STAGING && roomState.stagingBoosted)
+                };
             })() : null,
             windowOpen: !!windowOpen,
             // Window timestamps after this run's window logic (epoch ms): openSince while the window

@@ -11,7 +11,7 @@
  *   3. Heating and status scripts automatically use the saved config
  *
  * Author: Henrik Skovgaard
- * Version: 1.9.0
+ * Version: 1.10.0
  * Created: 2025-12-31
  *
  * Version history: CHANGELOG.md
@@ -30,8 +30,10 @@ const ROOMS = {
             // Two radiators in steps: near the target only the primary one runs; both run when
             // the room is more than `band` °C below the target, until it is back at the lower
             // hysteresis edge. C Radiator 1 (about 1000 W, under the window) is the larger one.
+            // escalateAfter: when the primary alone has been below the range this many minutes
+            // (cold days), both run until the room reaches the target itself.
             // Remove `staging` to switch both radiators together again.
-            staging: { primary: 'C Radiator 1', band: 0.8 }
+            staging: { primary: 'C Radiator 1', band: 0.8, escalateAfter: 30 }
         },
         schedules: {
             // School days: Clara is away at efterskole Mon-Fri (2026/27), so the room holds 17.
@@ -270,6 +272,9 @@ for (const [roomName, room] of Object.entries(ROOMS)) {
         if (typeof staging?.band !== 'number' || staging.band <= hysteresis / 2) {
             errors.push(`${roomName}: heating.staging.band must be a number above half the hysteresis (${hysteresis / 2})`);
         }
+        if (staging?.escalateAfter !== undefined && !(typeof staging.escalateAfter === 'number' && staging.escalateAfter > 0)) {
+            errors.push(`${roomName}: heating.staging.escalateAfter must be a number of minutes above 0`);
+        }
     }
 
     const settings = room.settings || {};
@@ -376,7 +381,7 @@ for (const [roomName, roomConfig] of Object.entries(ROOMS)) {
     log(`   Zone: ${roomConfig.zoneName}`);
     log(`   Type: ${roomConfig.heating.type}`);
     if (roomConfig.heating.staging) {
-        log(`   Staging: ${roomConfig.heating.staging.primary} alone near the target, all radiators below target -${roomConfig.heating.staging.band}°C`);
+        log(`   Staging: ${roomConfig.heating.staging.primary} alone near the target, all radiators below target -${roomConfig.heating.staging.band}°C or after ${roomConfig.heating.staging.escalateAfter ?? 30} min alone below the range`);
     }
     log(`   Weekday target: ${roomConfig.schedules.weekday.find(s => s.name === 'Day')?.target}°C`);
     log(`   Weekend target: ${roomConfig.schedules.weekend.find(s => s.name === 'Day')?.target}°C`);
