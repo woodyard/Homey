@@ -195,6 +195,32 @@ const scenarios = {
   clara_evening: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-21T19:30:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; setState(CL, {}); } },
   clara_evening_weekend_tomorrow: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-23T19:30:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; setState(CL, {}); } },
   clara_weekend: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-24T09:00:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 22.0; setState(CL, {}); } },
+  // Staging (config 1.9.0): Saturday 10:00, target 22, range 21.75-22.25, both radiators below 21.2.
+  // C Radiator 1 is the primary. stage(temp, radiators on before) → radiators on after.
+  ...Object.fromEntries([
+    ['clara_stage_cold_from_off', 20.5, []],                 // far below → both
+    ['clara_stage_near_from_off', 21.5, []],                 // below range, above band → primary alone
+    ['clara_stage_in_range_off', 22.0, []],                  // in range, off → stays off
+    ['clara_stage_both_below_range', 21.5, ['rad1', 'rad2']], // both on, not at range yet → both stay
+    ['clara_stage_both_reach_range', 21.8, ['rad1', 'rad2']], // both on, at range → primary alone
+    ['clara_stage_primary_holds', 22.0, ['rad1']],           // primary in range → no change
+    ['clara_stage_primary_below_range', 21.5, ['rad1']],     // primary below range, above band → stays alone
+    ['clara_stage_primary_falls', 21.1, ['rad1']],           // primary alone not enough → both
+    ['clara_stage_primary_off', 22.3, ['rad1']],             // above range → off
+    ['clara_stage_both_off', 22.3, ['rad1', 'rad2']],        // above range → off
+    ['clara_stage_mixed', 22.0, ['rad2']],                   // secondary alone → primary alone
+  ].map(([name, temp, on]) => [name, { args: ['Clara'], setup: () => {
+    NOW_MS = new RealDate('2026-01-24T09:00:00Z').getTime();
+    devices.cmotion.capabilitiesObj.measure_temperature.value = temp;
+    for (const id of on) devices[id].capabilitiesObj.onoff.value = true;
+    setState(CL, {});
+  } }])),
+  // Boost 25 with staging: 24.5 is below the range (24.75) but above 24.2 → primary alone
+  clara_stage_boost_near: { args: ['Clara', 'boost'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 24.5; } },
+  // A dashboard target of 22 at 21.5 → primary alone
+  clara_stage_target_near: { args: ['Clara', 'target'], setup: () => { devices.cmotion.capabilitiesObj.measure_temperature.value = 21.5; logicVars.v4 = targetRequest(22); setState(CL, {}); } },
+  // Without staging in the config both radiators switch together, as before
+  clara_stage_disabled: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-24T09:00:00Z').getTime(); const rooms = JSON.parse(globalApi.get('Config.Rooms')); delete rooms.Clara.heating.staging; globalApi.set('Config.Rooms', JSON.stringify(rooms)); devices.cmotion.capabilitiesObj.measure_temperature.value = 21.5; setState(CL, {}); } },
   // Optional friday schedule (config 1.7.0; Fri 2026-01-23): before 14:00 as a school day, then 22/20 to 21:00, then lateEvening 20
   clara_friday_morning: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-23T09:00:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 18.0; setState(CL, {}); } },
   clara_friday_home: { args: ['Clara'], setup: () => { NOW_MS = new RealDate('2026-01-23T16:00:00Z').getTime(); devices.cmotion.capabilitiesObj.measure_temperature.value = 21.0; setState(CL, {}); } },

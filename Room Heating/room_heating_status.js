@@ -5,7 +5,7 @@
  * Just run the script - it loops through all rooms in ROOMS config.
  *
  * Author: Henrik Skovgaard
- * Version: 5.0.2
+ * Version: 5.1.0
  * Created: 2025-12-31
  * Based on: Clara Status v2.8.0
  *
@@ -247,6 +247,10 @@ async function showRoomStatus(roomName, roomConfig) {
         const targetHigh = target + (hysteresis / 2);
         log(`Hysteresis:    ±${(hysteresis/2).toFixed(2)}°C`);
         log(`Range:         ${targetLow.toFixed(2)}-${targetHigh.toFixed(2)}°C`);
+        const staging = roomConfig.heating.staging;
+        if (staging) {
+            log(`Staging:       ${staging.primary} alone near the target, all radiators below ${(target - staging.band).toFixed(2)}°C`);
+        }
     }
     
     // Manual Override Mode Status
@@ -402,7 +406,9 @@ async function showRoomStatus(roomName, roomConfig) {
             if (roomConfig.heating.type === 'smart_plug') {
                 // Check if any radiator is on
                 const anyOn = devices.heatingDevices.some(r => r.capabilitiesObj.onoff.value);
-                log(`Heating:        ${anyOn ? '🔥 ON' : '❄️ OFF'}`);
+                const onCount = devices.heatingDevices.filter(r => r.capabilitiesObj.onoff.value).length;
+                const total = devices.heatingDevices.length;
+                log(`Heating:        ${anyOn ? '🔥 ON' : '❄️ OFF'}${anyOn && total > 1 ? ` (${onCount} of ${total} radiators)` : ''}`);
             } else if (roomConfig.heating.type === 'tado_valve') {
                 const tado = devices.heatingDevices[0];
                 const targetTemp = tado.capabilitiesObj.target_temperature?.value;
@@ -456,7 +462,8 @@ async function showRoomStatus(roomName, roomConfig) {
                 log(`Heating:        ${devices.heatingDevices.length} radiators`);
                 devices.heatingDevices.forEach(h => {
                     const isOn = h.capabilitiesObj.onoff.value;
-                    log(`                - ${h.name} (${isOn ? '🔥 ON' : '❄️ OFF'})`);
+                    const primary = roomConfig.heating.staging?.primary === h.name ? ', primary' : '';
+                    log(`                - ${h.name} (${isOn ? '🔥 ON' : '❄️ OFF'}${primary})`);
                 });
             }
         } else if (roomConfig.heating.type === 'tado_valve') {

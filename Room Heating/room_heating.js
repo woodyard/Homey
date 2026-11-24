@@ -31,7 +31,7 @@
  * - One run per room at a time (run lock); requests wait, normal runs skip
  *
  * Author: Henrik Skovgaard
- * Version: 10.30.0
+ * Version: 10.31.0
  * Created: 2025-12-31
  * Based on: Clara Heating v6.4.6
  *
@@ -159,6 +159,24 @@ async function discoverHeatingDevices() {
 }
 
 ROOM.heating.devices = await discoverHeatingDevices();
+
+// Smart plugs in steps (heating.staging): near the target only the primary radiator runs.
+// Staging needs the primary among this zone's radiators and at least one other; without
+// that every radiator switches together, as before.
+const STAGING = await (async () => {
+    const staging = ROOM.heating.staging;
+    if (ROOM.heating.type !== 'smart_plug' || !staging) return null;
+    const allDevices = await getAllDevices();
+    const primaryId = ROOM.heating.devices.find(id => allDevices[id]?.name === staging.primary);
+    if (!primaryId || ROOM.heating.devices.length < 2) {
+        log(`⚠️  Staging off: "${staging.primary}" is not one of two or more radiators in ${ROOM.zoneName}`);
+        return null;
+    }
+    const hysteresis = ROOM.heating.hysteresis || 0.5;
+    const band = Math.max(staging.band || 0, hysteresis / 2);
+    log(`🔌 Staging: ${staging.primary} alone near the target, all ${ROOM.heating.devices.length} below target -${band}°C`);
+    return { primaryId, primaryName: staging.primary, band };
+})();
 
 // Check for boost/pause/cancel request
 const requestBoost = boostArg === 'boost';
@@ -821,15 +839,8 @@ async function controlOverrideMode(mode, roomTemp) {
 
         // Radiators on until the room reaches the boost temperature, with the room's
         // hysteresis around it, so an hour of boost cannot overheat the room
-        const hysteresis = ROOM.heating.hysteresis || 0.5;
-        const targetLow = BOOST_TEMPERATURE - (hysteresis / 2);
-        const targetHigh = BOOST_TEMPERATURE + (hysteresis / 2);
-        const heatingOn = await getHeatingStatus();
-        const radiatorsOn = roomTemp < targetLow ? true : roomTemp > targetHigh ? false : heatingOn;
-
-        log(`Smart plug mode: Room ${roomTemp}°C, boost range ${targetLow}-${targetHigh}°C → radiators ${radiatorsOn ? 'ON' : 'OFF'}`);
-        await setHeating(radiatorsOn, BOOST_TEMPERATURE);
-        return radiatorsOn ? 'boost_heating' : 'boost_at_target';
+        const { stage } = await holdPlugTarget(roomTemp, BOOST_TEMPERATURE, 'boost');
+        return stage > 0 ? 'boost_heating' : 'boost_at_target';
     } else if (ROOM.heating.type === 'tado_valve') {
         log(turnOn ? `TADO mode: Setting to ${BOOST_TEMPERATURE}°C boost temperature` : `TADO mode: Turning OFF completely`);
         const result = await setHeating(turnOn, BOOST_TEMPERATURE);
@@ -880,15 +891,8 @@ async function resumeNormalHeating(slot, fromExpiry, modeType) {
             return false;
         }
 
-        const hysteresis = ROOM.heating.hysteresis || 0.5;
-        const targetLow = resumeTarget - (hysteresis / 2);
-        const targetHigh = resumeTarget + (hysteresis / 2);
-        const shouldTurnOn = roomTemp < targetLow;
-
-        log(`Room: ${roomTemp}°C, Target range: ${targetLow}-${targetHigh}°C`);
-        log(`Resume state: ${shouldTurnOn ? 'ON' : 'OFF'}`);
-
-        const result = await setHeating(shouldTurnOn, resumeTarget);
+        // Restart from "off": on only below the range
+        const result = await holdPlugTarget(roomTemp, resumeTarget, 'resume', 0);
         return result.success;
     } else if (ROOM.heating.type === 'tado_valve') {
         log(`TADO mode: Resuming with target ${resumeTarget}°C`);
@@ -1031,15 +1035,8 @@ async function holdManualTarget(roomTempObj) {
         return 'manual_window_off';
     }
 
-    const hysteresis = ROOM.heating.hysteresis || 0.5;
-    const targetLow = target - (hysteresis / 2);
-    const targetHigh = target + (hysteresis / 2);
-    const heatingOn = await getHeatingStatus();
-    const radiatorsOn = roomTemp < targetLow ? true : roomTemp > targetHigh ? false : heatingOn;
-
-    log(`Smart plug mode: Room ${roomTemp}°C, manual range ${targetLow}-${targetHigh}°C → radiators ${radiatorsOn ? 'ON' : 'OFF'}`);
-    await setHeating(radiatorsOn, target);
-    return radiatorsOn ? 'manual_heating' : 'manual_at_target';
+    const { stage } = await holdPlugTarget(roomTemp, target, 'manual');
+    return stage > 0 ? 'manual_heating' : 'manual_at_target';
 }
 
 const TARGET_REQUEST_VARIABLE = 'HeatingTargetRequest';
@@ -1342,6 +1339,117 @@ async function getHeatingStatus() {
 }
 
 /**
+ * Smart plugs: which step the radiators are in. 0 = all off, 1 = the primary alone
+ * (staging), 2 = all on. Without staging any radiator on counts as 2, as before.
+ * @returns {Promise<{ stage: number, exact: boolean, on: number, total: number }>}
+ *   exact - false when the plugs match no step (staging: a mix other than the primary
+ *   alone); the next decision then sends commands even if the step stays the same
+ */
+async function getRadiatorStage() {
+    let on = 0;
+    let primaryOn = false;
+    for (const deviceId of ROOM.heating.devices) {
+        try {
+            const device = await Homey.devices.getDevice({ id: deviceId });
+            if (device.capabilitiesObj?.onoff?.value) {
+                on++;
+                if (STAGING && deviceId === STAGING.primaryId) primaryOn = true;
+            }
+        } catch (error) {
+            log(`⚠️  Error reading heating device ${deviceId}: ${error.message}`);
+        }
+    }
+    const total = ROOM.heating.devices.length;
+    if (!STAGING) return { stage: on > 0 ? 2 : 0, exact: true, on, total };
+    if (on === 0) return { stage: 0, exact: true, on, total };
+    if (on === total) return { stage: 2, exact: true, on, total };
+    return { stage: 1, exact: on === 1 && primaryOn, on, total };
+}
+
+/**
+ * Smart plugs: the step the room needs, from the temperature and the step it is in.
+ * Above the hysteresis range: off. Without staging: on below the range, unchanged inside it.
+ * With staging: all radiators below target - band; below the range the primary starts alone
+ * (all stay on until the room reaches the range); inside the range all-on drops to the primary.
+ * @param {number} roomTemp
+ * @param {number} target
+ * @param {number} current - 0, 1 or 2 (getRadiatorStage)
+ * @returns {number} 0, 1 or 2
+ */
+function plugStage(roomTemp, target, current) {
+    const hysteresis = ROOM.heating.hysteresis || 0.5;
+    const targetLow = target - (hysteresis / 2);
+    const targetHigh = target + (hysteresis / 2);
+
+    if (roomTemp > targetHigh) return 0;
+    if (!STAGING) return roomTemp < targetLow ? 2 : current;
+    if (roomTemp < target - STAGING.band) return 2;
+    if (roomTemp < targetLow) return current === 2 ? 2 : 1;
+    return current === 2 ? 1 : current;
+}
+
+function stageLabel(stage) {
+    if (stage === 0) return 'OFF';
+    if (stage === 1) return `${STAGING.primaryName} only`;
+    return STAGING ? 'all radiators' : 'ON';
+}
+
+/**
+ * Smart plugs: put the radiators in a step (0 off, 1 the primary alone, 2 all on).
+ * Commands are only sent to plugs not already in the wanted state.
+ * @returns {Promise<{ success: boolean, changed: boolean }>}
+ */
+async function setRadiators(stage) {
+    let allOk = true;
+    let anyChanged = false;
+
+    for (const deviceId of ROOM.heating.devices) {
+        const turnOn = stage === 2 || (stage === 1 && (!STAGING || deviceId === STAGING.primaryId));
+        const onOff = turnOn ? 'ON' : 'OFF';
+        try {
+            const device = await Homey.devices.getDevice({ id: deviceId });
+
+            if (device.capabilitiesObj.onoff.value === turnOn) {
+                log(`✓ Smart plug ${device.name} already ${onOff}`);
+                continue;
+            }
+
+            const result = await sendCommand(device, 'onoff', turnOn);
+            if (result.success) {
+                anyChanged = true;
+                log(result.verified
+                    ? `🔌 Smart plug ${device.name}: ${onOff} (verified)`
+                    : `⚠️ Smart plug ${device.name}: ${onOff} sent but not verified`);
+            } else {
+                allOk = false;
+                log(`❌ Smart plug ${device.name}: Command failed - ${result.error}`);
+            }
+        } catch (error) {
+            allOk = false;
+            log(`❌ Error controlling radiator ${deviceId}: ${error.message}`);
+        }
+    }
+
+    return { success: allOk, changed: anyChanged };
+}
+
+/**
+ * Smart plugs: decide the step for a target and apply it (boost, manual target).
+ * @param {number|null} current - Step to decide from; null reads it from the plugs.
+ *   Resume passes 0 so the room restarts from "off" (on only below the range).
+ * @returns {Promise<{ stage: number, success: boolean }>}
+ */
+async function holdPlugTarget(roomTemp, target, label, current = null) {
+    const hysteresis = ROOM.heating.hysteresis || 0.5;
+    const previous = current ?? (await getRadiatorStage()).stage;
+    const stage = plugStage(roomTemp, target, previous);
+    const stagingNote = STAGING ? `, all below ${target - STAGING.band}°C` : '';
+    log(`Smart plug mode: Room ${roomTemp}°C, ${label} range ${target - hysteresis / 2}-${target + hysteresis / 2}°C${stagingNote} → ${stageLabel(stage)}`);
+    const result = await setRadiators(stage);
+    return { stage, success: result.success };
+}
+
+/**
  * Apply a heating state. Smart plugs: all radiators ON/OFF. TADO: ON with target, or OFF.
  * Commands are only sent when the device is not already in the requested state.
  * @returns {Promise<{ success: boolean, changed: boolean }>}
@@ -1349,38 +1457,8 @@ async function getHeatingStatus() {
  *   changed - at least one command was sent
  */
 async function setHeating(turnOn, effectiveTarget) {
-    const onOff = turnOn ? 'ON' : 'OFF';
-
     if (ROOM.heating.type === 'smart_plug') {
-        let allOk = true;
-        let anyChanged = false;
-
-        for (const deviceId of ROOM.heating.devices) {
-            try {
-                const device = await Homey.devices.getDevice({ id: deviceId });
-
-                if (device.capabilitiesObj.onoff.value === turnOn) {
-                    log(`✓ Smart plug ${device.name} already ${onOff}`);
-                    continue;
-                }
-
-                const result = await sendCommand(device, 'onoff', turnOn);
-                if (result.success) {
-                    anyChanged = true;
-                    log(result.verified
-                        ? `🔌 Smart plug ${device.name}: ${onOff} (verified)`
-                        : `⚠️ Smart plug ${device.name}: ${onOff} sent but not verified`);
-                } else {
-                    allOk = false;
-                    log(`❌ Smart plug ${device.name}: Command failed - ${result.error}`);
-                }
-            } catch (error) {
-                allOk = false;
-                log(`❌ Error controlling radiator ${deviceId}: ${error.message}`);
-            }
-        }
-
-        return { success: allOk, changed: anyChanged };
+        return setRadiators(turnOn ? 2 : 0);
 
     } else if (ROOM.heating.type === 'tado_valve') {
         try {
@@ -2031,31 +2109,30 @@ async function controlHeating(roomTempObj, slot, windowOpen) {
             const targetHigh = effectiveTarget + (hysteresis / 2);
             
             log(`Smart plug hysteresis: ${effectiveTarget}°C ±${hysteresis/2}°C = ${targetLow}-${targetHigh}°C`);
-            
-            if (roomTemp < targetLow) {
-                if (!heatingOn) {
-                    await setHeating(true, effectiveTarget);
-                    log(`🔥 Heating on (${roomTemp}°C < ${targetLow}°C)`);
-                    addChange("Heat on", ROUTINE);
-                    return 'heating_on';
-                } else {
-                    log(`✓ Heating already on`);
-                    return 'no_change';
-                }
-            } else if (roomTemp > targetHigh) {
-                if (heatingOn) {
-                    await setHeating(false, effectiveTarget);
-                    log(`❄️  Heating off (${roomTemp}°C > ${targetHigh}°C)`);
-                    addChange("Heat off", ROUTINE);
-                    return 'heating_off';
-                } else {
-                    log(`✓ Heating already off`);
-                    return 'no_change';
-                }
-            } else {
-                log(`✓ Temperature OK (${targetLow}-${targetHigh}°C)`);
+            if (STAGING) log(`Staging: all radiators below ${effectiveTarget - STAGING.band}°C, ${STAGING.primaryName} alone up to ${targetHigh}°C`);
+
+            const { stage: current, exact } = await getRadiatorStage();
+            const stage = plugStage(roomTemp, effectiveTarget, current);
+
+            if (stage === current && exact) {
+                log(stage === 0 ? `✓ Heating already off` : `✓ Heating already on (${stageLabel(stage)})`);
                 return 'no_change';
             }
+
+            await setRadiators(stage);
+            if (stage === 0) {
+                log(`❄️  Heating off (${roomTemp}°C > ${targetHigh}°C)`);
+                addChange("Heat off", ROUTINE);
+                return 'heating_off';
+            }
+            if (current === 0) {
+                log(`🔥 Heating on (${roomTemp}°C < ${targetLow}°C): ${stageLabel(stage)}`);
+                addChange("Heat on", ROUTINE);
+                return 'heating_on';
+            }
+            // Between steps while heating: no notification, the room is heating either way
+            log(`🔥 Heating ${stage === 2 ? 'up' : 'down'} to ${stageLabel(stage)} (${roomTemp}°C)`);
+            return stage === 2 ? 'heating_all' : 'heating_primary';
             
         } else if (ROOM.heating.type === 'tado_valve') {
             // TADO valve: Set target temperature if needed
@@ -2181,6 +2258,11 @@ async function logDiagnostics(now, roomTemp, slot, action, override = false) {
             effectiveTarget,
             currentTemp: (typeof roomTemp === 'number') ? roomTemp : null,
             heating: !!heatingOn,
+            // Smart plugs: how many radiators are on; primary is set when they run in steps
+            radiators: ROOM.heating.type === 'smart_plug' ? await (async () => {
+                const { on, total } = await getRadiatorStage();
+                return { on, total, primary: STAGING ? STAGING.primaryName : null };
+            })() : null,
             windowOpen: !!windowOpen,
             // Window timestamps after this run's window logic (epoch ms): openSince while the window
             // is open, closedSince only while the settle delay runs - lets the dashboard count down.
@@ -2201,7 +2283,7 @@ async function logDiagnostics(now, roomTemp, slot, action, override = false) {
         const lastEffectiveTarget = diag.lastEffectiveTarget ?? slot.target;
         const lastRoomTemp = diag.lastTemp;
 
-        const importantActions = ['heating_on', 'heating_off', 'tado_away_off', 'window_closed_waiting'];
+        const importantActions = ['heating_on', 'heating_off', 'heating_primary', 'heating_all', 'tado_away_off', 'window_closed_waiting'];
         const isImportantAction = importantActions.includes(action);
 
         // Window open logging is suppressed until the timeout is reached (window_open_skip = waiting)

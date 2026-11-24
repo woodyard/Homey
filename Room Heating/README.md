@@ -30,6 +30,7 @@ Each room in `ROOMS` has:
 
 - `zoneName`: the Homey zone. Heating devices, temperature sensor, motion and window sensors are discovered in this zone and its child zones.
 - `heating.type`: `smart_plug` or `tado_valve`. Smart plugs also take `hysteresis` (default 0.5).
+- `heating.staging` (smart plugs, optional): `{ primary: '<radiator name>', band: 0.8 }`. Near the target only the primary radiator runs; all radiators run when the room is more than `band` °C below the target, until it is back at the lower hysteresis edge. Without it every radiator switches together.
 - `schedules`: `weekday`, `weekend` and `holiday` slot lists, plus `earlyEvening` (school tomorrow) and `lateEvening` (no school tomorrow). Each slot has `start`, `end`, `target` and `name`.
 - `settings`: room defaults for `tadoAwayMinTemp`, `inactivityTimeout` (minutes), `inactivityOffset` (degrees), `windowOpenTimeout` (seconds), `windowClosedDelay` (seconds) and `manualOverrideDuration` (minutes). Optional `sensorStaleMinutes` (default 60): how long the heating may run without a single report from the room temperature sensor before the sensor counts as silent.
 - `tadoAwayMinTemp` is the target while away applies to the room, unless the schedule already asks for less: away never raises a target.

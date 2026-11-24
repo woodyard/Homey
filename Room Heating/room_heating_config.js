@@ -11,7 +11,7 @@
  *   3. Heating and status scripts automatically use the saved config
  *
  * Author: Henrik Skovgaard
- * Version: 1.8.0
+ * Version: 1.9.0
  * Created: 2025-12-31
  *
  * Version history: CHANGELOG.md
@@ -26,7 +26,12 @@ const ROOMS = {
         zoneName: 'Claras værelse',
         heating: {
             type: 'smart_plug',
-            hysteresis: 0.5  // ±0.25°C margin around target
+            hysteresis: 0.5,  // ±0.25°C margin around target
+            // Two radiators in steps: near the target only the primary one runs; both run when
+            // the room is more than `band` °C below the target, until it is back at the lower
+            // hysteresis edge. C Radiator 1 (about 1000 W, under the window) is the larger one.
+            // Remove `staging` to switch both radiators together again.
+            staging: { primary: 'C Radiator 1', band: 0.8 }
         },
         schedules: {
             // School days: Clara is away at efterskole Mon-Fri (2026/27), so the room holds 17.
@@ -257,6 +262,15 @@ for (const [roomName, room] of Object.entries(ROOMS)) {
     if (!['smart_plug', 'tado_valve'].includes(room.heating?.type)) {
         errors.push(`${roomName}: heating.type must be 'smart_plug' or 'tado_valve'`);
     }
+    const staging = room.heating?.staging;
+    if (staging !== undefined) {
+        const hysteresis = room.heating.hysteresis || 0.5;
+        if (room.heating.type !== 'smart_plug') errors.push(`${roomName}: heating.staging needs heating.type 'smart_plug'`);
+        if (typeof staging?.primary !== 'string' || !staging.primary) errors.push(`${roomName}: heating.staging.primary must be a radiator's device name`);
+        if (typeof staging?.band !== 'number' || staging.band <= hysteresis / 2) {
+            errors.push(`${roomName}: heating.staging.band must be a number above half the hysteresis (${hysteresis / 2})`);
+        }
+    }
 
     const settings = room.settings || {};
     for (const key of ['inactivityTimeout', 'windowOpenTimeout']) {
@@ -361,6 +375,9 @@ for (const [roomName, roomConfig] of Object.entries(ROOMS)) {
     log(`📍 ${roomName}:`);
     log(`   Zone: ${roomConfig.zoneName}`);
     log(`   Type: ${roomConfig.heating.type}`);
+    if (roomConfig.heating.staging) {
+        log(`   Staging: ${roomConfig.heating.staging.primary} alone near the target, all radiators below target -${roomConfig.heating.staging.band}°C`);
+    }
     log(`   Weekday target: ${roomConfig.schedules.weekday.find(s => s.name === 'Day')?.target}°C`);
     log(`   Weekend target: ${roomConfig.schedules.weekend.find(s => s.name === 'Day')?.target}°C`);
     log(`   TADO away: ${roomConfig.settings.tadoAwayMinTemp}°C`);

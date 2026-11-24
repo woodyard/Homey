@@ -16,6 +16,27 @@ Room Heating was created 2025-12-31 by Henrik Skovgaard, based on Clara Heating 
 
 `room_heating.js`
 
+### 10.31.0 — 2026-11-24 — 🌡️ Smart plug radiators in steps (staging)
+
+- New optional `heating.staging: { primary, band }` for smart plug rooms. Near the target only the
+  primary radiator runs. All radiators run when the room is more than `band` °C below the target,
+  until it is back at the lower hysteresis edge. Above the range everything is off, as before.
+- Why: in Claras værelse both radiators switched together. With both on the room rose about
+  0.03°C/min, and the 5-minute cron let it overshoot the upper edge by up to 0.3°C. One radiator
+  near the target halves the rise rate and with it the overshoot. Warm-up from far below (a
+  schedule change, a cold morning) still uses both.
+- The step decision (`plugStage`) is shared by the normal run, boost, the manual target and resume.
+  Resume restarts from "off", as before. Plugs in a mix that matches no step (only the secondary
+  on) are put right on the next run.
+- Switching between one and all radiators is logged (actions `heating_primary`, `heating_all`,
+  also written to the diagnostics log) but sends no notification; "Heat on"/"Heat off" are unchanged.
+- HeatingStatus gets `radiators: { on, total, primary }` for smart plug rooms (null for TADO rooms),
+  so the dashboard can show how many radiators run.
+- Without `staging`, or when the primary is not one of two or more radiators in the zone, every
+  radiator switches together as before; the offline scenarios without staging are unchanged.
+- Files modified: room_heating.js (v10.31.0), room_heating_config.js (v1.9.0),
+  room_heating_status.js (v5.1.0), test/harness.mjs (14 staging scenarios)
+
 ### 10.30.0 — 2026-11-07 — ✨ TADO away sets every room to away, even after recent activity
 
 - Before: when TADO went away, a room with activity within its inactivityTimeout (30-90 min)
@@ -1178,6 +1199,12 @@ All five fixes ensure smart plugs have fresh baseline after any mode transition
 
 `room_heating_status.js`
 
+### 5.1.0 — 2026-11-24 — 🌡️ Show radiator staging
+
+- Smart plug rooms with `heating.staging` show the threshold below which all radiators run,
+  "ON (1 of 2 radiators)" when only some run, and mark the primary radiator in the device list.
+- Files modified: room_heating_status.js (v5.1.0)
+
 ### 5.0.2 — 2026-11-06 — 🐛 Show a target set from the dashboard
 
 - A manual mode of type 'target' (room_heating.js 10.29.0) printed its original value as
@@ -1384,6 +1411,15 @@ All five fixes ensure smart plugs have fresh baseline after any mode transition
 ## Room Heating Config
 
 `room_heating_config.js`
+
+### 1.9.0 — 2026-11-24 — 🌡️ Clara: radiators in steps
+
+- Clara gets `heating.staging: { primary: 'C Radiator 1', band: 0.8 }`: C Radiator 1 (about
+  1000 W, the larger one, under the window and the desk) runs alone near the target; both run
+  below target -0.8°C. The band is wider than the noise of the C Motion sensor (about 0.5°C
+  between readings), so the second radiator does not chatter.
+- Validation: staging needs a smart plug room, a primary name and a band above half the hysteresis.
+- Files modified: room_heating_config.js (v1.9.0)
 
 ### 1.8.0 — 2026-11-07 — 🌡️ Oliver: same temperatures as Clara at home, every day
 
