@@ -16,7 +16,9 @@ Per-room heating control for Homey, written as HomeyScript. One script controls 
 
 ## How it runs
 
-Each room has an Advanced Flow that runs the script with the room name as argument. Triggers: every 5 minutes, zone active, zone inactive for N minutes, window contact open or closed, TADO presence change, and two countdown timers that fire at the window timeouts. Boost, Pause and Reset flows per room run the script with `<room>, boost`, `<room>, pause` or `<room>, cancel`.
+Each room has an Advanced Flow that runs the script with the room name as argument. Triggers: every 5 minutes, zone active, zone inactive for N minutes, window contact open or closed, TADO presence change, a TADO target temperature change, and two countdown timers that fire at the window timeouts. Boost, Pause and Reset flows per room run the script with `<room>, boost`, `<room>, pause` or `<room>, cancel`.
+
+A TADO room appears twice in Homey: as the tado° app thermostat and as the tado° Home Manager room. The script reads, and the dashboard sets, the Home Manager room. The two apps poll the TADO cloud separately, so the same change can reach them minutes apart. The target change trigger therefore listens to both devices and runs the script after a 10-second delay. A trigger on the tado° app device alone fires before the Home Manager room has the new value, so the manual override waits for the next 5-minute run.
 
 Only one run per room executes at a time, guarded by a `<zoneName>.Heating.RunLock` global. A normal run that finds another in progress exits at once; a boost, pause or cancel request waits for its turn so it is never dropped.
 
