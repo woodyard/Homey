@@ -7,7 +7,8 @@
 //   master switch off → override mode (pause/boost/manual) → silent sensor (plug rooms)
 //   → TADO away without a minimum → window open past the timeout → window open inside
 //   the grace period → settle delay after a long window opening → away minimum
-//   → heating / warm enough / idle.
+//   → heating (plug rooms in steps: one radiator with a countdown to the next, or all until
+//   the target) / warm enough / idle.
 //
 // windowOpenSince / windowClosedSince (epoch ms) are newer fields; without them the
 // explanation falls back to lastAction + settings and gives no countdown.
@@ -133,6 +134,10 @@ export function optimisticMode(entry, actionKey, now) {
  * @param {'tado'|'plug'} p.kind
  * @param {number|null} p.power         tado heating power % (live), null if unknown
  * @param {boolean|null} p.plugOn       any radiator plug on (live), null if unknown
+ * @param {number|null} p.plugsOn       how many radiator plugs are on (live), null if unknown
+ * @param {number|null} p.plugCount     how many radiator plugs the room has
+ * @param {number|null} p.escalateAfter staging: minutes the primary runs alone below the range
+ *   before all radiators join (room config), for the countdown bar
  * @param {number|null} p.temp          room temperature (live), falls back to sc.currentTemp
  * @param {number|null} p.deviceTarget  manual mode target: live tado setpoint, or a plug room's chosen target
  * @param {string|null} p.mode          override for sc.mode (optimistic UI), optional
@@ -149,7 +154,8 @@ export function optimisticMode(entry, actionKey, now) {
  * }}
  */
 export function explainHeating({
-  sc, heatingEnabled, kind = 'tado', power = null, plugOn = null, temp = null, deviceTarget = null,
+  sc, heatingEnabled, kind = 'tado', power = null, plugOn = null, plugsOn = null, plugCount = null, escalateAfter = null,
+  temp = null, deviceTarget = null,
   liveWindow = null, liveClosedAt = null, mode: modeIn, modeExpires: expiresIn, manualMinutes = MODE_MINUTES.manual,
   loading = false, now,
 }) {
@@ -477,9 +483,47 @@ export function explainHeating({
 
   // 9. Heating right now.
   if (heatingNow) {
-    const how = kind === 'tado'
-      ? (num(power) != null ? `Ventil på ${Math.round(power)}%` : 'Ventil åben')
-      : 'Radiatorer tændt';
+    // Plug rooms in steps (staging): one radiator near the target, the other joins when the
+    // first alone stays below the range (radiators.escalateAt) and then runs to the target.
+    const rad = kind === 'plug' ? (sc.radiators || null) : null;
+    const total = num(plugCount) != null ? plugCount : num(rad?.total);
+    const on = num(plugsOn) != null ? plugsOn : num(rad?.on);
+    const partial = total > 1 && on != null && on > 0 && on < total;
+    const allTxt = total === 2 ? 'begge radiatorer' : `alle ${total} radiatorer`;
+    if (rad?.primary && total > 1) {
+      const escAt = num(rad.escalateAt);
+      // The script's lower hysteresis edge (±0.25°), shown with both decimals: 21.75°, not 21.8°
+      const lowEdge = effTarget != null ? Math.round((effTarget - 0.25) * 100) / 100 : null;
+      if (partial && escAt != null && escAt > now) {
+        const from = num(escalateAfter) != null ? escAt - escalateAfter * MIN : null;
+        const leftTxt = fmtLeft(now, escAt);
+        return out({
+          state: 'heating_stage_wait', tone: 'heat', icon: 'flame',
+          headline: `Varmer til ${deg(effTarget)} — ${on} af ${total} radiatorer`,
+          detail: `Den anden tænder om ${leftTxt} (≈${NB}${hhmm(escAt)})${lowEdge != null ? `, hvis rummet stadig er under ${lowEdge}°` : ''}`,
+          progress: from != null && from < escAt ? { from, to: escAt } : null,
+        });
+      }
+      if (partial && escAt != null && t != null && lowEdge != null && t < lowEdge) {
+        return out({
+          state: 'heating_stage_wait', tone: 'heat', icon: 'flame',
+          headline: `Varmer til ${deg(effTarget)} — ${on} af ${total} radiatorer`,
+          detail: `Den anden tænder ved næste tjek · rummet ${deg(t)} er under ${lowEdge}°`,
+        });
+      }
+      if (rad.boosted && on === total) {
+        return out({
+          state: 'heating_stage_boost', tone: 'heat', icon: 'flame',
+          headline: `Varmer til ${deg(effTarget)} — ${allTxt}`,
+          detail: `Én radiator alene nåede ikke op · den anden slukker ved ${deg(effTarget)}`,
+        });
+      }
+    }
+    let how;
+    if (kind === 'tado') how = num(power) != null ? `Ventil på ${Math.round(power)}%` : 'Ventil åben';
+    else if (partial) how = `${on} af ${total} radiatorer tændt`;
+    else if (total > 1 && on === total) how = `${allTxt[0].toUpperCase()}${allTxt.slice(1)} tændt`;
+    else how = 'Radiatorer tændt';
     return out({
       state: 'heating', tone: 'heat', icon: 'flame',
       headline: `Varmer til ${deg(effTarget)}`,

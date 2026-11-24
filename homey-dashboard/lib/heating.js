@@ -9,7 +9,8 @@ export const HEATING_ROOMS = [
   { key: 'Stue', code: 'ST', label: 'Stue', zone: 'Stue / Spisestue', thermostatId: '2ca14bef-8a28-43cc-af70-0d0611f5281f', manualDuration: 90 },
   { key: 'Sovevaerelse', code: 'SV', label: 'Soveværelse', zone: 'Soveværelse', thermostatId: '439be454-0e4e-4835-b51c-a83a1d78e9f1', manualDuration: 90 },
   { key: 'Oliver', code: 'O', label: 'Olivers værelse', zone: 'Olivers værelse', thermostatId: 'eee3d502-3cac-41b6-8c02-a55ad2380e77', manualDuration: 90 },
-  { key: 'Clara', code: 'C', label: 'Claras værelse', zone: 'Claras værelse', plugIds: ['bd2ddb09-f0f8-49be-8d3e-011d65a9fdd1', '577bbf99-0934-4495-85b6-c80747ab617d'], manualDuration: 90, targetFlow: 'C - Heating Target' },
+  // staging mirrors heating.staging: C Radiator 1 alone near the target, both after escalateAfter min below it.
+  { key: 'Clara', code: 'C', label: 'Claras værelse', zone: 'Claras værelse', plugIds: ['bd2ddb09-f0f8-49be-8d3e-011d65a9fdd1', '577bbf99-0934-4495-85b6-c80747ab617d'], manualDuration: 90, targetFlow: 'C - Heating Target', staging: { escalateAfter: 30 } },
 ];
 
 // Target range of the +/- buttons, for valves and plug rooms alike.

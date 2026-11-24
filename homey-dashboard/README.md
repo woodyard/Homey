@@ -125,6 +125,13 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.7.0** (2026-11-24) — Varme: Claras værelse runs its two radiators in steps (room_heating
+  10.32.0). The card shows how many are on: "1 af 2" in the header chip, "1 af 2 radiatorer tændt"
+  below, and a lighter wash than with both on. While one radiator runs alone below the range,
+  "Varmer til 22° — 1 af 2 radiatorer" counts down to when the other joins ("Den anden tænder om
+  11:48 (≈ 21:21), hvis rummet stadig er under 21.75°"), with a bar over the 30 minutes. When both
+  run because one alone fell short: "Varmer til 22° — begge radiatorer · den anden slukker ved 22°".
+  Reads `radiators` from HeatingStatus; `staging.escalateAfter` in lib/heating.js mirrors the config.
 - **2.6.6** (2026-11-22) — Varme: after a window closes, "Slukket — starter om 6:42" counts down by
   the second, as on Lys (it moved per minute). The line below says when the window closed and how
   long the wait is ("Vindue lukket kl. 21:11 · venter 30 min, så luften kan falde til ro"), so the

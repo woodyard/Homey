@@ -115,7 +115,10 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
     );
   }
   const heatingNow = !systemOff && (d.kind === 'tado' ? d.power > 0 : !!d.plugOn);
-  const power = d.kind === 'tado' ? clamp(d.power || 0, 0, 100) / 100 : (d.plugOn ? 1 : 0);
+  // Plug rooms: the share of radiators on (one of two gives a lighter wash than both)
+  const power = d.kind === 'tado' ? clamp(d.power || 0, 0, 100) / 100
+    : (d.plugCount > 1 && d.plugsOn != null ? d.plugsOn / d.plugCount : (d.plugOn ? 1 : 0));
+  const partialPlugs = d.kind === 'plug' && d.plugCount > 1 && d.plugsOn > 0 && d.plugsOn < d.plugCount;
   const WhyIcon = HEAT_ICONS[why.icon] || CircleHelp;
   const p = why.progress;
   const pct = p && p.to > p.from ? clamp(((now - p.from) / (p.to - p.from)) * 100, 0, 100) : null;
@@ -137,7 +140,7 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
         {heatingNow && (
           <span className={styles.heatChip}>
             <Flame size={13} strokeWidth={2.4} />
-            {d.kind === 'tado' ? `${Math.round(d.power)}%` : 'Tændt'}
+            {d.kind === 'tado' ? `${Math.round(d.power)}%` : partialPlugs ? `${d.plugsOn} af ${d.plugCount}` : 'Tændt'}
           </span>
         )}
         <ChevronDown size={18} className={styles.chev} />
@@ -228,7 +231,7 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
             <div className={cx(styles.info, dim)}>
               {d.kind === 'plug' && (
                 <span className={styles.infoItem} style={d.plugOn ? { color: 'var(--heat-ink)' } : undefined}>
-                  <Flame size={14} /> {d.plugCount === 1 ? 'Radiator' : 'Radiatorer'} {d.plugOn ? 'tændt' : 'slukket'}
+                  <Flame size={14} /> {d.plugCount === 1 ? 'Radiator' : partialPlugs ? `${d.plugsOn} af ${d.plugCount} radiatorer` : 'Radiatorer'} {d.plugOn ? 'tændt' : 'slukket'}
                 </span>
               )}
               {d.hasMotion && d.scheduled && (
@@ -344,6 +347,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
         deviceTarget: null,
         deviceWindow: contact ? !!contact.capabilities.alarm_contact : false,
         plugOn: plugs.some((p) => p.onoff),
+        plugsOn: plugs.filter((p) => p.onoff).length,
         plugCount: plugs.length,
       };
     }
@@ -547,6 +551,7 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
           // Why the room is (not) heating — the one main reason plus the other factors.
           const why = d ? explainHeating({
             sc: d.sc, heatingEnabled, kind: d.kind, power: d.power, plugOn: d.plugOn, temp: d.temp,
+            plugsOn: d.plugsOn ?? null, plugCount: d.plugCount ?? null, escalateAfter: room.staging?.escalateAfter ?? null,
             deviceTarget: d.kind === 'plug' ? d.setTarget : d.deviceTarget, liveWindow: d.liveWindow, liveClosedAt: d.liveClosedAt, mode: d.mode, modeExpires: d.modeExpires,
             manualMinutes: room.manualDuration, loading: !statusLoaded, now,
           }) : null;
