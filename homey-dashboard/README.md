@@ -125,6 +125,15 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.8.0** (2026-11-24) — Andet: Oliver's PS5 plug. The flow "O - PS5" switches it (motion turns
+  it on from 08:00; off at 22:00 before a school day, else 23:30). The card counts down by the
+  second to when it goes off ("Slukker kl. 22:00 · skole i morgen"), with a bar over the last hour,
+  and shows tonight's bedtime and whether tomorrow is a school day. +30/+60/+90/+120 min keep it
+  on past bedtime: N minutes after bedtime during the day, N minutes from now after bedtime (then
+  it is switched on). Each chip shows the time it gives; pressing sets that time, so a double tap
+  does not add twice. "Tilbage til sengetid" (or "Stop forlængelsen og sluk" after bedtime) clears
+  it. The extension is the Logic number O_PS5_Forlaenget (epoch ms) and school tomorrow the yes/no
+  O_PS5_SkoleIMorgen, both read by the flow (/api/homey/ps5, lib/ps5.js).
 - **2.7.0** (2026-11-24) — Varme: Claras værelse runs its two radiators in steps (room_heating
   10.32.0). The card shows how many are on: "1 af 2" in the header chip, "1 af 2 radiatorer tændt"
   below, and a lighter wash than with both on. While one radiator runs alone below the range,

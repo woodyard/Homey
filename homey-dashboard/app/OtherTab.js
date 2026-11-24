@@ -6,14 +6,17 @@
 //  • The robot vacuum: what it is doing, anything it needs help with, and buttons to start it,
 //    pause it, continue and send it home. Before a start: how it cleans, and where (all rooms
 //    or the ones picked, through the "Vacuum - Rooms" flow).
+//  • Oliver's PS5 plug: when the "O - PS5" flow switches it off next, counting down, and buttons
+//    that keep it on past bedtime (lib/ps5.js).
 // The washing machine is read-only: it is started at the machine.
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Bot, CircleCheck, Droplets, House, Info, LoaderCircle, Pause, Play, RotateCw, Sparkles, Timer, TriangleAlert,
-  WashingMachine, Zap,
+  Activity, Bot, CalendarDays, CircleCheck, Clock, Droplets, Gamepad2, House, Info, LoaderCircle, Moon, Pause, Play,
+  RotateCw, Sparkles, Timer, TriangleAlert, Undo2, WashingMachine, Zap,
 } from 'lucide-react';
-import { clamp, cx, Empty, roomNameFromPath, SPIN } from './ui';
+import { bedtimeMinutes, extensionEnd, normallyOn, ps5Plan, PS5 } from '../lib/ps5';
+import { clamp, cx, Empty, ProgressBar, roomNameFromPath, SPIN } from './ui';
 import styles from './OtherTab.module.css';
 
 const TZ = 'Europe/Copenhagen';
@@ -388,14 +391,165 @@ function VacuumCard({ device, flows, onControl, onReload }) {
   );
 }
 
+// ---------------------------------------------------------------- PS5 plug ----
+
+// Seconds as "0:42", "12:05" or "1:05:09".
+function fmtCountdown(secs) {
+  const s = Math.max(0, secs);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+const BAR_SECONDS = 3600; // the bar shows the last hour before the plug goes off
+
+// Oliver's PS5 plug (lib/ps5.js): when the flow switches it off next, counting down by the
+// second, and buttons that keep it on past bedtime. The flow does the switching; the buttons
+// only set the extension (and switch it on outside the normal hours).
+function Ps5Card({ device, onReload }) {
+  const [state, setState] = useState(null); // { schoolTomorrow, until } from /api/homey/ps5
+  const [err, setErr] = useState('');
+  const [pending, setPending] = useState(null);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(iv);
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch('/api/homey/ps5');
+        const data = await r.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!r.ok) { if (r.status === 404) setErr(data.error || 'Variablen til forlængelse mangler i Homey'); return; }
+        setState(data);
+      } catch { /* keep the last state through a passing hiccup */ }
+    }
+    load();
+    const iv = setInterval(load, 15000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
+
+  async function send(body, name) {
+    setPending(name);
+    setErr('');
+    try {
+      const r = await fetch('/api/homey/ps5', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Kunne ikke ændre tiden');
+      setState((s) => ({ ...(s || {}), schoolTomorrow: data.schoolTomorrow, until: data.until }));
+      [1500, 5000].forEach((ms) => setTimeout(() => onReload && onReload(), ms));
+    } catch (e) {
+      setErr(String(e.message || e));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  const c = device.capabilities || {};
+  const on = c.onoff === true;
+  const unavailable = device.available === false;
+  const now = Date.now();
+  const plan = state ? ps5Plan({ now, schoolTomorrow: state.schoolTomorrow, until: state.until }) : null;
+  const left = on && plan && plan.offAt ? Math.ceil((plan.offAt - now) / 1000) : null;
+  const bedtime = state ? fmtMinutesOfDay(bedtimeMinutes(state.schoolTomorrow)) : null;
+  const why = !state ? null
+    : state.schoolTomorrow === false ? 'ingen skole i morgen' : state.schoolTomorrow === true ? 'skole i morgen' : 'skole i morgen ukendt';
+  const cardState = unavailable ? 'off' : on ? (plan && plan.extended ? 'paused' : 'running') : 'off';
+  const canControl = !unavailable && state != null;
+
+  return (
+    <article className={styles.card} data-state={cardState}>
+      <header className={styles.head}>
+        <span className={styles.icon} aria-hidden="true"><Gamepad2 size={22} strokeWidth={2} /></span>
+        <div className={styles.titles}>
+          <h2 className={styles.title}>PS5</h2>
+          <div className={styles.room}>{roomNameFromPath(device.zonePath)}</div>
+        </div>
+        <span className={styles.status}>{unavailable ? 'Ikke forbundet' : on ? 'Tændt' : 'Slukket'}</span>
+      </header>
+
+      {err && <div className={styles.note} data-tone="bad"><TriangleAlert size={18} strokeWidth={2.2} />{err}</div>}
+
+      {left != null && left > 0 && (
+        <div className={styles.countdown}>
+          <div className={styles.countdownRow}>
+            <span className={styles.countdownTime}>{fmtCountdown(left)}</span>
+            <span className={styles.countdownLabel}>til den slukker</span>
+          </div>
+          <div className={styles.countdownWhen}>
+            <Clock size={14} /> Slukker kl. <b>{clockFmt.format(new Date(plan.offAt))}</b>
+            {plan.extended ? <span className="hd-faint">· forlænget</span> : <span className="hd-faint">· {why}</span>}
+          </div>
+          {left <= BAR_SECONDS && <ProgressBar left={(left / BAR_SECONDS) * 100} label="Til PS5 slukker" />}
+        </div>
+      )}
+
+      {!on && !unavailable && plan && (
+        <div className={styles.note}>
+          {plan.inWindow
+            ? <><Activity size={18} strokeWidth={2.2} />Tænder ved bevægelse i rummet{plan.extended ? ` indtil ${clockFmt.format(new Date(plan.extended))}` : ` indtil ${bedtime}`}</>
+            : <><Moon size={18} strokeWidth={2.2} />Sengetid · tænder ved bevægelse fra kl. 08:00</>}
+        </div>
+      )}
+
+      {state && (
+        <dl className={styles.facts}>
+          <Fact icon={Moon} label="Sengetid i aften" value={bedtime} />
+          <Fact icon={CalendarDays} label="I morgen" value={state.schoolTomorrow === false ? 'Fri' : state.schoolTomorrow === true ? 'Skoledag' : '—'} />
+        </dl>
+      )}
+
+      {canControl && (
+        <div className={styles.extend}>
+          <div className={styles.extendLabel}>
+            {normallyOn({ now, schoolTomorrow: state.schoolTomorrow }) ? 'Forlæng sengetiden' : on ? 'Forlæng fra nu' : 'Tænd i'}
+          </div>
+          <div className={styles.chips} role="group" aria-label="Forlæng">
+            {PS5.steps.map((m) => {
+              const end = extensionEnd({ now, schoolTomorrow: state.schoolTomorrow, minutes: m });
+              const chosen = plan && plan.extended === end;
+              return (
+                <button
+                  key={m} type="button" className={styles.chip} aria-pressed={chosen}
+                  onClick={() => send({ minutes: m }, m)} disabled={pending != null}
+                  title={`Slukker kl. ${clockFmt.format(new Date(end))}`}
+                >
+                  {pending === m ? <LoaderCircle size={14} style={SPIN} /> : null}
+                  +{m} min <span className={styles.chipSub}>{clockFmt.format(new Date(end))}</span>
+                </button>
+              );
+            })}
+          </div>
+          {plan && plan.extended && (
+            <div className={styles.actions}>
+              <button type="button" className="hd-btn" onClick={() => send({ cancel: true }, 'cancel')} disabled={pending != null}>
+                {pending === 'cancel' ? <LoaderCircle size={16} style={SPIN} /> : <Undo2 size={16} />}
+                {normallyOn({ now, schoolTomorrow: state.schoolTomorrow }) ? `Tilbage til sengetid kl. ${bedtime}` : 'Stop forlængelsen og sluk'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+const fmtMinutesOfDay = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
 export default function OtherTab({ devices, flows, onControl, onReload }) {
   const washers = (devices || []).filter((d) => d.class === 'washer');
   const vacuums = (devices || []).filter((d) => d.class === 'vacuumcleaner');
-  if (!washers.length && !vacuums.length) return <Empty icon={WashingMachine}>Ingen enheder fundet.</Empty>;
+  const ps5 = (devices || []).filter((d) => d.id === PS5.deviceId);
+  if (!washers.length && !vacuums.length && !ps5.length) return <Empty icon={WashingMachine}>Ingen enheder fundet.</Empty>;
   return (
     <div className={styles.wrap}>
       {washers.map((d) => <WasherCard key={d.id} device={d} />)}
       {vacuums.map((d) => <VacuumCard key={d.id} device={d} flows={flows} onControl={onControl} onReload={onReload} />)}
+      {ps5.map((d) => <Ps5Card key={d.id} device={d} onReload={onReload} />)}
     </div>
   );
 }
