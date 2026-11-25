@@ -273,8 +273,8 @@ input[type='range'] { accent-color: var(--accent); }
 
 /* Someone is in the room (Lys and Varme): a green border with a soft glow. */
 .hd-active {
-  border-color: color-mix(in srgb, var(--good) 55%, transparent) !important;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--good) 35%, transparent), 0 0 14px color-mix(in srgb, var(--good) 30%, transparent), var(--shadow) !important;
+  border-color: color-mix(in srgb, var(--good) 70%, transparent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--good) 60%, transparent), 0 0 16px color-mix(in srgb, var(--good) 32%, transparent), var(--shadow) !important;
   transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
 

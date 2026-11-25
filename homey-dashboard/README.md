@@ -125,6 +125,8 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.9.1** (2026-11-25) — The green border of an active room is thicker: a 2 px ring outside the
+  card's border instead of 1 px, and stronger.
 - **2.9.0** (2026-11-25) — Lys and Varme: a room whose Homey zone is active gets a green border
   with a soft glow (`.hd-active` in globals.css). The live stream (/api/homey/stream) now pushes
   zones whose active flag changed, so the glow comes and goes within its 2.5 s poll; before, zones
