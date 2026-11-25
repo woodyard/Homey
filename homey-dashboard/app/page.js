@@ -27,7 +27,7 @@ const LOUD_CAPS = new Set([
   'command_start', 'command_stop', 'tado_presence_mode', 'vacuumcleaner_job_mode',
 ]);
 
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 const REFRESH_SECONDS = 20;
 // When the live stream is connected, the fast poll is redundant — fall back to a
 // slow background re-sync (keeps the flows list fresh and recovers a stalled stream).
@@ -302,8 +302,15 @@ export default function Page() {
         return [...byId.values()].sort((a, b) => b.ts - a.ts).slice(0, 150);
       });
     };
+    // Zones whose active flag changed: merged in, so a card glows (and stops) as fast as motion shows
+    const onZones = (ev) => {
+      let changed;
+      try { changed = JSON.parse(ev.data).zones; } catch { return; }
+      if (changed && Object.keys(changed).length) setZones((prev) => ({ ...prev, ...changed }));
+    };
     es.addEventListener('ready', () => setLive(true));
     es.addEventListener('devices', onDevices);
+    es.addEventListener('zones', onZones);
     es.addEventListener('notifications', onNotifications);
     es.onopen = () => setLive(true);
     es.onerror = () => setLive(false);

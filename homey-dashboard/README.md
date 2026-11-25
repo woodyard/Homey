@@ -125,6 +125,12 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.9.0** (2026-11-25) — Lys and Varme: a room whose Homey zone is active gets a green border
+  with a soft glow (`.hd-active` in globals.css). The live stream (/api/homey/stream) now pushes
+  zones whose active flag changed, so the glow comes and goes within its 2.5 s poll; before, zones
+  only arrived with the full poll (120 s while live). Motion seen live also lights the card at once,
+  as Homey makes the zone active on it. What counts toward a zone's activity is set per sensor in
+  Homey.
 - **2.8.0** (2026-11-24) — Andet: Oliver's PS5 plug. The flow "O - PS5" switches it (motion turns
   it on from 08:00; off at 22:00 before a school day, else 23:30). The card counts down by the
   second to when it goes off ("Slukker kl. 22:00 · skole i morgen"), with a bar over the last hour,

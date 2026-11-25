@@ -24,6 +24,7 @@ export async function GET(request) {
     start(controller) {
       let closed = false;
       const snapshot = {}; // deviceId -> JSON of capability values
+      const zoneSnapshot = {}; // zoneId -> JSON of { active, activeLastUpdated }
       const notifSeen = new Set();
       let notifSeeded = false;
       let ticks = 0;
@@ -75,6 +76,18 @@ export async function GET(request) {
               });
             }
           }
+          // Zones whose active flag changed (the cards glow while active; the empty-room
+          // countdowns start when it goes off), in the same shape as /api/homey/devices
+          const zonesChanged = {};
+          for (const [zid, z] of Object.entries(zonesObj || {})) {
+            const zone = { active: z.active === true, activeLastUpdated: z.activeLastUpdated || null };
+            const sig = JSON.stringify(zone);
+            if (zoneSnapshot[zid] !== sig) {
+              zoneSnapshot[zid] = sig;
+              zonesChanged[zid] = zone;
+            }
+          }
+          if (Object.keys(zonesChanged).length) send('zones', { zones: zonesChanged });
           if (changed.length) send('devices', { devices: changed });
           else send('ping', {}); // keep the connection (and any proxies) alive
         } catch (e) {

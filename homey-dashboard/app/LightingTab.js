@@ -213,6 +213,12 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
               onSet={onControl ? (values) => onControl(d.id, values) : null}
             />
           ));
+          // Homey's zone is active: the card glows green. The zone is polled; motion seen live
+          // makes it active in Homey too, so it lights the card before the next poll.
+          const zoneDevs = (devices || []).filter((d) => d.zonePath === zonePath);
+          const zone = zoneDevs[0] && zones ? zones[zoneDevs[0].zoneId] : null;
+          const active = (zone && zone.active === true)
+            || zoneDevs.some((d) => d.capabilities && d.capabilities.alarm_motion === true);
           // A room with no adaptive lights: no schedule and no mode, just its lights.
           const occupancy = (
             <Occupancy
@@ -224,7 +230,7 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
           );
           if (plain) {
             return (
-              <div key={`plain:${zonePath}`} className="hd-card hd-card-pad">
+              <div key={`plain:${zonePath}`} className={cx('hd-card hd-card-pad', active && 'hd-active')}>
                 <div className={styles.areaHead}><h3 className="hd-title">{area}</h3></div>
                 <div className={cx(styles.members, styles.membersPlain)}>{extraTiles}</div>
                 {occupancy}
@@ -239,7 +245,7 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
           const useWeekend = todayWeekend && repWeekend;
           const chartProfiles = useWeekend ? repWeekend : repWeekday;
           return (
-            <div key={area} className="hd-card hd-card-pad">
+            <div key={area} className={cx('hd-card hd-card-pad', active && 'hd-active')}>
               <div className={styles.areaHead}>
                 <h3 className="hd-title">{area}</h3>
                 {/* Only what differs from Auto is shown, at the right edge. The Manual badge is

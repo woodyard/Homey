@@ -131,7 +131,7 @@ function RoomCard({ room, d, why, now, nowMin, slots, open, onToggle, systemOff,
   const dim = systemOff ? styles.dimmed : undefined;
   return (
     <article
-      className={styles.card} data-tone={why.tone} data-open={open || undefined} data-heating={heatingNow || undefined}
+      className={cx(styles.card, d.zoneActive && 'hd-active')} data-tone={why.tone} data-open={open || undefined} data-heating={heatingNow || undefined}
       data-quiet={quiet || undefined}
       style={heatingNow ? { '--wash': `${Math.round(9 + power * 13)}%` } : undefined}
     >
@@ -360,6 +360,8 @@ export default function HeatingTab({ devices, zones, flows, onControl, onReload 
       scheduled,
       hasMotion,
       motionActive: motionNow,
+      // Homey's zone is active (polled), or motion seen live that makes it so: the card glows
+      zoneActive: !!(zoneId && zones && zones[zoneId] && zones[zoneId].active === true) || motionNow,
       emptySince: empty ? empty.since : null,
       // Target: the live device setpoint is the truth for tado (updates on +/-); fall back to the
       // script's effectiveTarget for plug rooms (0 during a pause, so the schedule's target then).

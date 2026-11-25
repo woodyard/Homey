@@ -271,6 +271,13 @@ input[type='range'] { accent-color: var(--accent); }
 
 .hd-card-pad { padding: 18px; }
 
+/* Someone is in the room (Lys and Varme): a green border with a soft glow. */
+.hd-active {
+  border-color: color-mix(in srgb, var(--good) 55%, transparent) !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--good) 35%, transparent), 0 0 14px color-mix(in srgb, var(--good) 30%, transparent), var(--shadow) !important;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
 .hd-card-hover { transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; }
 .hd-card-hover:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: var(--border-strong); }
 
