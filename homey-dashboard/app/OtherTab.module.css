@@ -1,7 +1,7 @@
 /* Andet tab. Mobile first. */
 
 .wrap { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
-@media (min-width: 720px) { .wrap { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; } }
+@media (min-width: 720px) { .wrap { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; align-items: start; } }
 
 .card {
   --tone: var(--muted); --tone-soft: var(--neutral-soft);
@@ -15,7 +15,27 @@
 .card[data-state='finished'] { --tone: var(--good); --tone-soft: var(--good-soft); }
 .card[data-state='failure'] { --tone: var(--bad); --tone-soft: var(--bad-soft); }
 
-.head { display: flex; align-items: center; gap: 12px; }
+.head {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 0; border: none; background: transparent; color: inherit; text-align: left; cursor: pointer;
+}
+.chev { flex-shrink: 0; margin-left: -4px; color: var(--faint); transition: transform 0.25s ease; }
+.card[data-open] .chev { transform: rotate(180deg); }
+
+/* Folded on a phone: one line with the time left; opened: the rest (the grid trick from Varme).
+   The fold sits in the card's 16px gap, so a closed one takes no room. */
+.brief { display: flex; flex-direction: column; gap: 8px; }
+.briefLine { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.briefLine b { color: var(--text); font-weight: 650; }
+.briefLine svg { flex-shrink: 0; color: var(--muted); }
+.card[data-open] .brief { display: none; }
+.more {
+  display: grid; grid-template-rows: 0fr; visibility: hidden; margin-top: -16px;
+  transition: grid-template-rows 0.28s ease, visibility 0s linear 0.28s;
+}
+.card[data-open] .more { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 0.28s ease, visibility 0s; }
+.moreInner { min-height: 0; overflow: hidden; display: flex; flex-direction: column; gap: 16px; }
+.moreInner > :first-child { margin-top: 16px; }
 .icon {
   width: 46px; height: 46px; border-radius: 15px; flex-shrink: 0;
   display: grid; place-items: center;
@@ -23,7 +43,7 @@
 }
 .titles { flex: 1; min-width: 0; }
 .title { margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; }
-.room { font-size: 13.5px; color: var(--muted); margin-top: 1px; }
+.room { display: block; font-size: 13.5px; color: var(--muted); margin-top: 1px; }
 .status {
   flex-shrink: 0; padding: 5px 12px; border-radius: 999px;
   background: var(--tone-soft); color: var(--tone);
@@ -113,6 +133,10 @@
 
 @media (min-width: 900px) {
   .card { padding: 20px; }
+  /* Wide screens: no need to fold anything away. */
+  .head { cursor: default; }
+  .chev, .brief { display: none; }
+  .more, .card[data-open] .more { grid-template-rows: 1fr; visibility: visible; transition: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

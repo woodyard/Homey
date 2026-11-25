@@ -5,9 +5,36 @@
 
 .areaList { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 900px) { .areaList { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; } }
-.areaHead { display: flex; align-items: center; justify-content: space-between; gap: 6px 10px; min-height: 34px; margin-bottom: 14px; }
-.areaHead > h3 { min-width: 0; overflow-wrap: anywhere; }
-.areaHead > :not(h3) { flex-shrink: 0; }
+.areaHead { display: flex; align-items: center; gap: 8px; min-height: 44px; margin: -4px -6px -4px 0; cursor: pointer; }
+.areaTitle { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.areaTitle > h3 { min-width: 0; overflow-wrap: anywhere; }
+.areaMeta { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.areaRight { display: flex; align-items: center; gap: 8px; flex-shrink: 0; cursor: default; }
+.foldBtn {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 44px; padding: 0; border: none; background: transparent; color: var(--faint); cursor: pointer;
+}
+.foldBtn svg { transition: transform 0.25s ease; }
+.card[data-open] .foldBtn svg { transform: rotate(180deg); }
+
+/* Opened on a phone: the schedule and the lights (the same grid trick as Varme). */
+.more {
+  display: grid; grid-template-rows: 0fr; visibility: hidden;
+  transition: grid-template-rows 0.28s ease, visibility 0s linear 0.28s;
+}
+.card[data-open] .more { grid-template-rows: 1fr; visibility: visible; transition: grid-template-rows 0.28s ease, visibility 0s; }
+.moreInner { min-height: 0; overflow: hidden; }
+/* Room for the glow of a lit tile, which reaches past the tiles: the clip box reaches into the
+   card's padding and below, and takes the same space back. */
+.moreInner { padding: 0 18px 24px; margin: 0 -18px -24px; }
+.moreInner > :first-child { margin-top: 14px; }
+/* Wide screens: no need to fold anything away. */
+@media (min-width: 900px) {
+  .areaHead { cursor: default; margin-right: 0; }
+  .foldBtn { display: none; }
+  .more, .card[data-open] .more { grid-template-rows: 1fr; visibility: visible; transition: none; }
+  .moreInner { overflow: visible; }
+}
 /* The Manual badge as a button: tap to go back to Auto. */
 .modeBtn {
   display: inline-flex; align-items: center; gap: 5px;
@@ -33,7 +60,6 @@
   margin-top: 16px;
 }
 @media (min-width: 560px) { .members { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.membersPlain { margin-top: 0; }
 .missing { padding: 12px; border-radius: 16px; background: var(--surface-2); font-size: 14px; color: var(--muted); }
 
 .driftDashed { outline: 1px dashed var(--warn); outline-offset: -1px; }

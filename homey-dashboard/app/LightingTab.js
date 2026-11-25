@@ -4,14 +4,17 @@
 // from the Homey adaptivelighting.js script, with the mode the script reports per light.
 // Rooms whose Daytime colour follows the sun show that curve on the strip. Lights the script
 // does not manage are shown too, in their room: other bulbs, and plugs whose type is set to
-// Light in Homey. Each light can be switched and adjusted; on a room with a light in Manual, the Manual badge is a button that
-// runs the room's light-reset flow and so returns it to Auto. At the bottom of the card, as on
-// Varme: someone is there, or how long it has been empty and — where the flows' timing is known —
-// a countdown with a bar to when the lights dim or switch off (lib/emptyRoom.js).
+// Light in Homey. On a phone each room is folded, as on Varme: its name, how many lights are on,
+// a switch for all of them and anything that differs from Auto. Opened, it shows the schedule
+// and each light, and each light opens again for its brightness and colour. On a room with a
+// light in Manual, the Manual badge is a button that runs the room's light-reset flow and so
+// returns it to Auto. At the bottom of the card, folded or not, as on Varme: someone is there,
+// or how long it has been empty and — where the flows' timing is known — a countdown with a bar
+// to when the lights dim or switch off (lib/emptyRoom.js).
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Clock, Hand, LoaderCircle, Pin, RotateCcw, Sun, Sunrise, Sunset,
+  ChevronDown, Clock, Hand, LoaderCircle, Pin, RotateCcw, Sun, Sunrise, Sunset,
 } from 'lucide-react';
 import {
   AL_ROOMS, getSunTimes, phaseList, activePhase, tempColor, fmtMinutes, copenhagenMinutesNow,
@@ -19,7 +22,7 @@ import {
   noteManualChange,
 } from '../lib/adaptiveLighting';
 import {
-  cx, cmpZonePath, DayStrip, ErrorBox, fmtDuration, fmtLongDuration, NoMotion, Pill, Presence, ProgressBar, roomNameFromPath, SPIN,
+  cx, cmpZonePath, DayStrip, ErrorBox, fmtDuration, fmtLongDuration, NoMotion, Pill, Presence, ProgressBar, roomNameFromPath, SPIN, Toggle,
 } from './ui';
 import { emptyRoomPlan, emptySince, OFF_AT, secondsToOffAt } from '../lib/emptyRoom';
 import { slotName } from '../lib/heatingState';
@@ -63,6 +66,17 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
   useEffect(() => {
     try { setMapping(JSON.parse(localStorage.getItem('al_reset_flows') || '{}')); } catch { /* ignore */ }
   }, []);
+
+  // Which rooms are open on a phone, as on Varme (wide screens show them all open).
+  const [openRooms, setOpenRooms] = useState({});
+  useEffect(() => {
+    try { setOpenRooms(JSON.parse(localStorage.getItem('lighting_open') || '{}')); } catch { /* ignore */ }
+  }, []);
+  const toggleOpen = (key) => setOpenRooms((prev) => {
+    const next = { ...prev, [key]: !prev[key] };
+    try { localStorage.setItem('lighting_open', JSON.stringify(next)); } catch { /* ignore */ }
+    return next;
+  });
 
   const deviceById = useMemo(() => new Map((devices || []).map((d) => [d.id, d])), [devices]);
   const deviceMap = useMemo(() => {
@@ -219,7 +233,6 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
           const zone = zoneDevs[0] && zones ? zones[zoneDevs[0].zoneId] : null;
           const active = (zone && zone.active === true)
             || zoneDevs.some((d) => d.capabilities && d.capabilities.alarm_motion === true);
-          // A room with no adaptive lights: no schedule and no mode, just its lights.
           const occupancy = (
             <Occupancy
               devices={devices} zones={zones} zonePath={zonePath} vars={alVars} nowMin={nowMin}
@@ -228,16 +241,22 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
               dimmed={members.some((m) => alStatus && alStatus.lights && alStatus.lights[m.id] && alStatus.lights[m.id].idle === true)}
             />
           );
-          if (plain) {
-            return (
-              <div key={`plain:${zonePath}`} className={cx('hd-card hd-card-pad', active && 'hd-active')}>
-                <div className={styles.areaHead}><h3 className="hd-title">{area}</h3></div>
-                <div className={cx(styles.members, styles.membersPlain)}>{extraTiles}</div>
-                {occupancy}
-              </div>
-            );
-          }
-          const roomFlow = flowForRoom(area, members);
+          // The room's own switch, for the lights whose tiles can switch them: all off when any is
+          // on, else all on. The count under the name says how many are on.
+          const roomDevs = [...members.map((m) => deviceById.get(m.id)).filter(Boolean), ...extras];
+          const isOn = (d) => !!(d.capabilities && d.capabilities.onoff === true);
+          const switchable = roomDevs.filter((d) => 'onoff' in (d.capabilities || {}) && !d.alwaysOn && d.available !== false);
+          const onCount = roomDevs.filter(isOn).length;
+          let lit = roomDevs.length ? 'Slukket' : null;
+          if (onCount === roomDevs.length && onCount > 0) lit = onCount === 1 ? 'Tændt' : 'Alle tændt';
+          else if (onCount > 0) lit = `${onCount} af ${roomDevs.length} tændt`;
+          // The switch follows the lights it switches: an always-on plug that is on does not hold it on
+          const switchOn = switchable.some(isOn);
+          const switchRoom = (v) => switchable.filter((d) => isOn(d) !== v).forEach((d) => onControl(d.id, { onoff: v }));
+          const key = plain ? `plain:${zonePath}` : area;
+          const open = !!openRooms[key];
+          const bodyId = `lys-${key.replace(/[^a-z0-9]+/gi, '-')}`;
+          const roomFlow = plain ? null : flowForRoom(area, members);
           const roomBusy = busy.has(area);
           const memberModes = members.map((m) => modeForMember(m));
           const manual = memberModes.some(isManualish);
@@ -245,47 +264,69 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
           const useWeekend = todayWeekend && repWeekend;
           const chartProfiles = useWeekend ? repWeekend : repWeekday;
           return (
-            <div key={area} className={cx('hd-card hd-card-pad', active && 'hd-active')}>
-              <div className={styles.areaHead}>
-                <h3 className="hd-title">{area}</h3>
-                {/* Only what differs from Auto is shown, at the right edge. The Manual badge is
-                    the way back: it runs the room's light-reset flow. */}
-                {manual && roomFlow && (
-                  <button
-                    type="button" className={styles.modeBtn} onClick={() => resetRoom(area, roomFlow)} disabled={roomBusy}
-                    aria-label={`${area} er i manuelt. Tilbage til auto`} title="Tilbage til auto"
-                  >
-                    {roomBusy ? <LoaderCircle size={13} style={SPIN} /> : <RotateCcw size={13} strokeWidth={2.4} />}
-                    Manuelt
-                  </button>
-                )}
-                {roomMode !== 'auto' && !(manual && roomFlow) && <ModeBadge mode={roomMode} />}
+            <div key={key} className={cx('hd-card hd-card-pad', styles.card, active && 'hd-active')} data-open={open || undefined}>
+              {/* Folded: the name, how many lights are on, the room's switch and anything that
+                  differs from Auto. Opened: the day's schedule and each light, which opens again
+                  for its own brightness and colour. Tapping the head folds, as on Varme. */}
+              <div className={styles.areaHead} onClick={() => toggleOpen(key)}>
+                <div className={styles.areaTitle}>
+                  <h3 className="hd-title">{area}</h3>
+                  {lit && <span className={styles.areaMeta}>{lit}</span>}
+                </div>
+                <div className={styles.areaRight} onClick={(e) => e.stopPropagation()}>
+                  {/* Only what differs from Auto is shown. The Manual badge is the way back: it
+                      runs the room's light-reset flow. */}
+                  {manual && roomFlow && (
+                    <button
+                      type="button" className={styles.modeBtn} onClick={() => resetRoom(area, roomFlow)} disabled={roomBusy}
+                      aria-label={`${area} er i manuelt. Tilbage til auto`} title="Tilbage til auto"
+                    >
+                      {roomBusy ? <LoaderCircle size={13} style={SPIN} /> : <RotateCcw size={13} strokeWidth={2.4} />}
+                      Manuelt
+                    </button>
+                  )}
+                  {!plain && roomMode !== 'auto' && !(manual && roomFlow) && <ModeBadge mode={roomMode} />}
+                  {onControl && switchable.length > 0 && (
+                    <Toggle on={switchOn} onChange={switchRoom} label={`${switchOn ? 'Sluk' : 'Tænd'} lyset i ${area}`} />
+                  )}
+                </div>
+                <button
+                  type="button" className={styles.foldBtn} aria-expanded={open} aria-controls={bodyId}
+                  aria-label={open ? `Fold ${area} sammen` : `Vis lamperne i ${area}`}
+                  onClick={(e) => { e.stopPropagation(); toggleOpen(key); }}
+                >
+                  <ChevronDown size={18} />
+                </button>
               </div>
-              {manual && !roomFlow && (
-                <label className={styles.flowPick}>
-                  <span>Nulstil-flow</span>
-                  <select className="hd-select hd-select-sm" value="" onChange={(e) => setFlowForRoom(area, e.target.value)}>
-                    <option value="">— intet —</option>
-                    {resetFlows.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
-                  </select>
-                </label>
-              )}
-              <ScheduleStrip profiles={chartProfiles} sun={sun} nowMin={nowMin} followsSun={repSun} />
-              <div className={styles.members}>
-                {members.map((m, i) => {
-                  const device = deviceById.get(m.id);
-                  return device ? (
-                    <LightTile
-                      key={m.id} device={device} al={memberModes[i]}
-                      onToggle={onControl ? (v) => onControl(m.id, { onoff: v }) : null}
-                      // an adjustment made here is the user's own: show Manual without the usual wait
-                      onSet={onControl ? (values) => { noteManualChange(m.id); onControl(m.id, values); } : null}
-                    />
-                  ) : (
-                    <div key={m.id} className={styles.missing}>{m.name}</div>
-                  );
-                })}
-                {extraTiles}
+              <div className={styles.more} id={bodyId}>
+                <div className={styles.moreInner}>
+                  {manual && !roomFlow && (
+                    <label className={styles.flowPick}>
+                      <span>Nulstil-flow</span>
+                      <select className="hd-select hd-select-sm" value="" onChange={(e) => setFlowForRoom(area, e.target.value)}>
+                        <option value="">— intet —</option>
+                        {resetFlows.map((f) => (<option key={f.id} value={f.id}>{f.name}</option>))}
+                      </select>
+                    </label>
+                  )}
+                  {!plain && <ScheduleStrip profiles={chartProfiles} sun={sun} nowMin={nowMin} followsSun={repSun} />}
+                  <div className={styles.members}>
+                    {members.map((m, i) => {
+                      const device = deviceById.get(m.id);
+                      return device ? (
+                        <LightTile
+                          key={m.id} device={device} al={memberModes[i]}
+                          onToggle={onControl ? (v) => onControl(m.id, { onoff: v }) : null}
+                          // an adjustment made here is the user's own: show Manual without the usual wait
+                          onSet={onControl ? (values) => { noteManualChange(m.id); onControl(m.id, values); } : null}
+                        />
+                      ) : (
+                        <div key={m.id} className={styles.missing}>{m.name}</div>
+                      );
+                    })}
+                    {extraTiles}
+                  </div>
+                </div>
               </div>
               {occupancy}
             </div>

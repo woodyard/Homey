@@ -9,10 +9,12 @@
 //  • Oliver's PS5 plug: when the "O - PS5" flow switches it off next, counting down, and buttons
 //    that keep it on past bedtime (lib/ps5.js).
 // The washing machine is read-only: it is started at the machine.
+// On a phone each card is folded, as on Varme and Lys: its name, status, anything that needs
+// attention and one line with the time left. Tapping the head opens the rest.
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Activity, Bot, CalendarDays, CircleCheck, Clock, Droplets, Gamepad2, House, Info, LoaderCircle, Moon, Pause, Play,
+  Activity, Bot, CalendarDays, ChevronDown, CircleCheck, Clock, Droplets, Gamepad2, House, Info, LoaderCircle, Moon, Pause, Play,
   RotateCw, Sparkles, Timer, TriangleAlert, Undo2, WashingMachine, Zap,
 } from 'lucide-react';
 import { bedtimeMinutes, extensionEnd, normallyOn, ps5Plan, PS5 } from '../lib/ps5';
@@ -109,7 +111,27 @@ function Fact({ icon: Icon, label, value }) {
   );
 }
 
-function WasherCard({ device }) {
+// The card's head is the fold button: icon, name, room, status and the chevron.
+function CardHead({ icon: Icon, title, room, status, open, onToggle, bodyId }) {
+  return (
+    <button type="button" className={styles.head} onClick={onToggle} aria-expanded={open} aria-controls={bodyId}>
+      <span className={styles.icon} aria-hidden="true"><Icon size={22} strokeWidth={2} /></span>
+      <span className={styles.titles}>
+        <h2 className={styles.title}>{title}</h2>
+        <span className={styles.room}>{room}</span>
+      </span>
+      <span className={styles.status}>{status}</span>
+      <ChevronDown size={18} className={styles.chev} />
+    </button>
+  );
+}
+
+// What only an opened card shows (always shown on wide screens).
+function Fold({ id, children }) {
+  return <div className={styles.more} id={id}><div className={styles.moreInner}>{children}</div></div>;
+}
+
+function WasherCard({ device, open, onToggle }) {
   const c = device.capabilities || {};
   const w = washerState(c);
   const active = w.state === 'running' || w.state === 'paused';
@@ -121,28 +143,20 @@ function WasherCard({ device }) {
   const showFacts = w.state !== 'off' && w.state !== 'idle';
   const doneAt = active && w.remaining != null ? clockFmt.format(new Date(Date.now() + w.remaining * 60000)) : null;
   const unavailable = device.available === false;
+  const bodyId = `andet-${device.id}`;
   return (
-    <article className={styles.card} data-state={w.state}>
-      <header className={styles.head}>
-        <span className={styles.icon} aria-hidden="true"><WashingMachine size={22} strokeWidth={2} /></span>
-        <div className={styles.titles}>
-          <h2 className={styles.title}>Vaskemaskine</h2>
-          <div className={styles.room}>{roomNameFromPath(device.zonePath)}</div>
-        </div>
-        <span className={styles.status}>{unavailable ? 'Ikke forbundet' : w.statusText}</span>
-      </header>
+    <article className={styles.card} data-state={w.state} data-open={open || undefined}>
+      <CardHead
+        icon={WashingMachine} title="Vaskemaskine" room={roomNameFromPath(device.zonePath)}
+        status={unavailable ? 'Ikke forbundet' : w.statusText} open={open} onToggle={onToggle} bodyId={bodyId}
+      />
 
-      {active && (
-        <div className={styles.hero}>
-          <ProgressRing progress={w.progress}>
-            <span className={styles.left}>{w.remaining != null ? fmtMin(w.remaining) : '—'}</span>
-            <span className={styles.leftLabel}>tilbage</span>
-          </ProgressRing>
-          <div className={styles.heroText}>
-            {program && <div className={styles.program}>{program}</div>}
-            {phase && <div className={styles.phase}>{phase}</div>}
-            {doneAt && <div className={styles.done}>Færdig ca. <b>{doneAt}</b></div>}
+      {active && w.remaining != null && (
+        <div className={styles.brief}>
+          <div className={styles.briefLine}>
+            <Timer size={14} /> <b>{fmtMin(w.remaining)}</b> tilbage{doneAt && <span className="hd-faint">· færdig ca. {doneAt}</span>}
           </div>
+          {w.progress != null && <ProgressBar left={(1 - w.progress) * 100} label="Tid tilbage af vasken" />}
         </div>
       )}
 
@@ -162,6 +176,21 @@ function WasherCard({ device }) {
         <div className={styles.note} data-tone="warn"><Info size={18} strokeWidth={2.2} />Maskinen har en besked</div>
       )}
 
+      <Fold id={bodyId}>
+      {active && (
+        <div className={styles.hero}>
+          <ProgressRing progress={w.progress}>
+            <span className={styles.left}>{w.remaining != null ? fmtMin(w.remaining) : '—'}</span>
+            <span className={styles.leftLabel}>tilbage</span>
+          </ProgressRing>
+          <div className={styles.heroText}>
+            {program && <div className={styles.program}>{program}</div>}
+            {phase && <div className={styles.phase}>{phase}</div>}
+            {doneAt && <div className={styles.done}>Færdig ca. <b>{doneAt}</b></div>}
+          </div>
+        </div>
+      )}
+
       {showFacts && (
         <dl className={styles.facts}>
           {w.elapsed != null && w.elapsed > 0 && <Fact icon={Timer} label="Tid gået" value={fmtMin(w.elapsed)} />}
@@ -172,6 +201,7 @@ function WasherCard({ device }) {
           {c.display_water_prediction != null && <Fact icon={Droplets} label="Forventet vand" value={String(c.display_water_prediction)} />}
         </dl>
       )}
+      </Fold>
     </article>
   );
 }
@@ -226,7 +256,7 @@ const VACUUM_ALARMS = [
   ['alarm_cleaning_pad_missing', 'Moppen mangler'],
 ];
 
-function VacuumCard({ device, flows, onControl, onReload }) {
+function VacuumCard({ device, flows, onControl, onReload, open, onToggle }) {
   const c = device.capabilities || {};
   const labels = device.capLabels || {};
   // The numbers are known for this robot, and follow a press at once; Homey's title is the fallback.
@@ -318,16 +348,13 @@ function VacuumCard({ device, flows, onControl, onReload }) {
   const showJob = job && !jobIdle;
   const showMode = mode && !pickModes;
 
+  const bodyId = `andet-${device.id}`;
   return (
-    <article className={styles.card} data-state={state}>
-      <header className={styles.head}>
-        <span className={styles.icon} aria-hidden="true"><Bot size={22} strokeWidth={2} /></span>
-        <div className={styles.titles}>
-          <h2 className={styles.title}>Robotstøvsuger</h2>
-          <div className={styles.room}>{roomNameFromPath(device.zonePath)}</div>
-        </div>
-        <span className={styles.status}>{statusText}</span>
-      </header>
+    <article className={styles.card} data-state={state} data-open={open || undefined}>
+      <CardHead
+        icon={Bot} title="Robotstøvsuger" room={roomNameFromPath(device.zonePath)}
+        status={statusText} open={open} onToggle={onToggle} bodyId={bodyId}
+      />
 
       {alarms.map(([cap, text]) => (
         <div key={cap} className={styles.note} data-tone="bad"><TriangleAlert size={18} strokeWidth={2.2} />{text}</div>
@@ -335,6 +362,7 @@ function VacuumCard({ device, flows, onControl, onReload }) {
 
       {err && <div className={styles.note} data-tone="bad"><TriangleAlert size={18} strokeWidth={2.2} />{err}</div>}
 
+      <Fold id={bodyId}>
       {(showJob || showMode) && (
         <dl className={styles.facts}>
           {showJob && <Fact icon={Bot} label="Opgave" value={job} />}
@@ -387,6 +415,7 @@ function VacuumCard({ device, flows, onControl, onReload }) {
           ))}
         </div>
       )}
+      </Fold>
     </article>
   );
 }
@@ -406,7 +435,7 @@ const BAR_SECONDS = 3600; // the bar shows the last hour before the plug goes of
 // Oliver's PS5 plug (lib/ps5.js): when the flow switches it off next, counting down by the
 // second, and buttons that keep it on past bedtime. The flow does the switching; the buttons
 // only set the extension (and switch it on outside the normal hours).
-function Ps5Card({ device, onReload }) {
+function Ps5Card({ device, onReload, open, onToggle }) {
   const [state, setState] = useState(null); // { schoolTomorrow, until } from /api/homey/ps5
   const [err, setErr] = useState('');
   const [pending, setPending] = useState(null);
@@ -461,19 +490,27 @@ function Ps5Card({ device, onReload }) {
   const cardState = unavailable ? 'off' : on ? (plan && plan.extended ? 'paused' : 'running') : 'off';
   const canControl = !unavailable && state != null;
 
+  const bodyId = `andet-${device.id}`;
   return (
-    <article className={styles.card} data-state={cardState}>
-      <header className={styles.head}>
-        <span className={styles.icon} aria-hidden="true"><Gamepad2 size={22} strokeWidth={2} /></span>
-        <div className={styles.titles}>
-          <h2 className={styles.title}>PS5</h2>
-          <div className={styles.room}>{roomNameFromPath(device.zonePath)}</div>
-        </div>
-        <span className={styles.status}>{unavailable ? 'Ikke forbundet' : on ? 'Tændt' : 'Slukket'}</span>
-      </header>
+    <article className={styles.card} data-state={cardState} data-open={open || undefined}>
+      <CardHead
+        icon={Gamepad2} title="PS5" room={roomNameFromPath(device.zonePath)}
+        status={unavailable ? 'Ikke forbundet' : on ? 'Tændt' : 'Slukket'} open={open} onToggle={onToggle} bodyId={bodyId}
+      />
 
       {err && <div className={styles.note} data-tone="bad"><TriangleAlert size={18} strokeWidth={2.2} />{err}</div>}
 
+      {left != null && left > 0 && (
+        <div className={styles.brief}>
+          <div className={styles.briefLine}>
+            <Clock size={14} /> Slukker kl. <b>{clockFmt.format(new Date(plan.offAt))}</b>
+            <span className="hd-faint">· om <span className="hd-num">{fmtCountdown(left)}</span></span>
+          </div>
+          {left <= BAR_SECONDS && <ProgressBar left={(left / BAR_SECONDS) * 100} label="Til PS5 slukker" />}
+        </div>
+      )}
+
+      <Fold id={bodyId}>
       {left != null && left > 0 && (
         <div className={styles.countdown}>
           <div className={styles.countdownRow}>
@@ -534,6 +571,7 @@ function Ps5Card({ device, onReload }) {
           )}
         </div>
       )}
+      </Fold>
     </article>
   );
 }
@@ -541,15 +579,28 @@ function Ps5Card({ device, onReload }) {
 const fmtMinutesOfDay = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
 export default function OtherTab({ devices, flows, onControl, onReload }) {
+  // Which cards are open on a phone (wide screens show them all open), kept per device.
+  const [openCards, setOpenCards] = useState({});
+  useEffect(() => {
+    try { setOpenCards(JSON.parse(localStorage.getItem('other_open') || '{}')); } catch { /* ignore */ }
+  }, []);
+  const fold = (id) => ({
+    open: !!openCards[id],
+    onToggle: () => setOpenCards((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      try { localStorage.setItem('other_open', JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    }),
+  });
   const washers = (devices || []).filter((d) => d.class === 'washer');
   const vacuums = (devices || []).filter((d) => d.class === 'vacuumcleaner');
   const ps5 = (devices || []).filter((d) => d.id === PS5.deviceId);
   if (!washers.length && !vacuums.length && !ps5.length) return <Empty icon={WashingMachine}>Ingen enheder fundet.</Empty>;
   return (
     <div className={styles.wrap}>
-      {washers.map((d) => <WasherCard key={d.id} device={d} />)}
-      {vacuums.map((d) => <VacuumCard key={d.id} device={d} flows={flows} onControl={onControl} onReload={onReload} />)}
-      {ps5.map((d) => <Ps5Card key={d.id} device={d} onReload={onReload} />)}
+      {washers.map((d) => <WasherCard key={d.id} device={d} {...fold(d.id)} />)}
+      {vacuums.map((d) => <VacuumCard key={d.id} device={d} flows={flows} onControl={onControl} onReload={onReload} {...fold(d.id)} />)}
+      {ps5.map((d) => <Ps5Card key={d.id} device={d} onReload={onReload} {...fold(d.id)} />)}
     </div>
   );
 }

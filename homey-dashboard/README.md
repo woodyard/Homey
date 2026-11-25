@@ -125,6 +125,11 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.10.0** (2026-11-25) — Lys and Andet fold like Varme on a phone. A Lys room shows its name, how
+  many lights are on, a switch for all of them (off when any is on, else on), the Manual badge and
+  the motion line with its countdown; opened, the day's schedule and each light, which opens again
+  for brightness and colour. An Andet card shows its status, anything that needs attention and
+  one line with the time left (the wash, the PS5); opened, the rest. Wide screens show it all.
 - **2.9.1** (2026-11-25) — The green border of an active room is thicker: a 2 px ring outside the
   card's border instead of 1 px, and stronger.
 - **2.9.0** (2026-11-25) — Lys and Varme: a room whose Homey zone is active gets a green border
