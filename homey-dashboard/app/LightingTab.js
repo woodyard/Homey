@@ -7,9 +7,9 @@
 // Light in Homey. On a phone each room is folded, as on Varme: its name, how many lights are on,
 // a switch for all of them and anything that differs from Auto. Opened, it shows the schedule
 // and each light, and each light opens again for its brightness and colour. On a room with a
-// light in Manual, the Manual badge is a button that runs the room's light-reset flow and so
-// returns it to Auto. At the bottom of the card, folded or not, as on Varme: someone is there,
-// or how long it has been empty and — where the flows' timing is known — a countdown with a bar
+// light in Manual, a Manual line as on Varme says which, with Nulstil, which runs the room's
+// light-reset flow and so returns it to Auto. At the bottom of the card, folded or not, as on
+// Varme: someone is there, or how long it has been empty and — where the flows' timing is known — a countdown with a bar
 // to when the lights dim or switch off (lib/emptyRoom.js).
 
 import { useEffect, useMemo, useState } from 'react';
@@ -22,7 +22,7 @@ import {
   noteManualChange,
 } from '../lib/adaptiveLighting';
 import {
-  cx, cmpZonePath, DayStrip, ErrorBox, fmtDuration, fmtLongDuration, NoMotion, Pill, Presence, ProgressBar, roomNameFromPath, SPIN, Toggle,
+  cx, cmpZonePath, DayStrip, fmtDuration, fmtLongDuration, NoMotion, Pill, Presence, ProgressBar, roomNameFromPath, SPIN, Toggle,
 } from './ui';
 import { emptyRoomPlan, emptySince, OFF_AT, secondsToOffAt } from '../lib/emptyRoom';
 import { slotName } from '../lib/heatingState';
@@ -58,7 +58,7 @@ function guessResetFlow(tokens, resetFlows) {
 export default function LightingTab({ devices, zones, flows, alStatus, alVars, onControl, onReload }) {
   const sun = useMemo(() => getSunTimes(new Date()), []);
   const [busy, setBusy] = useState(() => new Set());
-  const [err, setErr] = useState('');
+  const [roomErr, setRoomErr] = useState({}); // area -> why its reset failed, shown in its card
   const [mapping, setMapping] = useState({});
   const nowMin = copenhagenMinutesNow();
   const todayWeekend = isWeekendScheduleNow(); // the strips show the schedule in effect today
@@ -185,9 +185,12 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
   let manualCount = 0;
   for (const { members } of areas) for (const m of members) if (isManualish(modeForMember(m))) manualCount += 1;
 
+  // Nulstil runs the room's light-reset flow. The button spins until the room reads Auto again
+  // (the card drops the Manual row then), at most 20 s; a failure is shown in the room's card.
   async function resetRoom(area, flow) {
-    if (!flow) { setErr(`Intet nulstil-flow valgt for ${area}.`); return; }
-    setErr('');
+    const done = () => setBusy((prev) => { const n = new Set(prev); n.delete(area); return n; });
+    setRoomErr((prev) => ({ ...prev, [area]: null }));
+    if (!flow) { setRoomErr((prev) => ({ ...prev, [area]: 'Intet nulstil-flow valgt for rummet' })); return; }
     setBusy((prev) => new Set(prev).add(area));
     try {
       const r = await fetch('/api/homey/reset', {
@@ -195,12 +198,12 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
         body: JSON.stringify({ flowId: flow.id, advanced: flow.type === 'advanced' }),
       });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error || 'Kunne ikke starte flowet');
-      setTimeout(() => onReload && onReload(), 1600); // let the flow run, then refresh live state
+      if (!r.ok) throw new Error(data.error || 'Kunne ikke starte nulstillingen');
+      [1600, 5000, 10000].forEach((ms) => setTimeout(() => onReload && onReload(), ms)); // let the flow run
+      setTimeout(done, 20000);
     } catch (e) {
-      setErr(String(e.message || e));
-    } finally {
-      setBusy((prev) => { const n = new Set(prev); n.delete(area); return n; });
+      setRoomErr((prev) => ({ ...prev, [area]: String(e.message || e) }));
+      done();
     }
   }
 
@@ -208,7 +211,6 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
 
   return (
     <div>
-      {err && <ErrorBox>{err}</ErrorBox>}
 
       <div className={styles.alBar}>
         <Pill><Sunrise size={14} className={styles.amber} /> Solopgang <b className="hd-num">{fmtMinutes(sun.sunriseMinutes)}</b></Pill>
@@ -274,18 +276,7 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
                   {lit && <span className={styles.areaMeta}>{lit}</span>}
                 </div>
                 <div className={styles.areaRight} onClick={(e) => e.stopPropagation()}>
-                  {/* Only what differs from Auto is shown. The Manual badge is the way back: it
-                      runs the room's light-reset flow. */}
-                  {manual && roomFlow && (
-                    <button
-                      type="button" className={styles.modeBtn} onClick={() => resetRoom(area, roomFlow)} disabled={roomBusy}
-                      aria-label={`${area} er i manuelt. Tilbage til auto`} title="Tilbage til auto"
-                    >
-                      {roomBusy ? <LoaderCircle size={13} style={SPIN} /> : <RotateCcw size={13} strokeWidth={2.4} />}
-                      Manuelt
-                    </button>
-                  )}
-                  {!plain && roomMode !== 'auto' && !(manual && roomFlow) && <ModeBadge mode={roomMode} />}
+                  {!plain && roomMode === 'forced' && <ModeBadge mode={roomMode} />}
                   {onControl && switchable.length > 0 && (
                     <Toggle on={switchOn} onChange={switchRoom} label={`${switchOn ? 'Sluk' : 'Tænd'} lyset i ${area}`} />
                   )}
@@ -298,6 +289,28 @@ export default function LightingTab({ devices, zones, flows, alStatus, alVars, o
                   <ChevronDown size={18} />
                 </button>
               </div>
+              {/* As on Varme: a light set by hand says so, with Nulstil to follow the schedule again */}
+              {manual && (
+                <div className={styles.manual}>
+                  <span className={styles.manualIcon} aria-hidden="true"><Hand size={15} strokeWidth={2.3} /></span>
+                  <div className={styles.manualBody}>
+                    <div className={styles.manualHead}>Manuelt</div>
+                    <div className={styles.manualDetail}>
+                      {members.filter((m, i) => isManualish(memberModes[i])).map((m) => m.name).join(', ')} følger ikke tidsplanen
+                    </div>
+                    {roomErr[area] && <div className={styles.manualErr}>{roomErr[area]}</div>}
+                  </div>
+                  {roomFlow && (
+                    <button
+                      type="button" className={cx('hd-btn hd-btn-sm', styles.manualReset)}
+                      onClick={() => resetRoom(area, roomFlow)} disabled={roomBusy} title="Følg tidsplanen igen"
+                    >
+                      {roomBusy ? <LoaderCircle size={14} style={SPIN} /> : <RotateCcw size={14} />}
+                      Nulstil
+                    </button>
+                  )}
+                </div>
+              )}
               <div className={styles.more} id={bodyId}>
                 <div className={styles.moreInner}>
                   {manual && !roomFlow && (

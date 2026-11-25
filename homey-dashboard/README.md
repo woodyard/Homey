@@ -125,6 +125,10 @@ step can switch it to Homey's **local** API + Socket.IO for true event-push and 
 
 ## Version history
 
+- **2.10.1** (2026-11-25) — Lys: a room with a light set by hand gets a Manual line as on Varme
+  ("Manuelt · SV Loft følger ikke tidsplanen") with a Nulstil button, instead of a Manual badge
+  that had to be tapped to get Auto. Nulstil spins until the room reads Auto again (at most 20 s),
+  and a failure shows in the room's card rather than at the top of the page.
 - **2.10.0** (2026-11-25) — Lys and Andet fold like Varme on a phone. A Lys room shows its name, how
   many lights are on, a switch for all of them (off when any is on, else on), the Manual badge and
   the motion line with its countdown; opened, the day's schedule and each light, which opens again

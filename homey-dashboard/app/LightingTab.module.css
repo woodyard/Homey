@@ -35,18 +35,17 @@
   .more, .card[data-open] .more { grid-template-rows: 1fr; visibility: visible; transition: none; }
   .moreInner { overflow: visible; }
 }
-/* The Manual badge as a button: tap to go back to Auto. */
-.modeBtn {
-  display: inline-flex; align-items: center; gap: 5px;
-  min-height: 32px; padding: 4px 12px 4px 10px; border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
-  background: var(--warn-soft); color: var(--warn-ink);
-  font-size: 12.5px; font-weight: 650; cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
+/* A light set by hand, as Varme's reason line: icon, what, and Nulstil at the right. */
+.manual { display: flex; align-items: flex-start; gap: 9px; margin-top: 12px; }
+.manualIcon {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0;
+  display: grid; place-items: center; background: var(--warn-soft); color: var(--warn);
 }
-.modeBtn:hover:not(:disabled) { background: color-mix(in srgb, var(--warn) 24%, transparent); }
-.modeBtn:active:not(:disabled) { transform: scale(0.96); }
-.modeBtn:disabled { opacity: 0.6; cursor: default; }
+.manualBody { flex: 1; min-width: 0; padding-top: 3px; }
+.manualHead { font-size: 14px; font-weight: 600; line-height: 1.4; color: var(--text); }
+.manualDetail { margin-top: 1px; font-size: 13px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+.manualErr { margin-top: 4px; font-size: 13px; line-height: 1.45; color: var(--bad); overflow-wrap: anywhere; }
+.manualReset { flex-shrink: 0; margin-top: -1px; }
 /* At the bottom of the card, as on Varme: someone there, or empty for how long and the countdown to dim/off */
 .presence { display: flex; margin-top: 14px; }
 .occupancy { display: grid; gap: 7px; margin-top: 14px; }
